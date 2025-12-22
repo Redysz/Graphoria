@@ -1,0 +1,317 @@
+// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use serde::Serialize;
+use std::path::Path;
+use std::process::Command;
+
+#[tauri::command]
+fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GitCommit {
+    hash: String,
+    parents: Vec<String>,
+    author: String,
+    date: String,
+    subject: String,
+    refs: String,
+    is_head: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RepoOverview {
+    head: String,
+    head_name: String,
+    branches: Vec<String>,
+    tags: Vec<String>,
+    remotes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GitStatusEntry {
+    status: String,
+    path: String,
+}
+
+fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["-C", repo_path])
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
+    let check = Command::new("git")
+        .args(["-C", repo_path, "rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !check.status.success() {
+        return Err(String::from("Selected path is not a Git working tree."));
+    }
+
+    Ok(())
+}
+
+fn ensure_is_not_git_worktree(repo_path: &str) -> Result<(), String> {
+    let check = Command::new("git")
+        .args(["-C", repo_path, "rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if check.status.success() {
+        return Err(String::from("Selected path is already a Git working tree."));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn repo_overview(repo_path: String) -> Result<RepoOverview, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+
+    let branches_raw = run_git(&repo_path, &["branch", "--format=%(refname:short)"])?;
+    let branches = branches_raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    let tags_raw = run_git(&repo_path, &["tag", "--list"])?;
+    let tags = tags_raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    let remotes_raw = run_git(&repo_path, &["remote"])?;
+    let remotes = remotes_raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    Ok(RepoOverview {
+        head,
+        head_name,
+        branches,
+        tags,
+        remotes,
+    })
+}
+
+#[tauri::command]
+fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    let max_count = max_count.unwrap_or(200).min(2000);
+
+    ensure_is_git_worktree(&repo_path)?;
+
+    let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+
+    let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo_path,
+            "--no-pager",
+            "log",
+            "--all",
+            "--topo-order",
+            "--date=iso-strict",
+            &format!("--pretty=format:{format}"),
+            "-n",
+            &max_count.to_string(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn git log: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr_lower = stderr.to_lowercase();
+        if stderr_lower.contains("does not have any commits yet")
+            || stderr_lower.contains("does not have any commits")
+            || stderr_lower.contains("your current branch")
+            || stderr_lower.contains("unknown revision")
+        {
+            return Ok(Vec::new());
+        }
+        return Err(format!("git log failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut commits = Vec::new();
+
+    for record in stdout.split('\x1e') {
+        let record = record.trim();
+        if record.is_empty() {
+            continue;
+        }
+
+        let mut parts = record.split('\x1f');
+        let hash = parts.next().unwrap_or_default().to_string();
+        let parents_raw = parts.next().unwrap_or_default();
+        let author = parts.next().unwrap_or_default().to_string();
+        let date = parts.next().unwrap_or_default().to_string();
+        let subject = parts.next().unwrap_or_default().to_string();
+        let refs = parts.next().unwrap_or_default().to_string();
+
+        if hash.is_empty() {
+            continue;
+        }
+
+        let parents = parents_raw
+            .split_whitespace()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        let is_head = head == hash;
+
+        commits.push(GitCommit {
+            hash,
+            parents,
+            author,
+            date,
+            subject,
+            refs,
+            is_head,
+        });
+    }
+
+    Ok(commits)
+}
+
+#[tauri::command]
+fn init_repo(repo_path: String) -> Result<String, String> {
+    if repo_path.trim().is_empty() {
+        return Err(String::from("repo_path is empty"));
+    }
+
+    let git_dir = Path::new(&repo_path).join(".git");
+    if git_dir.exists() {
+        return Err(String::from("Selected path already contains a .git folder."));
+    }
+
+    ensure_is_not_git_worktree(&repo_path)?;
+
+    run_git(&repo_path, &["init"])?;
+    Ok(repo_path)
+}
+
+#[tauri::command]
+fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let raw = run_git(&repo_path, &["status", "--porcelain"]).unwrap_or_default();
+    let mut entries = Vec::new();
+
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let status = if line.len() >= 2 {
+            line[0..2].to_string()
+        } else {
+            line.to_string()
+        };
+
+        let mut path = if line.len() >= 4 {
+            line[3..].trim().to_string()
+        } else {
+            String::new()
+        };
+
+        if let Some(idx) = path.rfind(" -> ") {
+            path = path[idx + 4..].trim().to_string();
+        }
+
+        if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
+            path = path[1..path.len() - 1].to_string();
+        }
+
+        entries.push(GitStatusEntry { status, path });
+    }
+
+    Ok(entries)
+}
+
+#[tauri::command]
+fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    if message.trim().is_empty() {
+        return Err(String::from("Commit message is empty."));
+    }
+
+    if paths.is_empty() {
+        return Err(String::from("No files selected to commit."));
+    }
+
+    let mut add_args: Vec<&str> = Vec::new();
+    add_args.push("add");
+    add_args.push("--");
+    for p in &paths {
+        if !p.trim().is_empty() {
+            add_args.push(p);
+        }
+    }
+
+    let add_out = Command::new("git")
+        .args(["-C", &repo_path])
+        .args(&add_args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git add: {e}"))?;
+
+    if !add_out.status.success() {
+        let stderr = String::from_utf8_lossy(&add_out.stderr);
+        return Err(format!("git add failed: {stderr}"));
+    }
+
+    let commit_out = Command::new("git")
+        .args(["-C", &repo_path, "commit", "-m", &message])
+        .output()
+        .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+
+    if !commit_out.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_out.stderr);
+        return Err(format!("git commit failed: {stderr}"));
+    }
+
+    let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    Ok(new_head)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            repo_overview,
+            list_commits,
+            init_repo,
+            git_status,
+            git_commit
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

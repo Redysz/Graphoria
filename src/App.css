@@ -1,0 +1,409 @@
+:root {
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel-2: #f5f7fb;
+  --border: rgba(15, 15, 15, 0.12);
+  --text: #0f0f0f;
+  --muted: rgba(15, 15, 15, 0.65);
+  --accent: #2f6fed;
+  --accent-2: #1f56c6;
+  --danger: #b00020;
+
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--text);
+  background: var(--bg);
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--panel);
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+button:hover {
+  border-color: rgba(47, 111, 237, 0.55);
+}
+
+button:active {
+  background-color: rgba(47, 111, 237, 0.08);
+}
+
+button:disabled {
+  opacity: 0.55;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  background: linear-gradient(180deg, #ffffff 0%, #f5f7fb 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.menuitem {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(15, 15, 15, 0.75);
+  font-weight: 700;
+  cursor: default;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid rgba(15, 15, 15, 0.06);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tabActive {
+  background: rgba(47, 111, 237, 0.12);
+  border-color: rgba(47, 111, 237, 0.35);
+}
+
+.tabClose {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+}
+
+.sidebar {
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow: auto;
+}
+
+.sidebarSection {
+  padding: 12px;
+  border-bottom: 1px solid rgba(15, 15, 15, 0.06);
+}
+
+.sidebarTitle {
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(15, 15, 15, 0.6);
+  margin-bottom: 8px;
+}
+
+.sidebarList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebarItem {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: rgba(15, 15, 15, 0.85);
+}
+
+.sidebarItem:hover {
+  background: rgba(47, 111, 237, 0.06);
+}
+
+.main {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr 220px;
+}
+
+.mainHeader {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.repoTitle {
+  display: grid;
+  gap: 2px;
+}
+
+.repoName {
+  font-weight: 900;
+  font-size: 15px;
+}
+
+.repoPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70vw;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
+  font-weight: 800;
+}
+
+.segmented button.active {
+  background: rgba(47, 111, 237, 0.14);
+  color: var(--accent-2);
+}
+
+.mainCanvas {
+  min-height: 0;
+  background: var(--panel-2);
+  position: relative;
+}
+
+.graphCanvas {
+  position: absolute;
+  inset: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+  display: block;
+}
+
+.cyCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+.zoomControls {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.details {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow: auto;
+}
+
+.detailsTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.detailsTitle h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(15, 15, 15, 0.65);
+}
+
+.detailsGrid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px 12px;
+  align-items: center;
+}
+
+.detailsLabel {
+  color: rgba(15, 15, 15, 0.6);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.detailsValue {
+  font-size: 13px;
+}
+
+.detailsValue.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.35);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 50;
+}
+
+.modal {
+  width: min(760px, 96vw);
+  max-height: min(80vh, 840px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.25);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f7fb 100%);
+  border-bottom: 1px solid rgba(15, 15, 15, 0.08);
+}
+
+.modalBody {
+  padding: 12px;
+  overflow: auto;
+}
+
+.modalFooter {
+  padding: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid rgba(15, 15, 15, 0.08);
+  background: var(--panel-2);
+}
+
+.modalTextarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.statusList {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.statusRow {
+  display: grid;
+  grid-template-columns: 20px 44px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 15, 15, 0.10);
+  background: #ffffff;
+}
+
+.statusRow:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+}
+
+.statusCode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 800;
+  color: rgba(15, 15, 15, 0.7);
+}
+
+.statusPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: rgba(15, 15, 15, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
