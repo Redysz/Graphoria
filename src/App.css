@@ -28,6 +28,12 @@ body,
   margin: 0;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   color: var(--text);
   background: var(--bg);
@@ -383,6 +389,10 @@ button:disabled {
   overflow: auto;
 }
 
+.modalBody {
+  overflow-x: hidden;
+}
+
 .modalFooter {
   padding: 12px;
   display: flex;
@@ -409,6 +419,22 @@ button:disabled {
   padding: 10px;
   font-family: inherit;
   font-size: 13px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(47, 111, 237, 0.14);
+  border: 1px solid rgba(47, 111, 237, 0.30);
+  color: var(--accent-2);
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .statusDot {

@@ -34,6 +34,18 @@ struct GitStatusEntry {
     path: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct GitStatusSummary {
+    changed: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GitAheadBehind {
+    ahead: u32,
+    behind: u32,
+    upstream: Option<String>,
+}
+
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(["-C", repo_path])
@@ -300,6 +312,91 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
 }
 
 #[tauri::command]
+fn git_status_summary(repo_path: String) -> Result<GitStatusSummary, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let raw = run_git(&repo_path, &["status", "--porcelain"]).unwrap_or_default();
+    let changed = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .count() as u32;
+
+    Ok(GitStatusSummary { changed })
+}
+
+#[tauri::command]
+fn git_ahead_behind(repo_path: String, remote_name: Option<String>) -> Result<GitAheadBehind, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+
+    if head_name == "(detached)" {
+        return Ok(GitAheadBehind {
+            ahead: 0,
+            behind: 0,
+            upstream: None,
+        });
+    }
+
+    let upstream_out = Command::new("git")
+        .args(["-C", &repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git rev-parse: {e}"))?;
+
+    let mut upstream: Option<String> = None;
+    if upstream_out.status.success() {
+        let s = String::from_utf8_lossy(&upstream_out.stdout).trim().to_string();
+        if !s.is_empty() {
+            upstream = Some(s);
+        }
+    }
+
+    if upstream.is_none() {
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        let verify_ref = format!("refs/remotes/{remote_name}/{head_name}");
+        let verify_out = Command::new("git")
+            .args(["-C", &repo_path, "show-ref", "--verify", "--quiet", verify_ref.as_str()])
+            .output()
+            .map_err(|e| format!("Failed to spawn git show-ref: {e}"))?;
+
+        if verify_out.status.success() {
+            upstream = Some(format!("{remote_name}/{head_name}"));
+        }
+    }
+
+    let upstream = match upstream {
+        Some(u) => u,
+        None => {
+            return Ok(GitAheadBehind {
+                ahead: 0,
+                behind: 0,
+                upstream: None,
+            });
+        }
+    };
+
+    let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{upstream}...HEAD")])?;
+    let parts: Vec<&str> = raw.split_whitespace().collect();
+    let behind = parts
+        .get(0)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    let ahead = parts
+        .get(1)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    Ok(GitAheadBehind {
+        ahead,
+        behind,
+        upstream: Some(upstream),
+    })
+}
+
+#[tauri::command]
 fn git_get_remote_url(repo_path: String, remote_name: Option<String>) -> Result<Option<String>, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -368,11 +465,13 @@ fn git_push(
     remote_name: Option<String>,
     branch: Option<String>,
     force: Option<bool>,
+    with_lease: Option<bool>,
 ) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
     let force = force.unwrap_or(false);
+    let with_lease = with_lease.unwrap_or(true);
 
     let branch = match branch {
         Some(b) if !b.trim().is_empty() => b,
@@ -382,7 +481,11 @@ fn git_push(
 
     let mut args: Vec<&str> = vec!["push"];
     if force {
-        args.push("--force-with-lease");
+        if with_lease {
+            args.push("--force-with-lease");
+        } else {
+            args.push("--force");
+        }
     }
     args.push("-u");
     args.push(remote_name.as_str());
@@ -403,6 +506,8 @@ pub fn run() {
             init_repo,
             git_status,
             git_commit,
+            git_status_summary,
+            git_ahead_behind,
             git_get_remote_url,
             git_set_remote_url,
             git_push

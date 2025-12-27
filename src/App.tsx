@@ -31,6 +31,16 @@ type GitStatusEntry = {
   path: string;
 };
 
+type GitStatusSummary = {
+  changed: number;
+};
+
+type GitAheadBehind = {
+  ahead: number;
+  behind: number;
+  upstream?: string | null;
+};
+
 type ViewportState = {
   zoom: number;
   pan: { x: number; y: number };
@@ -73,6 +83,8 @@ function App() {
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
+  const [statusSummaryByRepo, setStatusSummaryByRepo] = useState<Record<string, GitStatusSummary | undefined>>({});
+  const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
@@ -93,6 +105,7 @@ function App() {
   const [pushModalOpen, setPushModalOpen] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushForce, setPushForce] = useState(false);
+  const [pushWithLease, setPushWithLease] = useState(true);
   const [pushError, setPushError] = useState("");
   const [pushLocalBranch, setPushLocalBranch] = useState("");
   const [pushRemoteBranch, setPushRemoteBranch] = useState("");
@@ -104,6 +117,8 @@ function App() {
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
+  const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
+  const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -540,6 +555,26 @@ function App() {
     }
   }, [selectedHash, headHash, viewMode, elements.nodes.length, elements.edges.length]);
 
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    void refreshIndicators(activeRepoPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepoPath]);
+
+  async function refreshIndicators(path: string) {
+    if (!path) return;
+    try {
+      const [statusSummary, aheadBehind] = await Promise.all([
+        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
+        invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
+      ]);
+      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
+      setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
+    } catch {
+      // ignore
+    }
+  }
+
   async function pickRepository() {
     setError("");
 
@@ -587,6 +622,7 @@ function App() {
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;
       setSelectedPaths(nextSelected);
+      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
     } catch (e) {
       setStatusEntries([]);
       setSelectedPaths({});
@@ -673,10 +709,12 @@ function App() {
     if (!activeRepoPath) return;
     setPushError("");
     setPushForce(false);
+    setPushWithLease(true);
     const headName = overviewByRepo[activeRepoPath]?.head_name ?? "";
     const localBranch = headName && headName !== "(detached)" ? headName : "";
     setPushLocalBranch(localBranch);
     setPushRemoteBranch(localBranch);
+    void refreshIndicators(activeRepoPath);
     setPushModalOpen(true);
   }
 
@@ -720,6 +758,7 @@ function App() {
         remoteName: "origin",
         branch: refspec,
         force: pushForce,
+        withLease: pushWithLease,
       });
       setPushModalOpen(false);
       await loadRepo(activeRepoPath);
@@ -757,6 +796,16 @@ function App() {
       delete next[path];
       return next;
     });
+    setStatusSummaryByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    setAheadBehindByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
 
     if (activeRepoPath === path) {
       const remaining = repos.filter((p) => p !== path);
@@ -773,15 +822,19 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [ov, cs, remote] = await Promise.all([
+      const [ov, cs, remote, statusSummary, aheadBehind] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
         invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 }),
         invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
+        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
+        invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
       ]);
 
       setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
       setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
+      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
+      setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
 
       const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
       setSelectedHash(headHash || "");
@@ -789,6 +842,8 @@ function App() {
       setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
       setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
+      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: undefined }));
+      setAheadBehindByRepo((prev) => ({ ...prev, [path]: undefined }));
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
@@ -820,7 +875,10 @@ function App() {
                   }}
                   disabled={!activeRepoPath || loading}
                 >
-                  Commit…
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                    <span>Commit…</span>
+                    {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -841,7 +899,10 @@ function App() {
                   disabled={!activeRepoPath || loading || !remoteUrl}
                   title={!remoteUrl ? "No remote origin" : undefined}
                 >
-                  Push…
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                    <span>Push…</span>
+                    {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
+                  </span>
                 </button>
               </div>
             ) : null}
@@ -861,7 +922,10 @@ function App() {
             Refresh
           </button>
           <button type="button" onClick={() => void openCommitDialog()} disabled={!activeRepoPath || loading}>
-            Commit…
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span>Commit…</span>
+              {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
+            </span>
           </button>
           <button type="button" onClick={() => void openPath(activeRepoPath)} disabled={!activeRepoPath}>
             Open folder
@@ -1007,7 +1071,10 @@ function App() {
                       Remote
                     </button>
                     <button type="button" onClick={() => void openPushDialog()} disabled={!activeRepoPath || !remoteUrl}>
-                      Push
+                      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>Push</span>
+                        {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -1092,7 +1159,7 @@ function App() {
 
       {commitModalOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal">
+          <div className="modal" style={{ width: "min(900px, 96vw)" }}>
             <div className="modalHeader">
               <div style={{ fontWeight: 900 }}>Commit</div>
               <button type="button" onClick={() => setCommitModalOpen(false)} disabled={commitBusy}>
@@ -1215,7 +1282,7 @@ function App() {
 
       {pushModalOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(60vh, 560px)" }}>
+          <div className="modal" style={{ width: "min(900px, 96vw)", maxHeight: "min(60vh, 560px)" }}>
             <div className="modalHeader">
               <div style={{ fontWeight: 900 }}>Push</div>
               <button type="button" onClick={() => setPushModalOpen(false)} disabled={pushBusy}>
@@ -1257,17 +1324,31 @@ function App() {
                   </div>
                 </div>
 
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                  <input
-                    type="checkbox"
-                    checked={pushForce}
-                    onChange={(e) => setPushForce(e.target.checked)}
-                    disabled={pushBusy}
-                  />
-                  Force push (with lease)
-                </label>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                    <input
+                      type="checkbox"
+                      checked={pushForce}
+                      onChange={(e) => setPushForce(e.target.checked)}
+                      disabled={pushBusy}
+                    />
+                    Force push
+                  </label>
+                  <label
+                    style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: pushForce ? 0.85 : 0.5 }}
+                    title="With lease is safer: it will refuse to force push if remote changed since last fetch."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={pushWithLease}
+                      onChange={(e) => setPushWithLease(e.target.checked)}
+                      disabled={pushBusy || !pushForce}
+                    />
+                    With lease
+                  </label>
+                </div>
                 <div style={{ opacity: 0.7, fontSize: 12 }}>
-                  Force push rewrites history on GitHub. Use only if you really want to replace remote history.
+                  Force push rewrites history on remote. Use only if you really want to replace remote history.
                 </div>
               </div>
             </div>
