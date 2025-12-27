@@ -31,6 +31,11 @@ type GitStatusEntry = {
   path: string;
 };
 
+type ViewportState = {
+  zoom: number;
+  pan: { x: number; y: number };
+};
+
 function shortHash(hash: string) {
   return hash.slice(0, 8);
 }
@@ -79,12 +84,15 @@ function App() {
 
   const [viewMode, setViewMode] = useState<"graph" | "commits">("graph");
   const [selectedHash, setSelectedHash] = useState<string>("");
+  const [zoomPct, setZoomPct] = useState<number>(100);
 
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  const viewportByRepoRef = useRef<Record<string, ViewportState | undefined>>({});
+  const viewportRafRef = useRef<number | null>(null);
 
   const selectedCommit = useMemo(() => {
     if (!selectedHash) return undefined;
@@ -95,9 +103,11 @@ function App() {
     return overview?.head || commits.find((c) => c.is_head)?.hash || "";
   }, [commits, overview?.head]);
 
-  function focusOnHash(hash: string, nextZoom?: number) {
+  function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
     const cy = cyRef.current;
     if (!cy) return;
+
+    cy.resize();
 
     const node = cy.$id(hash);
     if (node.length === 0) return;
@@ -106,12 +116,28 @@ function App() {
       cy.zoom(nextZoom);
     }
 
+    const container = graphRef.current;
+    const cyW = cy.width() || 0;
+    const cyH = cy.height() || 0;
+    const h = cyH || container?.clientHeight || 0;
+    if ((cyW <= 0 || cyH <= 0) && attempt < 10) {
+      requestAnimationFrame(() => focusOnHash(hash, nextZoom, yRatio, attempt + 1));
+      return;
+    }
+
     cy.center(node);
+
+    if (typeof yRatio === "number") {
+      const pan = cy.pan();
+      const desiredY = h * yRatio;
+      const currentY = h / 2;
+      cy.pan({ x: pan.x, y: pan.y + (desiredY - currentY) });
+    }
   }
 
   function focusOnHead() {
     if (!headHash) return;
-    focusOnHash(headHash, 1);
+    focusOnHash(headHash, 1, 0.22);
   }
 
   function zoomBy(factor: number) {
@@ -127,7 +153,7 @@ function App() {
   }
 
   const elements = useMemo(() => {
-    const nodes = new Map<string, { data: { id: string; label: string }; classes?: string }>();
+    const nodes = new Map<string, { data: { id: string; label: string; refs: string }; classes?: string }>();
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
     for (const c of commits) {
@@ -136,6 +162,7 @@ function App() {
         data: {
           id: c.hash,
           label,
+          refs: c.refs,
         },
         classes: c.is_head ? "head" : undefined,
       });
@@ -148,6 +175,7 @@ function App() {
             data: {
               id: p,
               label: `${shortHash(p)}\n(older)`,
+              refs: "",
             },
             classes: "placeholder",
           });
@@ -169,8 +197,117 @@ function App() {
     };
   }, [commits]);
 
+  function parseRefs(refs: string): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
+    const parts = refs
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    const out: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> = [];
+
+    for (const part of parts) {
+      if (part.startsWith("tag: ")) {
+        const label = part.slice("tag: ".length).trim();
+        if (label) out.push({ kind: "tag", label });
+        continue;
+      }
+
+      if (part.includes(" -> ")) {
+        const [leftRaw, rightRaw] = part.split(" -> ", 2);
+        const left = leftRaw.trim();
+        const right = rightRaw.trim();
+        if (left === "HEAD") {
+          out.push({ kind: "head", label: "HEAD" });
+        } else if (left.endsWith("/HEAD")) {
+          out.push({ kind: "remote", label: left });
+        } else if (left) {
+          out.push({ kind: left.includes("/") ? "remote" : "branch", label: left });
+        }
+        if (right) {
+          out.push({ kind: right.includes("/") ? "remote" : "branch", label: right });
+        }
+        continue;
+      }
+
+      if (part === "HEAD") {
+        out.push({ kind: "head", label: "HEAD" });
+        continue;
+      }
+
+      out.push({ kind: part.includes("/") ? "remote" : "branch", label: part });
+    }
+
+    return out;
+  }
+
+  function applyRefBadges(cy: Core) {
+    cy.$("node.refBadge").remove();
+    cy.$("edge.refEdge").remove();
+
+    const sideOffsetX = 240;
+    const gapY = 30;
+    const colGapX = 150;
+    const maxPerCol = 6;
+
+    for (const n of cy.nodes().toArray()) {
+      if (n.hasClass("refBadge")) continue;
+      const refs = (n.data("refs") as string) || "";
+      if (!refs.trim()) continue;
+
+      const parsed = parseRefs(refs);
+      if (parsed.length === 0) continue;
+
+      const pos = n.position();
+
+      const left = parsed.filter((_, i) => i % 2 === 0);
+      const right = parsed.filter((_, i) => i % 2 === 1);
+
+      const placeSide = (items: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>, side: -1 | 1) => {
+        const visibleCount = Math.min(items.length, maxPerCol);
+        const baseY = pos.y - ((visibleCount - 1) * gapY) / 2;
+
+        for (let i = 0; i < items.length; i++) {
+          const r = items[i];
+          const col = Math.floor(i / maxPerCol);
+          const row = i % maxPerCol;
+          const id = `ref:${n.id()}:${r.kind}:${r.label}`;
+          if (cy.$id(id).length > 0) continue;
+
+          cy.add({
+            group: "nodes",
+            data: { id, label: r.label, kind: r.kind },
+            position: {
+              x: pos.x + side * (sideOffsetX + col * colGapX),
+              y: baseY + row * gapY,
+            },
+            classes: `refBadge ref-${r.kind}`,
+            locked: true,
+            grabbable: false,
+            selectable: false,
+          } as any);
+
+          cy.add({
+            group: "edges",
+            data: { id: `refedge:${id}`, source: id, target: n.id() },
+            classes: "refEdge",
+            selectable: false,
+          } as any);
+        }
+      };
+
+      if (left.length > 0) placeSide(left, -1);
+      if (right.length > 0) placeSide(right, 1);
+    }
+  }
+
   useEffect(() => {
     if (viewMode !== "graph") {
+      if (cyRef.current && activeRepoPath) {
+        viewportByRepoRef.current[activeRepoPath] = {
+          zoom: cyRef.current.zoom(),
+          pan: cyRef.current.pan(),
+        };
+      }
       cyRef.current?.destroy();
       cyRef.current = null;
       return;
@@ -189,7 +326,7 @@ function App() {
       elements: [...elements.nodes, ...elements.edges],
       minZoom: 0.1,
       maxZoom: 5,
-      wheelSensitivity: 0.15,
+      wheelSensitivity: 0.6,
       layout: { name: "preset" } as any,
       style: [
         {
@@ -203,6 +340,7 @@ function App() {
             color: "#0f0f0f",
             "text-outline-width": "0px",
             "font-size": "12px",
+            "font-weight": "bold",
             "text-wrap": "wrap",
             "text-max-width": "220px",
             "text-valign": "center",
@@ -238,13 +376,70 @@ function App() {
         {
           selector: "edge",
           style: {
-            width: "2px",
-            "line-color": "rgba(47, 111, 237, 0.35)",
-            "target-arrow-color": "rgba(47, 111, 237, 0.55)",
+            width: "3px",
+            "line-color": "rgba(47, 111, 237, 0.50)",
+            "target-arrow-color": "rgba(47, 111, 237, 0.75)",
             "target-arrow-shape": "triangle",
             "target-arrow-fill": "filled",
-            "arrow-scale": 1.1,
+            "arrow-scale": 1.25,
             "curve-style": "bezier",
+          },
+        },
+        {
+          selector: "node.refBadge",
+          style: {
+            shape: "round-rectangle",
+            width: "label",
+            height: "24px",
+            padding: "6px",
+            "background-color": "#ffffff",
+            "border-color": "rgba(15, 15, 15, 0.20)",
+            "border-width": "1px",
+            label: "data(label)",
+            color: "#0f0f0f",
+            "font-size": "12px",
+            "font-weight": "bold",
+            "text-valign": "center",
+            "text-halign": "center",
+            "text-wrap": "none",
+          },
+        },
+        {
+          selector: "node.refBadge.ref-head",
+          style: {
+            "background-color": "rgba(255, 230, 160, 0.70)",
+            "border-color": "rgba(140, 90, 0, 0.35)",
+          },
+        },
+        {
+          selector: "node.refBadge.ref-tag",
+          style: {
+            "background-color": "rgba(200, 230, 200, 0.70)",
+            "border-color": "rgba(0, 90, 0, 0.25)",
+          },
+        },
+        {
+          selector: "node.refBadge.ref-branch",
+          style: {
+            "background-color": "rgba(210, 235, 250, 0.75)",
+            "border-color": "rgba(0, 65, 100, 0.25)",
+          },
+        },
+        {
+          selector: "node.refBadge.ref-remote",
+          style: {
+            "background-color": "rgba(220, 220, 220, 0.55)",
+            "border-color": "rgba(15, 15, 15, 0.20)",
+          },
+        },
+        {
+          selector: "edge.refEdge",
+          style: {
+            width: "2px",
+            "line-style": "dotted",
+            "line-color": "rgba(15, 15, 15, 0.28)",
+            "target-arrow-shape": "none",
+            "curve-style": "straight",
           },
         },
       ],
@@ -254,6 +449,7 @@ function App() {
     if (!cy) return;
 
     cy.on("tap", "node", (evt) => {
+      if ((evt.target as any).hasClass?.("refBadge")) return;
       setSelectedHash(evt.target.id());
     });
 
@@ -261,26 +457,60 @@ function App() {
       if (evt.target === cy) setSelectedHash("");
     });
 
+    const scheduleViewportUpdate = () => {
+      if (!activeRepoPath) return;
+      if (viewportRafRef.current) return;
+      viewportRafRef.current = requestAnimationFrame(() => {
+        viewportRafRef.current = null;
+        viewportByRepoRef.current[activeRepoPath] = {
+          zoom: cy.zoom(),
+          pan: cy.pan(),
+        };
+        setZoomPct(Math.round(cy.zoom() * 100));
+      });
+    };
+    cy.on("zoom pan", scheduleViewportUpdate);
+    setZoomPct(Math.round(cy.zoom() * 100));
+
     const layout = (cy as any).layout({
       name: "dagre",
       rankDir: "TB",
-      nodeSep: 70,
-      rankSep: 90,
+      nodeSep: 50,
+      rankSep: 60,
       fit: false,
       animate: false,
     });
 
     (layout as any).one("layoutstop", () => {
-      focusOnHead();
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          cy.resize();
+          const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
+          if (saved) {
+            cy.zoom(saved.zoom);
+            cy.pan(saved.pan);
+            setZoomPct(Math.round(cy.zoom() * 100));
+            applyRefBadges(cy);
+          } else {
+            focusOnHead();
+            scheduleViewportUpdate();
+            applyRefBadges(cy);
+          }
+        });
+      });
     });
 
     (layout as any).run();
 
     return () => {
+      if (viewportRafRef.current) {
+        cancelAnimationFrame(viewportRafRef.current);
+        viewportRafRef.current = null;
+      }
       cyRef.current?.destroy();
       cyRef.current = null;
     };
-  }, [elements.edges, elements.nodes, headHash, viewMode]);
+  }, [activeRepoPath, elements.edges, elements.nodes, headHash, viewMode]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -567,13 +797,14 @@ function App() {
                 <div className="graphCanvas" key={`graph-${activeRepoPath}`}>
                   <div className="cyCanvas" ref={graphRef} />
                   <div className="zoomControls">
+                    <div className="zoomIndicator">{zoomPct}%</div>
                     <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
                       +
                     </button>
                     <button type="button" onClick={() => zoomBy(1 / 1.2)} disabled={!activeRepoPath}>
                       -
                     </button>
-                    <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1)} disabled={!activeRepoPath}>
+                    <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1, 0.22)} disabled={!activeRepoPath}>
                       Reset
                     </button>
                     <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>

@@ -266,6 +266,17 @@ button:disabled {
   gap: 6px;
 }
 
+.zoomIndicator {
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-weight: 800;
+  font-size: 12px;
+  text-align: center;
+  color: rgba(15, 15, 15, 0.75);
+}
+
 .details {
   border-top: 1px solid var(--border);
   background: var(--panel);

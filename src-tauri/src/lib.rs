@@ -46,7 +46,7 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
         return Err(format!("git command failed: {stderr}"));
     }
 
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
 fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
