@@ -927,6 +927,17 @@ function App() {
               {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => void openPushDialog()}
+            disabled={!activeRepoPath || loading || !remoteUrl}
+            title={!remoteUrl ? "No remote origin" : undefined}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span>Push…</span>
+              {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
+            </span>
+          </button>
           <button type="button" onClick={() => void openPath(activeRepoPath)} disabled={!activeRepoPath}>
             Open folder
           </button>
@@ -1069,12 +1080,6 @@ function App() {
                         style={{ backgroundColor: remoteUrl ? "rgba(0, 140, 0, 0.85)" : "rgba(176, 0, 32, 0.85)" }}
                       />
                       Remote
-                    </button>
-                    <button type="button" onClick={() => void openPushDialog()} disabled={!activeRepoPath || !remoteUrl}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span>Push</span>
-                        {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
-                      </span>
                     </button>
                   </div>
                 </div>
@@ -1324,7 +1329,7 @@ function App() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
                     <input
                       type="checkbox"
@@ -1347,7 +1352,7 @@ function App() {
                     With lease
                   </label>
                 </div>
-                <div style={{ opacity: 0.7, fontSize: 12 }}>
+                <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
                   Force push rewrites history on remote. Use only if you really want to replace remote history.
                 </div>
               </div>
