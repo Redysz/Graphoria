@@ -299,6 +299,98 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
     Ok(new_head)
 }
 
+#[tauri::command]
+fn git_get_remote_url(repo_path: String, remote_name: Option<String>) -> Result<Option<String>, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+
+    let out = Command::new("git")
+        .args(["-C", &repo_path, "remote", "get-url", remote_name.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
+
+    if !out.status.success() {
+        return Ok(None);
+    }
+
+    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if url.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(url))
+    }
+}
+
+#[tauri::command]
+fn git_set_remote_url(repo_path: String, remote_name: Option<String>, url: String) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err(String::from("Remote URL is empty."));
+    }
+
+    let exists_out = Command::new("git")
+        .args(["-C", &repo_path, "remote", "get-url", remote_name.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
+
+    if exists_out.status.success() {
+        run_git(
+            &repo_path,
+            &[
+                "remote",
+                "set-url",
+                remote_name.as_str(),
+                url.as_str(),
+            ],
+        )?;
+        Ok(())
+    } else {
+        run_git(
+            &repo_path,
+            &[
+                "remote",
+                "add",
+                remote_name.as_str(),
+                url.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn git_push(
+    repo_path: String,
+    remote_name: Option<String>,
+    branch: Option<String>,
+    force: Option<bool>,
+) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let force = force.unwrap_or(false);
+
+    let branch = match branch {
+        Some(b) if !b.trim().is_empty() => b,
+        _ => run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .map_err(|e| format!("Failed to determine current branch: {e}"))?,
+    };
+
+    let mut args: Vec<&str> = vec!["push"];
+    if force {
+        args.push("--force-with-lease");
+    }
+    args.push("-u");
+    args.push(remote_name.as_str());
+    args.push(branch.as_str());
+
+    run_git(&repo_path, args.as_slice())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -310,7 +402,10 @@ pub fn run() {
             list_commits,
             init_repo,
             git_status,
-            git_commit
+            git_commit,
+            git_get_remote_url,
+            git_set_remote_url,
+            git_push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

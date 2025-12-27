@@ -382,6 +382,22 @@ button:disabled {
   resize: vertical;
 }
 
+.modalInput {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.statusDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
 .statusList {
   margin-top: 8px;
   display: flex;

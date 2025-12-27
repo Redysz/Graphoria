@@ -72,6 +72,7 @@ function App() {
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
+  const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -79,8 +80,19 @@ function App() {
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
   const [commitMessage, setCommitMessage] = useState("");
+  const [commitAlsoPush, setCommitAlsoPush] = useState(false);
   const [commitBusy, setCommitBusy] = useState(false);
   const [commitError, setCommitError] = useState("");
+
+  const [remoteModalOpen, setRemoteModalOpen] = useState(false);
+  const [remoteUrlDraft, setRemoteUrlDraft] = useState("");
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+
+  const [pushModalOpen, setPushModalOpen] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushForce, setPushForce] = useState(false);
+  const [pushError, setPushError] = useState("");
 
   const [viewMode, setViewMode] = useState<"graph" | "commits">("graph");
   const [selectedHash, setSelectedHash] = useState<string>("");
@@ -88,6 +100,7 @@ function App() {
 
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
+  const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -562,6 +575,7 @@ function App() {
     if (!activeRepoPath) return;
     setCommitError("");
     setCommitMessage("");
+    setCommitAlsoPush(false);
     setCommitModalOpen(true);
 
     try {
@@ -590,12 +604,113 @@ function App() {
     setCommitError("");
     try {
       await invoke<string>("git_commit", { repoPath: activeRepoPath, message: commitMessage, paths });
+
+      if (commitAlsoPush) {
+        const currentRemote = await invoke<string | null>("git_get_remote_url", {
+          repoPath: activeRepoPath,
+          remoteName: "origin",
+        });
+
+        if (!currentRemote) {
+          setCommitError("No remote origin set. Configure Remote first.");
+          return;
+        }
+
+        const headName = overviewByRepo[activeRepoPath]?.head_name ?? "";
+        if (headName === "(detached)") {
+          setCommitError("Cannot push from detached HEAD.");
+          return;
+        }
+
+        await invoke<string>("git_push", { repoPath: activeRepoPath, remoteName: "origin", force: false });
+      }
+
       setCommitModalOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
       setCommitError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setCommitBusy(false);
+    }
+  }
+
+  async function openRemoteDialog() {
+    if (!activeRepoPath) return;
+    setRemoteError("");
+    setRemoteUrlDraft(remoteUrl ?? "");
+    setRemoteModalOpen(true);
+  }
+
+  async function saveRemote() {
+    if (!activeRepoPath) return;
+    const nextUrl = remoteUrlDraft.trim();
+    if (!nextUrl) {
+      setRemoteError("Remote URL is empty.");
+      return;
+    }
+
+    setRemoteBusy(true);
+    setRemoteError("");
+    try {
+      await invoke<void>("git_set_remote_url", {
+        repoPath: activeRepoPath,
+        remoteName: "origin",
+        url: nextUrl,
+      });
+      setRemoteModalOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setRemoteError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setRemoteBusy(false);
+    }
+  }
+
+  async function openPushDialog() {
+    if (!activeRepoPath) return;
+    setPushError("");
+    setPushForce(false);
+    setPushModalOpen(true);
+  }
+
+  async function runPush() {
+    if (!activeRepoPath) return;
+    const currentRemote = await invoke<string | null>("git_get_remote_url", {
+      repoPath: activeRepoPath,
+      remoteName: "origin",
+    });
+    if (!currentRemote) {
+      setPushError("No remote origin set. Configure Remote first.");
+      return;
+    }
+
+    const headName = overviewByRepo[activeRepoPath]?.head_name ?? "";
+    if (headName === "(detached)") {
+      setPushError("Cannot push from detached HEAD.");
+      return;
+    }
+
+    if (pushForce) {
+      const ok = window.confirm(
+        "Force push will rewrite history on the remote branch. Continue?",
+      );
+      if (!ok) return;
+    }
+
+    setPushBusy(true);
+    setPushError("");
+    try {
+      await invoke<string>("git_push", {
+        repoPath: activeRepoPath,
+        remoteName: "origin",
+        force: pushForce,
+      });
+      setPushModalOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setPushError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPushBusy(false);
     }
   }
 
@@ -621,6 +736,11 @@ function App() {
       delete next[path];
       return next;
     });
+    setRemoteUrlByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
 
     if (activeRepoPath === path) {
       const remaining = repos.filter((p) => p !== path);
@@ -637,19 +757,22 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [ov, cs] = await Promise.all([
+      const [ov, cs, remote] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
         invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 }),
+        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
       ]);
 
       setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
       setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
+      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
 
       const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
       setSelectedHash(headHash || "");
     } catch (e) {
       setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
       setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
+      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
@@ -810,6 +933,22 @@ function App() {
                     <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
                       HEAD
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void openRemoteDialog()}
+                      disabled={!activeRepoPath}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                      title={remoteUrl ? remoteUrl : "No remote origin"}
+                    >
+                      <span
+                        className="statusDot"
+                        style={{ backgroundColor: remoteUrl ? "rgba(0, 140, 0, 0.85)" : "rgba(176, 0, 32, 0.85)" }}
+                      />
+                      Remote
+                    </button>
+                    <button type="button" onClick={() => void openPushDialog()} disabled={!activeRepoPath || !remoteUrl}>
+                      Push
+                    </button>
                   </div>
                 </div>
               </>
@@ -948,6 +1087,19 @@ function App() {
                   ))}
                 </div>
               )}
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                  <input
+                    type="checkbox"
+                    checked={commitAlsoPush}
+                    onChange={(e) => setCommitAlsoPush(e.target.checked)}
+                    disabled={commitBusy || !remoteUrl}
+                  />
+                  Push after commit
+                </label>
+                {!remoteUrl ? <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin.</div> : null}
+              </div>
             </div>
             <div className="modalFooter">
               <button
@@ -956,6 +1108,86 @@ function App() {
                 disabled={commitBusy || !commitMessage.trim() || statusEntries.filter((e) => selectedPaths[e.path]).length === 0}
               >
                 {commitBusy ? "Committing…" : "Commit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {remoteModalOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(60vh, 540px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Remote</div>
+              <button type="button" onClick={() => setRemoteModalOpen(false)} disabled={remoteBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {remoteError ? <div className="error">{remoteError}</div> : null}
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 800, opacity: 0.8 }}>Origin URL</div>
+                <input
+                  value={remoteUrlDraft}
+                  onChange={(e) => setRemoteUrlDraft(e.target.value)}
+                  className="modalInput"
+                  placeholder="https://github.com/user/repo.git"
+                  disabled={remoteBusy}
+                />
+                {remoteUrl ? (
+                  <div style={{ opacity: 0.7, fontSize: 12, wordBreak: "break-all" }}>
+                    Current: {remoteUrl}
+                  </div>
+                ) : (
+                  <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin configured.</div>
+                )}
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button type="button" onClick={() => void saveRemote()} disabled={remoteBusy || !remoteUrlDraft.trim()}>
+                {remoteBusy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pushModalOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(60vh, 560px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Push</div>
+              <button type="button" onClick={() => setPushModalOpen(false)} disabled={pushBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {pushError ? <div className="error">{pushError}</div> : null}
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Remote</div>
+                  <div style={{ opacity: 0.8, fontSize: 12, wordBreak: "break-all" }}>{remoteUrl || "(none)"}</div>
+                </div>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                  <input
+                    type="checkbox"
+                    checked={pushForce}
+                    onChange={(e) => setPushForce(e.target.checked)}
+                    disabled={pushBusy}
+                  />
+                  Force push (with lease)
+                </label>
+                <div style={{ opacity: 0.7, fontSize: 12 }}>
+                  Force push rewrites history on GitHub. Use only if you really want to replace remote history.
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button type="button" onClick={() => void runPush()} disabled={pushBusy || !remoteUrl}>
+                {pushBusy ? "Pushing…" : "Push"}
               </button>
             </div>
           </div>
