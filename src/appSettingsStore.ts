@@ -1,0 +1,248 @@
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+export type ThemeName = "light" | "dark" | "blue" | "sepia";
+export type ViewMode = "graph" | "commits";
+export type RankDir = "TB" | "LR";
+export type EdgeDirection = "to_parent" | "to_child";
+
+export type GeneralSettings = {
+  openOnStartup: boolean;
+};
+
+export type GitSettings = {
+  userName: string;
+  userEmail: string;
+};
+
+export type AppearanceSettings = {
+  theme: ThemeName;
+  fontFamily: string;
+  fontSizePx: number;
+};
+
+export type GraphSettings = {
+  rankDir: RankDir;
+  nodeSep: number;
+  rankSep: number;
+  padding: number;
+  nodeCornerRadius: number;
+  edgeDirection: EdgeDirection;
+  canvasBackground: string;
+};
+
+export type AppSettingsState = {
+  general: GeneralSettings;
+  appearance: AppearanceSettings;
+  git: GitSettings;
+  viewMode: ViewMode;
+  graph: GraphSettings;
+
+  setGeneral: (patch: Partial<GeneralSettings>) => void;
+  setTheme: (theme: ThemeName) => void;
+  setViewMode: (viewMode: ViewMode) => void;
+  setAppearance: (patch: Partial<AppearanceSettings>) => void;
+  setGit: (patch: Partial<GitSettings>) => void;
+  setGraph: (patch: Partial<GraphSettings>) => void;
+  resetSettings: () => void;
+};
+
+export const defaultGeneralSettings: GeneralSettings = {
+  openOnStartup: false,
+};
+
+export const defaultAppearanceSettings: AppearanceSettings = {
+  theme: "light",
+  fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+  fontSizePx: 14,
+};
+
+export const defaultGitSettings: GitSettings = {
+  userName: "",
+  userEmail: "",
+};
+
+export const defaultGraphSettings: GraphSettings = {
+  rankDir: "TB",
+  nodeSep: 50,
+  rankSep: 60,
+  padding: 20,
+  nodeCornerRadius: 10,
+  edgeDirection: "to_parent",
+  canvasBackground: "",
+};
+
+export const useAppSettings = create<AppSettingsState>()(
+  persist(
+    (set) => ({
+      general: defaultGeneralSettings,
+      appearance: defaultAppearanceSettings,
+      git: defaultGitSettings,
+      viewMode: "graph",
+      graph: defaultGraphSettings,
+
+      setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
+      setTheme: (theme) =>
+        set((s) => ({
+          appearance: {
+            ...s.appearance,
+            theme,
+          },
+        })),
+      setViewMode: (viewMode) => set({ viewMode }),
+      setAppearance: (patch) => set((s) => ({ appearance: { ...s.appearance, ...patch } })),
+      setGit: (patch) => set((s) => ({ git: { ...s.git, ...patch } })),
+      setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
+      resetSettings: () =>
+        set({
+          general: defaultGeneralSettings,
+          appearance: defaultAppearanceSettings,
+          git: defaultGitSettings,
+          viewMode: "graph",
+          graph: defaultGraphSettings,
+        }),
+    }),
+    {
+      name: "graphoria.settings.v1",
+      version: 1,
+    },
+  ),
+);
+
+export type CyPalette = {
+  nodeBg: string;
+  nodeBorder: string;
+  nodeText: string;
+  nodeSelectedBg: string;
+  nodeSelectedBorder: string;
+  nodeHeadBorder: string;
+  placeholderBg: string;
+  placeholderBorder: string;
+  placeholderText: string;
+  edgeLine: string;
+  edgeArrow: string;
+  refBadgeBg: string;
+  refBadgeBorder: string;
+  refBadgeText: string;
+  refHeadBg: string;
+  refHeadBorder: string;
+  refTagBg: string;
+  refTagBorder: string;
+  refBranchBg: string;
+  refBranchBorder: string;
+  refRemoteBg: string;
+  refRemoteBorder: string;
+  refEdgeLine: string;
+};
+
+export function getCyPalette(theme: ThemeName): CyPalette {
+  if (theme === "dark") {
+    return {
+      nodeBg: "#151922",
+      nodeBorder: "rgba(255, 255, 255, 0.18)",
+      nodeText: "#f2f4f8",
+      nodeSelectedBg: "rgba(75, 139, 255, 0.14)",
+      nodeSelectedBorder: "#80b3ff",
+      nodeHeadBorder: "#4b8bff",
+      placeholderBg: "#1b2130",
+      placeholderBorder: "rgba(255, 255, 255, 0.14)",
+      placeholderText: "rgba(242, 244, 248, 0.72)",
+      edgeLine: "rgba(75, 139, 255, 0.55)",
+      edgeArrow: "rgba(75, 139, 255, 0.8)",
+      refBadgeBg: "#151922",
+      refBadgeBorder: "rgba(255, 255, 255, 0.18)",
+      refBadgeText: "#f2f4f8",
+      refHeadBg: "rgba(255, 215, 130, 0.22)",
+      refHeadBorder: "rgba(255, 215, 130, 0.35)",
+      refTagBg: "rgba(120, 210, 140, 0.20)",
+      refTagBorder: "rgba(120, 210, 140, 0.30)",
+      refBranchBg: "rgba(120, 185, 255, 0.22)",
+      refBranchBorder: "rgba(120, 185, 255, 0.32)",
+      refRemoteBg: "rgba(255, 255, 255, 0.12)",
+      refRemoteBorder: "rgba(255, 255, 255, 0.18)",
+      refEdgeLine: "rgba(242, 244, 248, 0.25)",
+    };
+  }
+
+  if (theme === "blue") {
+    return {
+      nodeBg: "#ffffff",
+      nodeBorder: "rgba(10, 35, 70, 0.22)",
+      nodeText: "#0a2346",
+      nodeSelectedBg: "rgba(31, 111, 235, 0.12)",
+      nodeSelectedBorder: "#1f6feb",
+      nodeHeadBorder: "#1f6feb",
+      placeholderBg: "#f2f7ff",
+      placeholderBorder: "rgba(10, 35, 70, 0.18)",
+      placeholderText: "rgba(10, 35, 70, 0.72)",
+      edgeLine: "rgba(31, 111, 235, 0.55)",
+      edgeArrow: "rgba(31, 111, 235, 0.8)",
+      refBadgeBg: "#ffffff",
+      refBadgeBorder: "rgba(10, 35, 70, 0.20)",
+      refBadgeText: "#0a2346",
+      refHeadBg: "rgba(255, 230, 160, 0.70)",
+      refHeadBorder: "rgba(140, 90, 0, 0.35)",
+      refTagBg: "rgba(200, 230, 200, 0.70)",
+      refTagBorder: "rgba(0, 90, 0, 0.25)",
+      refBranchBg: "rgba(210, 235, 250, 0.75)",
+      refBranchBorder: "rgba(0, 65, 100, 0.25)",
+      refRemoteBg: "rgba(220, 220, 220, 0.55)",
+      refRemoteBorder: "rgba(15, 15, 15, 0.20)",
+      refEdgeLine: "rgba(10, 35, 70, 0.28)",
+    };
+  }
+
+  if (theme === "sepia") {
+    return {
+      nodeBg: "#fffaf0",
+      nodeBorder: "rgba(61, 43, 31, 0.25)",
+      nodeText: "#3d2b1f",
+      nodeSelectedBg: "rgba(163, 91, 29, 0.14)",
+      nodeSelectedBorder: "#7d4212",
+      nodeHeadBorder: "#a35b1d",
+      placeholderBg: "#f5efe3",
+      placeholderBorder: "rgba(61, 43, 31, 0.20)",
+      placeholderText: "rgba(61, 43, 31, 0.72)",
+      edgeLine: "rgba(163, 91, 29, 0.50)",
+      edgeArrow: "rgba(163, 91, 29, 0.78)",
+      refBadgeBg: "#fffaf0",
+      refBadgeBorder: "rgba(61, 43, 31, 0.20)",
+      refBadgeText: "#3d2b1f",
+      refHeadBg: "rgba(255, 220, 150, 0.55)",
+      refHeadBorder: "rgba(125, 66, 18, 0.30)",
+      refTagBg: "rgba(160, 210, 170, 0.45)",
+      refTagBorder: "rgba(40, 90, 50, 0.22)",
+      refBranchBg: "rgba(205, 220, 230, 0.55)",
+      refBranchBorder: "rgba(80, 95, 105, 0.22)",
+      refRemoteBg: "rgba(61, 43, 31, 0.10)",
+      refRemoteBorder: "rgba(61, 43, 31, 0.20)",
+      refEdgeLine: "rgba(61, 43, 31, 0.25)",
+    };
+  }
+
+  return {
+    nodeBg: "#ffffff",
+    nodeBorder: "rgba(15, 15, 15, 0.20)",
+    nodeText: "#0f0f0f",
+    nodeSelectedBg: "rgba(47, 111, 237, 0.10)",
+    nodeSelectedBorder: "#1f56c6",
+    nodeHeadBorder: "#2f6fed",
+    placeholderBg: "#f2f4f8",
+    placeholderBorder: "rgba(15, 15, 15, 0.18)",
+    placeholderText: "rgba(15, 15, 15, 0.70)",
+    edgeLine: "rgba(47, 111, 237, 0.50)",
+    edgeArrow: "rgba(47, 111, 237, 0.75)",
+    refBadgeBg: "#ffffff",
+    refBadgeBorder: "rgba(15, 15, 15, 0.20)",
+    refBadgeText: "#0f0f0f",
+    refHeadBg: "rgba(255, 230, 160, 0.70)",
+    refHeadBorder: "rgba(140, 90, 0, 0.35)",
+    refTagBg: "rgba(200, 230, 200, 0.70)",
+    refTagBorder: "rgba(0, 90, 0, 0.25)",
+    refBranchBg: "rgba(210, 235, 250, 0.75)",
+    refBranchBorder: "rgba(0, 65, 100, 0.25)",
+    refRemoteBg: "rgba(220, 220, 220, 0.55)",
+    refRemoteBorder: "rgba(15, 15, 15, 0.20)",
+    refEdgeLine: "rgba(15, 15, 15, 0.28)",
+  };
+}

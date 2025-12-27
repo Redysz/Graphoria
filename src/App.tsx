@@ -4,6 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import cytoscape, { type Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
+import SettingsModal from "./SettingsModal";
+import { getCyPalette, useAppSettings, type ThemeName } from "./appSettingsStore";
 import "./App.css";
 
 let dagreRegistered = false;
@@ -88,6 +90,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
@@ -110,9 +114,22 @@ function App() {
   const [pushLocalBranch, setPushLocalBranch] = useState("");
   const [pushRemoteBranch, setPushRemoteBranch] = useState("");
 
-  const [viewMode, setViewMode] = useState<"graph" | "commits">("graph");
+  const viewMode = useAppSettings((s) => s.viewMode);
+  const setViewMode = useAppSettings((s) => s.setViewMode);
+  const theme = useAppSettings((s) => s.appearance.theme);
+  const setTheme = useAppSettings((s) => s.setTheme);
+  const fontFamily = useAppSettings((s) => s.appearance.fontFamily);
+  const fontSizePx = useAppSettings((s) => s.appearance.fontSizePx);
+  const graphSettings = useAppSettings((s) => s.graph);
+
   const [selectedHash, setSelectedHash] = useState<string>("");
   const [zoomPct, setZoomPct] = useState<number>(100);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.setProperty("--app-font-family", fontFamily);
+    document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
+  }, [theme, fontFamily, fontSizePx]);
 
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
@@ -212,11 +229,14 @@ function App() {
           });
         }
 
+        const source = graphSettings.edgeDirection === "to_parent" ? c.hash : p;
+        const target = graphSettings.edgeDirection === "to_parent" ? p : c.hash;
+
         edges.push({
           data: {
-            id: `${c.hash}-${p}`,
-            source: c.hash,
-            target: p,
+            id: `${source}-${target}`,
+            source,
+            target,
           },
         });
       }
@@ -226,7 +246,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commits]);
+  }, [commits, graphSettings.edgeDirection]);
 
   function parseRefs(refs: string): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
     const parts = refs
@@ -352,6 +372,8 @@ function App() {
     }
 
     cyRef.current?.destroy();
+
+    const palette = getCyPalette(theme);
     cyRef.current = cytoscape({
       container: graphRef.current,
       elements: [...elements.nodes, ...elements.edges],
@@ -363,12 +385,13 @@ function App() {
         {
           selector: "node",
           style: {
-            "background-color": "#ffffff",
-            "border-color": "rgba(15, 15, 15, 0.20)",
+            "background-color": palette.nodeBg,
+            "border-color": palette.nodeBorder,
             "border-width": "1px",
             shape: "round-rectangle",
+            "corner-radius": `${Math.max(0, graphSettings.nodeCornerRadius)}px`,
             label: "data(label)",
-            color: "#0f0f0f",
+            color: palette.nodeText,
             "text-outline-width": "0px",
             "font-size": "12px",
             "font-weight": "bold",
@@ -383,33 +406,33 @@ function App() {
         {
           selector: "node.head",
           style: {
-            "border-color": "#2f6fed",
+            "border-color": palette.nodeHeadBorder,
             "border-width": "2px",
           },
         },
         {
           selector: "node.selected",
           style: {
-            "border-color": "#1f56c6",
+            "border-color": palette.nodeSelectedBorder,
             "border-width": "3px",
-            "background-color": "rgba(47, 111, 237, 0.10)",
+            "background-color": palette.nodeSelectedBg,
           },
         },
         {
           selector: "node.placeholder",
           style: {
-            "background-color": "#f2f4f8",
-            "border-color": "rgba(15, 15, 15, 0.18)",
+            "background-color": palette.placeholderBg,
+            "border-color": palette.placeholderBorder,
             "border-width": "1px",
-            color: "rgba(15, 15, 15, 0.70)",
+            color: palette.placeholderText,
           },
         },
         {
           selector: "edge",
           style: {
             width: "3px",
-            "line-color": "rgba(47, 111, 237, 0.50)",
-            "target-arrow-color": "rgba(47, 111, 237, 0.75)",
+            "line-color": palette.edgeLine,
+            "target-arrow-color": palette.edgeArrow,
             "target-arrow-shape": "triangle",
             "target-arrow-fill": "filled",
             "arrow-scale": 1.25,
@@ -423,11 +446,11 @@ function App() {
             width: "label",
             height: "24px",
             padding: "6px",
-            "background-color": "#ffffff",
-            "border-color": "rgba(15, 15, 15, 0.20)",
+            "background-color": palette.refBadgeBg,
+            "border-color": palette.refBadgeBorder,
             "border-width": "1px",
             label: "data(label)",
-            color: "#0f0f0f",
+            color: palette.refBadgeText,
             "font-size": "12px",
             "font-weight": "bold",
             "text-valign": "center",
@@ -438,29 +461,29 @@ function App() {
         {
           selector: "node.refBadge.ref-head",
           style: {
-            "background-color": "rgba(255, 230, 160, 0.70)",
-            "border-color": "rgba(140, 90, 0, 0.35)",
+            "background-color": palette.refHeadBg,
+            "border-color": palette.refHeadBorder,
           },
         },
         {
           selector: "node.refBadge.ref-tag",
           style: {
-            "background-color": "rgba(200, 230, 200, 0.70)",
-            "border-color": "rgba(0, 90, 0, 0.25)",
+            "background-color": palette.refTagBg,
+            "border-color": palette.refTagBorder,
           },
         },
         {
           selector: "node.refBadge.ref-branch",
           style: {
-            "background-color": "rgba(210, 235, 250, 0.75)",
-            "border-color": "rgba(0, 65, 100, 0.25)",
+            "background-color": palette.refBranchBg,
+            "border-color": palette.refBranchBorder,
           },
         },
         {
           selector: "node.refBadge.ref-remote",
           style: {
-            "background-color": "rgba(220, 220, 220, 0.55)",
-            "border-color": "rgba(15, 15, 15, 0.20)",
+            "background-color": palette.refRemoteBg,
+            "border-color": palette.refRemoteBorder,
           },
         },
         {
@@ -468,7 +491,7 @@ function App() {
           style: {
             width: "2px",
             "line-style": "dotted",
-            "line-color": "rgba(15, 15, 15, 0.28)",
+            "line-color": palette.refEdgeLine,
             "target-arrow-shape": "none",
             "curve-style": "straight",
           },
@@ -505,9 +528,10 @@ function App() {
 
     const layout = (cy as any).layout({
       name: "dagre",
-      rankDir: "TB",
-      nodeSep: 50,
-      rankSep: 60,
+      rankDir: graphSettings.rankDir,
+      nodeSep: graphSettings.nodeSep,
+      rankSep: graphSettings.rankSep,
+      padding: graphSettings.padding,
       fit: false,
       animate: false,
     });
@@ -541,7 +565,19 @@ function App() {
       cyRef.current?.destroy();
       cyRef.current = null;
     };
-  }, [activeRepoPath, elements.edges, elements.nodes, headHash, viewMode]);
+  }, [
+    activeRepoPath,
+    elements.edges,
+    elements.nodes,
+    graphSettings.nodeCornerRadius,
+    graphSettings.nodeSep,
+    graphSettings.padding,
+    graphSettings.rankDir,
+    graphSettings.rankSep,
+    headHash,
+    theme,
+    viewMode,
+  ]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -771,7 +807,6 @@ function App() {
 
   async function openRepository(path: string) {
     setError("");
-    setViewMode("graph");
     setSelectedHash("");
 
     setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
@@ -854,61 +889,124 @@ function App() {
     <div className="app">
       <div className="topbar">
         <div className="menubar">
-          <div className="menuitem">Repository</div>
-          <div className="menuitem">Navigate</div>
-          <div className="menuitem">View</div>
-          <div style={{ position: "relative" }}>
-            <div
-              className="menuitem"
-              onClick={() => setCommandsMenuOpen((v) => !v)}
-              style={{ cursor: "pointer", userSelect: "none" }}
-            >
-              Commands
-            </div>
-            {commandsMenuOpen ? (
-              <div className="menuDropdown">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCommandsMenuOpen(false);
-                    void openCommitDialog();
-                  }}
-                  disabled={!activeRepoPath || loading}
-                >
-                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                    <span>Commit…</span>
-                    {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCommandsMenuOpen(false);
-                    void openRemoteDialog();
-                  }}
-                  disabled={!activeRepoPath || loading}
-                >
-                  Remote…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCommandsMenuOpen(false);
-                    void openPushDialog();
-                  }}
-                  disabled={!activeRepoPath || loading || !remoteUrl}
-                  title={!remoteUrl ? "No remote origin" : undefined}
-                >
-                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                    <span>Push…</span>
-                    {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
-                  </span>
-                </button>
+          <div className="menubarLeft">
+            <div className="menuitem">Repository</div>
+            <div className="menuitem">Navigate</div>
+            <div className="menuitem">View</div>
+            <div style={{ position: "relative" }}>
+              <div
+                className="menuitem"
+                onClick={() => {
+                  setToolsMenuOpen(false);
+                  setCommandsMenuOpen((v) => !v);
+                }}
+                style={{ cursor: "pointer", userSelect: "none" }}
+              >
+                Commands
               </div>
-            ) : null}
+              {commandsMenuOpen ? (
+                <div className="menuDropdown">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      void openCommitDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                      <span>Commit…</span>
+                      {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      void openRemoteDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                  >
+                    Remote…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      void openPushDialog();
+                    }}
+                    disabled={!activeRepoPath || loading || !remoteUrl}
+                    title={!remoteUrl ? "No remote origin" : undefined}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                      <span>Push…</span>
+                      {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
+                    </span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ position: "relative" }}>
+              <div
+                className="menuitem"
+                onClick={() => {
+                  setCommandsMenuOpen(false);
+                  setToolsMenuOpen((v) => !v);
+                }}
+                style={{ cursor: "pointer", userSelect: "none" }}
+              >
+                Tools
+              </div>
+              {toolsMenuOpen ? (
+                <div className="menuDropdown">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setToolsMenuOpen(false);
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    Settings…
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="menuitem">Help</div>
           </div>
-          <div className="menuitem">Tools</div>
-          <div className="menuitem">Help</div>
+
+          <div className="menubarRight">
+            <div className="segmented small">
+              <button
+                type="button"
+                className={viewMode === "graph" ? "active" : ""}
+                onClick={() => setViewMode("graph")}
+                disabled={!activeRepoPath}
+              >
+                Graph
+              </button>
+              <button
+                type="button"
+                className={viewMode === "commits" ? "active" : ""}
+                onClick={() => setViewMode("commits")}
+                disabled={!activeRepoPath}
+              >
+                Commits
+              </button>
+            </div>
+
+            <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeName)} title="Theme">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="blue">Blue</option>
+              <option value="sepia">Sepia</option>
+            </select>
+
+            <button type="button" onClick={() => setSettingsOpen(true)} title="Settings">
+              Settings
+            </button>
+          </div>
         </div>
 
         <div className="toolbar">
@@ -1028,31 +1126,16 @@ function App() {
                 {overview?.head_name ? ` — ${overview.head_name}` : ""}
               </div>
             </div>
-
-            <div className="segmented">
-              <button
-                type="button"
-                className={viewMode === "graph" ? "active" : ""}
-                onClick={() => setViewMode("graph")}
-                disabled={!activeRepoPath}
-              >
-                Graph
-              </button>
-              <button
-                type="button"
-                className={viewMode === "commits" ? "active" : ""}
-                onClick={() => setViewMode("commits")}
-                disabled={!activeRepoPath}
-              >
-                Commits
-              </button>
-            </div>
           </div>
 
           <div className="mainCanvas">
             {viewMode === "graph" ? (
               <>
-                <div className="graphCanvas" key={`graph-${activeRepoPath}`}>
+                <div
+                  className="graphCanvas"
+                  key={`graph-${activeRepoPath}`}
+                  style={graphSettings.canvasBackground ? { background: graphSettings.canvasBackground } : undefined}
+                >
                   <div className="cyCanvas" ref={graphRef} />
                   <div className="zoomControls">
                     <div className="zoomIndicator">{zoomPct}%</div>
@@ -1365,6 +1448,13 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+        }}
+      />
     </div>
   );
 }

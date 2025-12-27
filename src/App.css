@@ -9,8 +9,16 @@
   --accent-2: #1f56c6;
   --danger: #b00020;
 
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  font-size: 14px;
+  --topbar-grad-top: #ffffff;
+  --topbar-grad-bottom: #f5f7fb;
+  --modalheader-grad-top: #ffffff;
+  --modalheader-grad-bottom: #f5f7fb;
+
+  --app-font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --app-font-size: 14px;
+
+  font-family: var(--app-font-family);
+  font-size: var(--app-font-size);
   line-height: 20px;
   font-weight: 400;
 
@@ -20,6 +28,54 @@
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
 }
+
+ :root[data-theme="dark"] {
+  --bg: #0b0f17;
+  --panel: #151922;
+  --panel-2: #101624;
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f2f4f8;
+  --muted: rgba(242, 244, 248, 0.70);
+  --accent: #4b8bff;
+  --accent-2: #80b3ff;
+
+  --topbar-grad-top: #151922;
+  --topbar-grad-bottom: #101624;
+  --modalheader-grad-top: #151922;
+  --modalheader-grad-bottom: #101624;
+ }
+
+ :root[data-theme="blue"] {
+  --bg: #eaf2ff;
+  --panel: #ffffff;
+  --panel-2: #f2f7ff;
+  --border: rgba(10, 35, 70, 0.16);
+  --text: #0a2346;
+  --muted: rgba(10, 35, 70, 0.70);
+  --accent: #1f6feb;
+  --accent-2: #0f4fb4;
+
+  --topbar-grad-top: #ffffff;
+  --topbar-grad-bottom: #f2f7ff;
+  --modalheader-grad-top: #ffffff;
+  --modalheader-grad-bottom: #f2f7ff;
+ }
+
+ :root[data-theme="sepia"] {
+  --bg: #f3efe6;
+  --panel: #fffaf0;
+  --panel-2: #f5efe3;
+  --border: rgba(61, 43, 31, 0.18);
+  --text: #3d2b1f;
+  --muted: rgba(61, 43, 31, 0.70);
+  --accent: #a35b1d;
+  --accent-2: #7d4212;
+
+  --topbar-grad-top: #fffaf0;
+  --topbar-grad-bottom: #f5efe3;
+  --modalheader-grad-top: #fffaf0;
+  --modalheader-grad-bottom: #f5efe3;
+ }
 
 html,
 body,
@@ -51,6 +107,17 @@ button {
   transition: background-color 0.15s, border-color 0.15s;
 }
 
+ select {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--panel);
+ }
+
 button:hover {
   border-color: rgba(47, 111, 237, 0.55);
 }
@@ -70,7 +137,7 @@ button:disabled {
 }
 
 .topbar {
-  background: linear-gradient(180deg, #ffffff 0%, #f5f7fb 100%);
+  background: linear-gradient(180deg, var(--topbar-grad-top) 0%, var(--topbar-grad-bottom) 100%);
   border-bottom: 1px solid var(--border);
 }
 
@@ -81,12 +148,30 @@ button:disabled {
   padding: 8px 12px;
 }
 
+ .menubarLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+ }
+
+ .menubarRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+ }
+
+ .segmented.small button {
+  padding: 6px 8px;
+  font-size: 12px;
+ }
+
 .menuitem {
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
-  color: rgba(15, 15, 15, 0.75);
+  color: var(--muted);
   font-weight: 700;
   cursor: default;
 }
@@ -182,7 +267,7 @@ button:disabled {
   font-size: 12px;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: rgba(15, 15, 15, 0.6);
+  color: var(--muted);
   margin-bottom: 8px;
 }
 
@@ -199,7 +284,7 @@ button:disabled {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid transparent;
-  color: rgba(15, 15, 15, 0.85);
+  color: var(--text);
 }
 
 .sidebarItem:hover {
@@ -300,7 +385,7 @@ button:disabled {
   font-weight: 800;
   font-size: 12px;
   text-align: center;
-  color: rgba(15, 15, 15, 0.75);
+  color: var(--muted);
 }
 
 .details {
@@ -334,7 +419,7 @@ button:disabled {
 }
 
 .detailsLabel {
-  color: rgba(15, 15, 15, 0.6);
+  color: var(--muted);
   font-weight: 700;
   font-size: 12px;
 }
@@ -380,7 +465,7 @@ button:disabled {
   justify-content: space-between;
   gap: 10px;
   padding: 12px;
-  background: linear-gradient(180deg, #ffffff 0%, #f5f7fb 100%);
+  background: linear-gradient(180deg, var(--modalheader-grad-top) 0%, var(--modalheader-grad-bottom) 100%);
   border-bottom: 1px solid rgba(15, 15, 15, 0.08);
 }
 
@@ -459,7 +544,7 @@ button:disabled {
   padding: 8px;
   border-radius: 10px;
   border: 1px solid rgba(15, 15, 15, 0.10);
-  background: #ffffff;
+  background: var(--panel);
 }
 
 .statusRow:hover {
@@ -469,14 +554,99 @@ button:disabled {
 .statusCode {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-weight: 800;
-  color: rgba(15, 15, 15, 0.7);
+  color: var(--muted);
 }
 
 .statusPath {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-  color: rgba(15, 15, 15, 0.85);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+ .settingsLayout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  align-items: start;
+ }
+
+ .settingsNav {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+ }
+
+ .settingsNavTitle {
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  padding: 6px 8px;
+ }
+
+ .settingsNavItem {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 8px 10px;
+  font-weight: 800;
+ }
+
+ .settingsNavItem:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+ }
+
+ .settingsNavItemActive {
+  background: rgba(47, 111, 237, 0.14);
+  border-color: rgba(47, 111, 237, 0.30);
+  color: var(--accent-2);
+ }
+
+ .settingsContent {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+ }
+
+ .settingsContentHeader {
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid rgba(15, 15, 15, 0.08);
+ }
+
+ .settingsContentBody {
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+ }
+
+ .settingsField {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 10px;
+  align-items: start;
+ }
+
+ .settingsFieldLabel {
+  font-weight: 900;
+  color: var(--muted);
+  padding-top: 9px;
+ }
+
+ .settingsFieldControl {
+  display: grid;
+  gap: 6px;
+ }
+
+ .settingsHint {
+  font-size: 12px;
+  color: var(--muted);
+ }
