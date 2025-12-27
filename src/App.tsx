@@ -82,6 +82,7 @@ async function copyText(text: string) {
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
+  const [viewModeByRepo, setViewModeByRepo] = useState<Record<string, "graph" | "commits">>({});
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
@@ -114,13 +115,19 @@ function App() {
   const [pushLocalBranch, setPushLocalBranch] = useState("");
   const [pushRemoteBranch, setPushRemoteBranch] = useState("");
 
-  const viewMode = useAppSettings((s) => s.viewMode);
-  const setViewMode = useAppSettings((s) => s.setViewMode);
+  const defaultViewMode = useAppSettings((s) => s.viewMode);
   const theme = useAppSettings((s) => s.appearance.theme);
   const setTheme = useAppSettings((s) => s.setTheme);
   const fontFamily = useAppSettings((s) => s.appearance.fontFamily);
   const fontSizePx = useAppSettings((s) => s.appearance.fontSizePx);
   const graphSettings = useAppSettings((s) => s.graph);
+
+  const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
+
+  const setViewMode = (next: "graph" | "commits") => {
+    if (!activeRepoPath) return;
+    setViewModeByRepo((prev) => ({ ...prev, [activeRepoPath]: next }));
+  };
 
   const [selectedHash, setSelectedHash] = useState<string>("");
   const [zoomPct, setZoomPct] = useState<number>(100);
@@ -484,6 +491,7 @@ function App() {
           style: {
             "background-color": palette.refRemoteBg,
             "border-color": palette.refRemoteBorder,
+            color: palette.refRemoteText,
           },
         },
         {
@@ -809,6 +817,8 @@ function App() {
     setError("");
     setSelectedHash("");
 
+    setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
+
     setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
     setActiveRepoPath(path);
     await loadRepo(path);
@@ -816,10 +826,13 @@ function App() {
 
   async function closeRepository(path: string) {
     setRepos((prev) => prev.filter((p) => p !== path));
+    setViewModeByRepo((prev) => {
+      const { [path]: _, ...rest } = prev;
+      return rest;
+    });
     setOverviewByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
+      const { [path]: _, ...rest } = prev;
+      return rest;
     });
     setCommitsByRepo((prev) => {
       const next = { ...prev };
@@ -977,25 +990,6 @@ function App() {
           </div>
 
           <div className="menubarRight">
-            <div className="segmented small">
-              <button
-                type="button"
-                className={viewMode === "graph" ? "active" : ""}
-                onClick={() => setViewMode("graph")}
-                disabled={!activeRepoPath}
-              >
-                Graph
-              </button>
-              <button
-                type="button"
-                className={viewMode === "commits" ? "active" : ""}
-                onClick={() => setViewMode("commits")}
-                disabled={!activeRepoPath}
-              >
-                Commits
-              </button>
-            </div>
-
             <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeName)} title="Theme">
               <option value="light">Light</option>
               <option value="dark">Dark</option>
@@ -1125,6 +1119,25 @@ function App() {
                 {activeRepoPath ? activeRepoPath : "Open a repository to start."}
                 {overview?.head_name ? ` — ${overview.head_name}` : ""}
               </div>
+            </div>
+
+            <div className="segmented">
+              <button
+                type="button"
+                className={viewMode === "graph" ? "active" : ""}
+                onClick={() => setViewMode("graph")}
+                disabled={!activeRepoPath}
+              >
+                Graph
+              </button>
+              <button
+                type="button"
+                className={viewMode === "commits" ? "active" : ""}
+                onClick={() => setViewMode("commits")}
+                disabled={!activeRepoPath}
+              >
+                Commits
+              </button>
             </div>
           </div>
 

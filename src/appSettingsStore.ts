@@ -132,6 +132,7 @@ export type CyPalette = {
   refBranchBorder: string;
   refRemoteBg: string;
   refRemoteBorder: string;
+  refRemoteText: string;
   refEdgeLine: string;
 };
 
@@ -158,8 +159,9 @@ export function getCyPalette(theme: ThemeName): CyPalette {
       refTagBorder: "rgba(120, 210, 140, 0.30)",
       refBranchBg: "rgba(120, 185, 255, 0.22)",
       refBranchBorder: "rgba(120, 185, 255, 0.32)",
-      refRemoteBg: "rgba(255, 255, 255, 0.12)",
-      refRemoteBorder: "rgba(255, 255, 255, 0.18)",
+      refRemoteBg: "rgba(235, 246, 255, 0.92)",
+      refRemoteBorder: "rgba(235, 246, 255, 0.95)",
+      refRemoteText: "#0b0f17",
       refEdgeLine: "rgba(242, 244, 248, 0.25)",
     };
   }
@@ -188,6 +190,7 @@ export function getCyPalette(theme: ThemeName): CyPalette {
       refBranchBorder: "rgba(0, 65, 100, 0.25)",
       refRemoteBg: "rgba(220, 220, 220, 0.55)",
       refRemoteBorder: "rgba(15, 15, 15, 0.20)",
+      refRemoteText: "#0a2346",
       refEdgeLine: "rgba(10, 35, 70, 0.28)",
     };
   }
@@ -214,8 +217,9 @@ export function getCyPalette(theme: ThemeName): CyPalette {
       refTagBorder: "rgba(40, 90, 50, 0.22)",
       refBranchBg: "rgba(205, 220, 230, 0.55)",
       refBranchBorder: "rgba(80, 95, 105, 0.22)",
-      refRemoteBg: "rgba(61, 43, 31, 0.10)",
-      refRemoteBorder: "rgba(61, 43, 31, 0.20)",
+      refRemoteBg: "rgba(61, 43, 31, 0.55)",
+      refRemoteBorder: "rgba(61, 43, 31, 0.65)",
+      refRemoteText: "#fffaf0",
       refEdgeLine: "rgba(61, 43, 31, 0.25)",
     };
   }
@@ -243,6 +247,7 @@ export function getCyPalette(theme: ThemeName): CyPalette {
     refBranchBorder: "rgba(0, 65, 100, 0.25)",
     refRemoteBg: "rgba(220, 220, 220, 0.55)",
     refRemoteBorder: "rgba(15, 15, 15, 0.20)",
+    refRemoteText: "#0f0f0f",
     refEdgeLine: "rgba(15, 15, 15, 0.28)",
   };
 }

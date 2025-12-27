@@ -47,18 +47,18 @@
 
  :root[data-theme="blue"] {
   --bg: #eaf2ff;
-  --panel: #ffffff;
-  --panel-2: #f2f7ff;
+  --panel: #f6faff;
+  --panel-2: #eaf2ff;
   --border: rgba(10, 35, 70, 0.16);
   --text: #0a2346;
   --muted: rgba(10, 35, 70, 0.70);
   --accent: #1f6feb;
   --accent-2: #0f4fb4;
 
-  --topbar-grad-top: #ffffff;
-  --topbar-grad-bottom: #f2f7ff;
-  --modalheader-grad-top: #ffffff;
-  --modalheader-grad-bottom: #f2f7ff;
+  --topbar-grad-top: #f6faff;
+  --topbar-grad-bottom: #eaf2ff;
+  --modalheader-grad-top: #f6faff;
+  --modalheader-grad-bottom: #eaf2ff;
  }
 
  :root[data-theme="sepia"] {
