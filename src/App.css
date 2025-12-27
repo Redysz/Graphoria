@@ -85,6 +85,26 @@ button:disabled {
   cursor: default;
 }
 
+.menuDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 160px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+  z-index: 60;
+}
+
+.menuDropdown button {
+  width: 100%;
+  text-align: left;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

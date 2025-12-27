@@ -75,6 +75,7 @@ function App() {
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
 
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
@@ -93,6 +94,8 @@ function App() {
   const [pushBusy, setPushBusy] = useState(false);
   const [pushForce, setPushForce] = useState(false);
   const [pushError, setPushError] = useState("");
+  const [pushLocalBranch, setPushLocalBranch] = useState("");
+  const [pushRemoteBranch, setPushRemoteBranch] = useState("");
 
   const [viewMode, setViewMode] = useState<"graph" | "commits">("graph");
   const [selectedHash, setSelectedHash] = useState<string>("");
@@ -670,11 +673,22 @@ function App() {
     if (!activeRepoPath) return;
     setPushError("");
     setPushForce(false);
+    const headName = overviewByRepo[activeRepoPath]?.head_name ?? "";
+    const localBranch = headName && headName !== "(detached)" ? headName : "";
+    setPushLocalBranch(localBranch);
+    setPushRemoteBranch(localBranch);
     setPushModalOpen(true);
   }
 
   async function runPush() {
     if (!activeRepoPath) return;
+    const localBranch = pushLocalBranch.trim();
+    const remoteBranch = pushRemoteBranch.trim();
+    if (!localBranch) {
+      setPushError("Local branch is empty.");
+      return;
+    }
+
     const currentRemote = await invoke<string | null>("git_get_remote_url", {
       repoPath: activeRepoPath,
       remoteName: "origin",
@@ -700,9 +714,11 @@ function App() {
     setPushBusy(true);
     setPushError("");
     try {
+      const refspec = remoteBranch && remoteBranch !== localBranch ? `${localBranch}:${remoteBranch}` : localBranch;
       await invoke<string>("git_push", {
         repoPath: activeRepoPath,
         remoteName: "origin",
+        branch: refspec,
         force: pushForce,
       });
       setPushModalOpen(false);
@@ -786,6 +802,50 @@ function App() {
           <div className="menuitem">Repository</div>
           <div className="menuitem">Navigate</div>
           <div className="menuitem">View</div>
+          <div style={{ position: "relative" }}>
+            <div
+              className="menuitem"
+              onClick={() => setCommandsMenuOpen((v) => !v)}
+              style={{ cursor: "pointer", userSelect: "none" }}
+            >
+              Commands
+            </div>
+            {commandsMenuOpen ? (
+              <div className="menuDropdown">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCommandsMenuOpen(false);
+                    void openCommitDialog();
+                  }}
+                  disabled={!activeRepoPath || loading}
+                >
+                  Commit…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCommandsMenuOpen(false);
+                    void openRemoteDialog();
+                  }}
+                  disabled={!activeRepoPath || loading}
+                >
+                  Remote…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCommandsMenuOpen(false);
+                    void openPushDialog();
+                  }}
+                  disabled={!activeRepoPath || loading || !remoteUrl}
+                  title={!remoteUrl ? "No remote origin" : undefined}
+                >
+                  Push…
+                </button>
+              </div>
+            ) : null}
+          </div>
           <div className="menuitem">Tools</div>
           <div className="menuitem">Help</div>
         </div>
@@ -1169,6 +1229,32 @@ function App() {
                 <div>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Remote</div>
                   <div style={{ opacity: 0.8, fontSize: 12, wordBreak: "break-all" }}>{remoteUrl || "(none)"}</div>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Local branch</div>
+                    <input
+                      value={pushLocalBranch}
+                      onChange={(e) => setPushLocalBranch(e.target.value)}
+                      className="modalInput"
+                      placeholder="master"
+                      disabled={pushBusy}
+                    />
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Remote branch</div>
+                    <input
+                      value={pushRemoteBranch}
+                      onChange={(e) => setPushRemoteBranch(e.target.value)}
+                      className="modalInput"
+                      placeholder="main"
+                      disabled={pushBusy}
+                    />
+                  </div>
+                  <div style={{ opacity: 0.7, fontSize: 12 }}>
+                    Example: local <span className="mono">master</span> to remote <span className="mono">main</span>.
+                  </div>
                 </div>
 
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
