@@ -43,6 +43,21 @@ type GitAheadBehind = {
   upstream?: string | null;
 };
 
+type PullResult = {
+  status: string;
+  operation: string;
+  message: string;
+  conflict_files: string[];
+};
+
+type PullPredictResult = {
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  action: string;
+  conflict_files: string[];
+};
+
 type ViewportState = {
   zoom: number;
   pan: { x: number; y: number };
@@ -115,6 +130,21 @@ function App() {
   const [pushLocalBranch, setPushLocalBranch] = useState("");
   const [pushRemoteBranch, setPushRemoteBranch] = useState("");
 
+  const [pullMenuOpen, setPullMenuOpen] = useState(false);
+  const [pullBusy, setPullBusy] = useState(false);
+  const [pullError, setPullError] = useState("");
+
+  const [pullConflictOpen, setPullConflictOpen] = useState(false);
+  const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
+  const [pullConflictFiles, setPullConflictFiles] = useState<string[]>([]);
+  const [pullConflictMessage, setPullConflictMessage] = useState("");
+
+  const [pullPredictOpen, setPullPredictOpen] = useState(false);
+  const [pullPredictBusy, setPullPredictBusy] = useState(false);
+  const [pullPredictError, setPullPredictError] = useState("");
+  const [pullPredictRebase, setPullPredictRebase] = useState(false);
+  const [pullPredictResult, setPullPredictResult] = useState<PullPredictResult | null>(null);
+
   const defaultViewMode = useAppSettings((s) => s.viewMode);
   const theme = useAppSettings((s) => s.appearance.theme);
   const setTheme = useAppSettings((s) => s.setTheme);
@@ -143,6 +173,7 @@ function App() {
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
+  const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -187,6 +218,116 @@ function App() {
       const desiredY = h * yRatio;
       const currentY = h / 2;
       cy.pan({ x: pan.x, y: pan.y + (desiredY - currentY) });
+    }
+  }
+
+  async function startPull(op: "merge" | "rebase") {
+    if (!activeRepoPath) return;
+    setPullBusy(true);
+    setPullError("");
+    setError("");
+    try {
+      const res = await invoke<PullResult>(op === "rebase" ? "git_pull_rebase" : "git_pull", {
+        repoPath: activeRepoPath,
+        remoteName: "origin",
+      });
+
+      if (res.status === "conflicts") {
+        setPullConflictOperation(op);
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        setPullConflictOpen(true);
+        return;
+      }
+
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
+    }
+  }
+
+  async function predictPull(rebase: boolean) {
+    if (!activeRepoPath) return;
+    setPullPredictBusy(true);
+    setPullPredictError("");
+    setPullPredictResult(null);
+    setPullPredictRebase(rebase);
+    setPullPredictOpen(true);
+    try {
+      const res = await invoke<PullPredictResult>("git_pull_predict", {
+        repoPath: activeRepoPath,
+        remoteName: "origin",
+        rebase,
+      });
+      setPullPredictResult(res);
+    } catch (e) {
+      setPullPredictError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullPredictBusy(false);
+    }
+  }
+
+  async function pullAutoChoose() {
+    if (!activeRepoPath) return;
+    setPullBusy(true);
+    setPullError("");
+    try {
+      const pred = await invoke<PullPredictResult>("git_pull_predict", {
+        repoPath: activeRepoPath,
+        remoteName: "origin",
+        rebase: true,
+      });
+
+      if (pred.conflict_files && pred.conflict_files.length > 0) {
+        await startPull("merge");
+        return;
+      }
+
+      await startPull("rebase");
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
+    }
+  }
+
+  async function continueAfterConflicts() {
+    if (!activeRepoPath) return;
+    setPullBusy(true);
+    setPullError("");
+    try {
+      if (pullConflictOperation === "rebase") {
+        await invoke<string>("git_rebase_continue", { repoPath: activeRepoPath });
+      } else {
+        await invoke<string>("git_merge_continue", { repoPath: activeRepoPath });
+      }
+      setPullConflictOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
+    }
+  }
+
+  async function abortAfterConflicts() {
+    if (!activeRepoPath) return;
+    setPullBusy(true);
+    setPullError("");
+    try {
+      if (pullConflictOperation === "rebase") {
+        await invoke<string>("git_rebase_abort", { repoPath: activeRepoPath });
+      } else {
+        await invoke<string>("git_merge_abort", { repoPath: activeRepoPath });
+      }
+      setPullConflictOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
     }
   }
 
@@ -898,6 +1039,20 @@ function App() {
     }
   }
 
+  async function runFetch() {
+    if (!activeRepoPath) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_fetch", { repoPath: activeRepoPath, remoteName: "origin" });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -1013,6 +1168,103 @@ function App() {
           <button type="button" onClick={() => void loadRepo()} disabled={!activeRepoPath || loading}>
             Refresh
           </button>
+          <button
+            type="button"
+            onClick={() => void runFetch()}
+            disabled={!activeRepoPath || loading || !remoteUrl}
+            title={!remoteUrl ? "No remote origin" : "git fetch origin"}
+          >
+            Fetch
+          </button>
+          <div style={{ position: "relative", display: "flex", alignItems: "stretch" }}>
+            <button
+              type="button"
+              onClick={() => void startPull("merge")}
+              disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
+              title={!remoteUrl ? "No remote origin" : "git pull (merge)"}
+              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span>Pull</span>
+                {behindCount > 0 ? <span className="badge">↓{behindCount}</span> : null}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPullMenuOpen((v) => !v)}
+              disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
+              title="More pull options"
+              style={{
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+                borderLeft: "0",
+                paddingLeft: 8,
+                paddingRight: 8,
+              }}
+            >
+              ▾
+            </button>
+
+            {pullMenuOpen ? (
+              <div className="menuDropdown" style={{ left: 0, top: "calc(100% + 6px)", minWidth: 260 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPullMenuOpen(false);
+                    void startPull("merge");
+                  }}
+                  disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
+                  title="git pull (merge)"
+                >
+                  Git pull
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPullMenuOpen(false);
+                    void startPull("rebase");
+                  }}
+                  disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
+                  title="git pull --rebase"
+                >
+                  Git pull --rebase
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPullMenuOpen(false);
+                    void predictPull(false);
+                  }}
+                  disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
+                  title="Predict if git pull will create merge commit and whether there may be conflicts"
+                >
+                  Pull predict
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPullMenuOpen(false);
+                    void predictPull(true);
+                  }}
+                  disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
+                  title="Predict if git pull --rebase will have conflicts"
+                >
+                  Pull --rebase predict
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPullMenuOpen(false);
+                    void pullAutoChoose();
+                  }}
+                  disabled={!activeRepoPath || loading || pullBusy || pullPredictBusy || !remoteUrl}
+                  title="Tries pull --rebase; if conflicts predicted, falls back to normal pull (merge)."
+                >
+                  Pull rebase/merge autochoose
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button type="button" onClick={() => void openCommitDialog()} disabled={!activeRepoPath || loading}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span>Commit…</span>
@@ -1038,6 +1290,7 @@ function App() {
           </button>
           {loading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
           {error ? <div className="error">{error}</div> : null}
+          {pullError ? <div className="error">{pullError}</div> : null}
         </div>
 
         <div className="tabs">
@@ -1257,6 +1510,126 @@ function App() {
           </div>
         </div>
       </div>
+
+      {pullPredictOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Pull predict</div>
+              <button type="button" onClick={() => setPullPredictOpen(false)} disabled={pullPredictBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {pullPredictError ? <div className="error">{pullPredictError}</div> : null}
+              {pullPredictBusy ? <div style={{ opacity: 0.7 }}>Predicting…</div> : null}
+
+              {pullPredictResult ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Upstream</div>
+                    <div className="mono" style={{ opacity: 0.9 }}>
+                      {pullPredictResult.upstream ?? "(none)"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <span style={{ fontWeight: 800 }}>Ahead:</span> {pullPredictResult.ahead}
+                    </div>
+                    <div>
+                      <span style={{ fontWeight: 800 }}>Behind:</span> {pullPredictResult.behind}
+                    </div>
+                    <div>
+                      <span style={{ fontWeight: 800 }}>Action:</span> {pullPredictResult.action}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Potential conflicts</div>
+                    {pullPredictResult.conflict_files?.length ? (
+                      <div className="statusList">
+                        {pullPredictResult.conflict_files.map((p) => (
+                          <div key={p} className="statusRow">
+                            <span className="statusPath">{p}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ opacity: 0.75 }}>No conflicts predicted.</div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="modalFooter">
+              <button
+                type="button"
+                onClick={() => {
+                  if (pullPredictRebase) {
+                    void startPull("rebase");
+                  } else {
+                    void startPull("merge");
+                  }
+                  setPullPredictOpen(false);
+                }}
+                disabled={pullPredictBusy || !pullPredictResult || !activeRepoPath || !remoteUrl || loading || pullBusy}
+              >
+                Apply
+              </button>
+              <button type="button" onClick={() => setPullPredictOpen(false)} disabled={pullPredictBusy}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pullConflictOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Conflicts detected</div>
+              <button type="button" onClick={() => setPullConflictOpen(false)} disabled={pullBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              <div style={{ opacity: 0.8, marginBottom: 10 }}>
+                Operation: <span className="mono">{pullConflictOperation}</span>
+              </div>
+              {pullConflictMessage ? (
+                <pre style={{ whiteSpace: "pre-wrap", opacity: 0.8, marginTop: 0 }}>{pullConflictMessage}</pre>
+              ) : null}
+              <div>
+                <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Conflict files</div>
+                {pullConflictFiles.length ? (
+                  <div className="statusList">
+                    {pullConflictFiles.map((p) => (
+                      <div key={p} className="statusRow">
+                        <span className="statusPath">{p}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ opacity: 0.75 }}>Could not parse conflict file list.</div>
+                )}
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
+              <button type="button" disabled title="Not implemented yet">
+                Fix conflicts…
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button type="button" onClick={() => void continueAfterConflicts()} disabled={pullBusy}>
+                  Continue
+                </button>
+                <button type="button" onClick={() => void abortAfterConflicts()} disabled={pullBusy}>
+                  Abort
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {commitModalOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">

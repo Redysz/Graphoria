@@ -46,6 +46,23 @@ struct GitAheadBehind {
     upstream: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct PullResult {
+    status: String,
+    operation: String,
+    message: String,
+    conflict_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PullPredictResult {
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+    action: String,
+    conflict_files: Vec<String>,
+}
+
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(["-C", repo_path])
@@ -59,6 +76,151 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     }
 
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+fn run_git_status(repo_path: &str, args: &[&str]) -> Result<(bool, String, String), String> {
+    let out = Command::new("git")
+        .args(["-C", repo_path])
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    Ok((out.status.success(), stdout, stderr))
+}
+
+fn is_rebase_in_progress(repo_path: &str) -> bool {
+    Command::new("git")
+        .args(["-C", repo_path, "rev-parse", "--verify", "-q", "REBASE_HEAD"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn is_merge_in_progress(repo_path: &str) -> bool {
+    Command::new("git")
+        .args(["-C", repo_path, "rev-parse", "--verify", "-q", "MERGE_HEAD"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn parse_conflict_files(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+
+    for line in text.lines() {
+        if !line.contains("CONFLICT") {
+            continue;
+        }
+
+        if let Some(idx) = line.rfind(" in ") {
+            let p = line[idx + 4..].trim();
+            if !p.is_empty() && !out.contains(&p.to_string()) {
+                out.push(p.to_string());
+            }
+            continue;
+        }
+
+        if let Some(idx) = line.rfind(':') {
+            let p = line[idx + 1..].trim();
+            if !p.is_empty() && !out.contains(&p.to_string()) {
+                out.push(p.to_string());
+            }
+        }
+    }
+
+    out
+}
+
+fn infer_upstream(repo_path: &str, remote_name: &str, head_name: &str) -> Option<String> {
+    let upstream_out = Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+        ])
+        .output();
+
+    if let Ok(o) = upstream_out {
+        if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+
+    let verify_ref = format!("refs/remotes/{remote_name}/{head_name}");
+    let verify_out = Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "show-ref",
+            "--verify",
+            "--quiet",
+            verify_ref.as_str(),
+        ])
+        .output();
+
+    if let Ok(o) = verify_out {
+        if o.status.success() {
+            return Some(format!("{remote_name}/{head_name}"));
+        }
+    }
+
+    None
+}
+
+fn predict_merge_conflicts(repo_path: &str, upstream: &str) -> Vec<String> {
+    let base = match run_git(repo_path, &["merge-base", "HEAD", upstream]) {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => return Vec::new(),
+    };
+
+    if let Ok((ok, stdout, _stderr)) = run_git_status(
+        repo_path,
+        &["merge-tree", "--name-only", base.as_str(), "HEAD", upstream],
+    ) {
+        if ok {
+            let mut files: Vec<String> = stdout
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect();
+            files.sort();
+            files.dedup();
+            return files;
+        }
+    }
+
+    let (ok, stdout, _stderr) = match run_git_status(repo_path, &["merge-tree", base.as_str(), "HEAD", upstream]) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    if !ok {
+        return Vec::new();
+    }
+
+    let mut files: Vec<String> = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("base ") || trimmed.starts_with("our ") || trimmed.starts_with("their ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if let Some(p) = parts.last() {
+                if !p.is_empty() && !files.contains(&p.to_string()) {
+                    files.push(p.to_string());
+                }
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
 }
 
 fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
@@ -494,6 +656,183 @@ fn git_push(
     run_git(&repo_path, args.as_slice())
 }
 
+#[tauri::command]
+fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+    if head_name == "(detached)" {
+        return Err(String::from("Cannot pull from detached HEAD."));
+    }
+
+    let (ok, stdout, stderr) = run_git_status(&repo_path, &["pull", remote_name.as_str(), head_name.as_str()])?;
+    if ok {
+        return Ok(PullResult {
+            status: String::from("ok"),
+            operation: String::from("merge"),
+            message: if !stdout.is_empty() { stdout } else { stderr },
+            conflict_files: Vec::new(),
+        });
+    }
+
+    if is_merge_in_progress(&repo_path) {
+        let message = if !stderr.is_empty() {
+            stderr.clone()
+        } else {
+            stdout.clone()
+        };
+        return Ok(PullResult {
+            status: String::from("conflicts"),
+            operation: String::from("merge"),
+            message,
+            conflict_files: parse_conflict_files(&stderr),
+        });
+    }
+
+    Err(if !stderr.is_empty() { stderr } else { stdout })
+}
+
+#[tauri::command]
+fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+    if head_name == "(detached)" {
+        return Err(String::from("Cannot pull from detached HEAD."));
+    }
+
+    let (ok, stdout, stderr) =
+        run_git_status(&repo_path, &["pull", "--rebase", remote_name.as_str(), head_name.as_str()])?;
+    if ok {
+        return Ok(PullResult {
+            status: String::from("ok"),
+            operation: String::from("rebase"),
+            message: if !stdout.is_empty() { stdout } else { stderr },
+            conflict_files: Vec::new(),
+        });
+    }
+
+    if is_rebase_in_progress(&repo_path) {
+        let message = if !stderr.is_empty() {
+            stderr.clone()
+        } else {
+            stdout.clone()
+        };
+        return Ok(PullResult {
+            status: String::from("conflicts"),
+            operation: String::from("rebase"),
+            message,
+            conflict_files: parse_conflict_files(&stderr),
+        });
+    }
+
+    Err(if !stderr.is_empty() { stderr } else { stdout })
+}
+
+#[tauri::command]
+fn git_merge_continue(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let (ok, stdout, stderr) = run_git_status(&repo_path, &["merge", "--continue"])?;
+    if ok {
+        return Ok(if !stdout.is_empty() { stdout } else { stderr });
+    }
+
+    let (ok2, stdout2, stderr2) = run_git_status(&repo_path, &["commit", "--no-edit"])?;
+    if ok2 {
+        Ok(if !stdout2.is_empty() { stdout2 } else { stderr2 })
+    } else {
+        Err(if !stderr2.is_empty() { stderr2 } else { stdout2 })
+    }
+}
+
+#[tauri::command]
+fn git_merge_abort(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    run_git(&repo_path, &["merge", "--abort"])
+}
+
+#[tauri::command]
+fn git_rebase_continue(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    run_git(&repo_path, &["rebase", "--continue"])
+}
+
+#[tauri::command]
+fn git_rebase_abort(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    run_git(&repo_path, &["rebase", "--abort"])
+}
+
+#[tauri::command]
+fn git_pull_predict(
+    repo_path: String,
+    remote_name: Option<String>,
+    rebase: Option<bool>,
+) -> Result<PullPredictResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let rebase = rebase.unwrap_or(false);
+
+    run_git(&repo_path, &["fetch", remote_name.as_str()])?;
+
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+    if head_name == "(detached)" {
+        return Err(String::from("Cannot predict pull from detached HEAD."));
+    }
+
+    let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
+    let (ahead, behind) = match upstream.as_ref() {
+        Some(u) => {
+            let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
+                .unwrap_or_default();
+            let parts: Vec<&str> = raw.split_whitespace().collect();
+            let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            (ahead, behind)
+        }
+        None => (0, 0),
+    };
+
+    let action = match (upstream.as_ref(), ahead, behind, rebase) {
+        (None, _, _, _) => String::from("no-upstream"),
+        (Some(_), _, 0, _) => String::from("noop"),
+        (Some(_), 0, _, _) => String::from("fast-forward"),
+        (Some(_), _, _, true) => String::from("rebase"),
+        (Some(_), _, _, false) => String::from("merge-commit"),
+    };
+
+    let conflict_files = match (upstream.as_ref(), behind) {
+        (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
+        _ => Vec::new(),
+    };
+
+    Ok(PullPredictResult {
+        upstream,
+        ahead,
+        behind,
+        action,
+        conflict_files,
+    })
+}
+
+#[tauri::command]
+fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    run_git(&repo_path, &["fetch", remote_name.as_str()])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -510,7 +849,15 @@ pub fn run() {
             git_ahead_behind,
             git_get_remote_url,
             git_set_remote_url,
-            git_push
+            git_push,
+            git_fetch,
+            git_pull,
+            git_pull_rebase,
+            git_merge_continue,
+            git_merge_abort,
+            git_rebase_continue,
+            git_rebase_abort,
+            git_pull_predict
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
