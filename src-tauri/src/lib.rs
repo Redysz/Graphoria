@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -234,6 +235,55 @@ fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn ensure_clone_destination_valid(destination_path: &str) -> Result<(), String> {
+    let destination_path = destination_path.trim();
+    if destination_path.is_empty() {
+        return Err(String::from("destination_path is empty"));
+    }
+
+    let dest = Path::new(destination_path);
+
+    if dest.exists() {
+        if dest.is_file() {
+            return Err(String::from("Destination path points to a file."));
+        }
+
+        let git_dir = dest.join(".git");
+        if git_dir.exists() {
+            return Err(String::from("Destination already contains a .git folder."));
+        }
+
+        let mut has_entries = false;
+        if let Ok(rd) = fs::read_dir(dest) {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                has_entries = true;
+                break;
+            }
+        }
+
+        if has_entries {
+            return Err(String::from("Destination folder is not empty."));
+        }
+
+        Ok(())
+    } else {
+        let parent = dest
+            .parent()
+            .ok_or_else(|| String::from("Destination folder has no parent."))?;
+        if !parent.exists() {
+            return Err(String::from("Destination parent folder does not exist."));
+        }
+        if !parent.is_dir() {
+            return Err(String::from("Destination parent path is not a directory."));
+        }
+        Ok(())
+    }
 }
 
 fn ensure_is_not_git_worktree(repo_path: &str) -> Result<(), String> {
@@ -833,6 +883,137 @@ fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, S
     run_git(&repo_path, &["fetch", remote_name.as_str()])
 }
 
+#[tauri::command]
+fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, String> {
+    let repo_url = repo_url.trim().to_string();
+    if repo_url.is_empty() {
+        return Err(String::from("repo_url is empty"));
+    }
+
+    let out = Command::new("git")
+        .args(["ls-remote", "--heads", repo_url.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git ls-remote: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git ls-remote failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut branches: Vec<String> = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let _hash = parts.next();
+        let reference = parts.next().unwrap_or_default();
+        if let Some(name) = reference.strip_prefix("refs/heads/") {
+            let name = name.trim();
+            if !name.is_empty() {
+                branches.push(name.to_string());
+            }
+        }
+    }
+    branches.sort();
+    branches.dedup();
+    Ok(branches)
+}
+
+#[tauri::command]
+fn git_clone_repo(
+    repo_url: String,
+    destination_path: String,
+    branch: Option<String>,
+    init_submodules: Option<bool>,
+    download_full_history: Option<bool>,
+    bare: Option<bool>,
+    origin: Option<String>,
+    single_branch: Option<bool>,
+) -> Result<String, String> {
+    let repo_url = repo_url.trim().to_string();
+    let destination_path = destination_path.trim().to_string();
+    let origin = origin.unwrap_or_else(|| String::from("origin")).trim().to_string();
+    let init_submodules = init_submodules.unwrap_or(false);
+    let download_full_history = download_full_history.unwrap_or(true);
+    let bare = bare.unwrap_or(false);
+    let single_branch = single_branch.unwrap_or(false);
+
+    if repo_url.is_empty() {
+        return Err(String::from("repo_url is empty"));
+    }
+    if destination_path.is_empty() {
+        return Err(String::from("destination_path is empty"));
+    }
+    if origin.is_empty() {
+        return Err(String::from("origin is empty"));
+    }
+    if bare && init_submodules {
+        return Err(String::from("Cannot initialize submodules in a bare repository."));
+    }
+
+    ensure_clone_destination_valid(destination_path.as_str())?;
+
+    if Path::new(destination_path.as_str()).exists() {
+        ensure_is_not_git_worktree(destination_path.as_str())?;
+    }
+
+    let mut args: Vec<String> = vec![String::from("clone")];
+
+    if bare {
+        args.push(String::from("--bare"));
+    }
+
+    args.push(String::from("--origin"));
+    args.push(origin);
+
+    if single_branch {
+        args.push(String::from("--single-branch"));
+    }
+
+    if !download_full_history {
+        args.push(String::from("--depth"));
+        args.push(String::from("1"));
+    }
+
+    if let Some(b) = branch {
+        let b = b.trim().to_string();
+        if !b.is_empty() {
+            args.push(String::from("--branch"));
+            args.push(b);
+        }
+    }
+
+    args.push(repo_url);
+    args.push(destination_path.clone());
+
+    let out = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git clone: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return Err(if !stderr.is_empty() {
+            format!("git clone failed: {stderr}")
+        } else {
+            format!("git clone failed: {stdout}")
+        });
+    }
+
+    if init_submodules {
+        run_git(
+            destination_path.as_str(),
+            &["submodule", "update", "--init", "--recursive"],
+        )?;
+    }
+
+    Ok(destination_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -843,6 +1024,8 @@ pub fn run() {
             repo_overview,
             list_commits,
             init_repo,
+            git_ls_remote_heads,
+            git_clone_repo,
             git_status,
             git_commit,
             git_status_summary,

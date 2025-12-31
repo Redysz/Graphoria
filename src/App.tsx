@@ -105,9 +105,28 @@ function App() {
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [cloneModalOpen, setCloneModalOpen] = useState(false);
+  const [cloneRepoUrl, setCloneRepoUrl] = useState("");
+  const [cloneDestinationFolder, setCloneDestinationFolder] = useState("");
+  const [cloneCreateSubdir, setCloneCreateSubdir] = useState(true);
+  const [cloneSubdirName, setCloneSubdirName] = useState("");
+  const [cloneSubdirAuto, setCloneSubdirAuto] = useState(true);
+  const [cloneBranch, setCloneBranch] = useState("");
+  const [cloneInitSubmodules, setCloneInitSubmodules] = useState(false);
+  const [cloneDownloadFullHistory, setCloneDownloadFullHistory] = useState(true);
+  const [cloneBare, setCloneBare] = useState(false);
+  const [cloneOrigin, setCloneOrigin] = useState("origin");
+  const [cloneSingleBranch, setCloneSingleBranch] = useState(false);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [cloneError, setCloneError] = useState("");
+  const [cloneBranchesBusy, setCloneBranchesBusy] = useState(false);
+  const [cloneBranchesError, setCloneBranchesError] = useState("");
+  const [cloneBranches, setCloneBranches] = useState<string[]>([]);
 
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
@@ -168,12 +187,49 @@ function App() {
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, fontFamily, fontSizePx]);
 
+  useEffect(() => {
+    if (!cloneCreateSubdir) return;
+    if (!cloneSubdirAuto) return;
+    const next = repoNameFromUrl(cloneRepoUrl);
+    if (!next) return;
+    setCloneSubdirName(next);
+  }, [cloneCreateSubdir, cloneRepoUrl, cloneSubdirAuto]);
+
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
+
+  function repoNameFromUrl(url: string) {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed) return "";
+    const sshParts = trimmed.split(":");
+    const lastChunk = sshParts.length > 1 && trimmed.includes("@") ? sshParts[sshParts.length - 1] : trimmed;
+    const normalized = lastChunk.replace(/\\/g, "/");
+    const parts = normalized.split("/").filter((p) => p.length > 0);
+    const last = parts[parts.length - 1] ?? "";
+    return last.endsWith(".git") ? last.slice(0, -4) : last;
+  }
+
+  function joinPath(base: string, child: string) {
+    const a = base.trim().replace(/[\\/]+$/, "");
+    const b = child.trim().replace(/^[\\/]+/, "");
+    if (!a) return b;
+    if (!b) return a;
+    const sep = a.includes("\\") ? "\\" : "/";
+    return `${a}${sep}${b}`;
+  }
+
+  const cloneTargetPath = useMemo(() => {
+    const base = cloneDestinationFolder.trim();
+    if (!base) return "";
+    if (!cloneCreateSubdir) return base;
+    const name = cloneSubdirName.trim();
+    if (!name) return "";
+    return joinPath(base, name);
+  }, [cloneCreateSubdir, cloneDestinationFolder, cloneSubdirName]);
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -794,6 +850,102 @@ function App() {
     }
   }
 
+  function openCloneDialog() {
+    setCloneError("");
+    setCloneBranchesError("");
+    setCloneBranches([]);
+    setCloneBusy(false);
+    setCloneBranchesBusy(false);
+    setCloneRepoUrl("");
+    setCloneDestinationFolder("");
+    setCloneCreateSubdir(true);
+    setCloneSubdirAuto(true);
+    setCloneSubdirName("");
+    setCloneBranch("");
+    setCloneInitSubmodules(false);
+    setCloneDownloadFullHistory(true);
+    setCloneBare(false);
+    setCloneOrigin("origin");
+    setCloneSingleBranch(false);
+    setCloneModalOpen(true);
+  }
+
+  async function pickCloneDestinationFolder() {
+    setCloneError("");
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Select destination folder",
+    });
+    if (!selected || Array.isArray(selected)) return;
+    setCloneDestinationFolder(selected);
+  }
+
+  async function fetchCloneBranches() {
+    const url = cloneRepoUrl.trim();
+    if (!url) return;
+    setCloneBranchesBusy(true);
+    setCloneBranchesError("");
+    try {
+      const branches = await invoke<string[]>("git_ls_remote_heads", { repoUrl: url });
+      setCloneBranches(branches);
+    } catch (e) {
+      setCloneBranches([]);
+      setCloneBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCloneBranchesBusy(false);
+    }
+  }
+
+  async function runCloneRepository() {
+    const repoUrl = cloneRepoUrl.trim();
+    const destinationFolder = cloneDestinationFolder.trim();
+    const origin = cloneOrigin.trim();
+
+    if (!repoUrl) {
+      setCloneError("Repository link is empty.");
+      return;
+    }
+    if (!destinationFolder) {
+      setCloneError("Destination folder is empty.");
+      return;
+    }
+    if (cloneCreateSubdir && !cloneSubdirName.trim()) {
+      setCloneError("Subdirectory name is empty.");
+      return;
+    }
+    if (!origin) {
+      setCloneError("Origin name is empty.");
+      return;
+    }
+    if (!cloneTargetPath) {
+      setCloneError("Destination path is invalid.");
+      return;
+    }
+
+    setCloneBusy(true);
+    setCloneError("");
+    setError("");
+    try {
+      await invoke<string>("git_clone_repo", {
+        repoUrl,
+        destinationPath: cloneTargetPath,
+        branch: cloneBranch.trim() ? cloneBranch.trim() : undefined,
+        initSubmodules: cloneInitSubmodules,
+        downloadFullHistory: cloneDownloadFullHistory,
+        bare: cloneBare,
+        origin,
+        singleBranch: cloneSingleBranch,
+      });
+      setCloneModalOpen(false);
+      await openRepository(cloneTargetPath);
+    } catch (e) {
+      setCloneError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCloneBusy(false);
+    }
+  }
+
   async function openCommitDialog() {
     if (!activeRepoPath) return;
     setCommitError("");
@@ -1058,13 +1210,60 @@ function App() {
       <div className="topbar">
         <div className="menubar">
           <div className="menubarLeft">
-            <div className="menuitem">Repository</div>
+            <div style={{ position: "relative" }}>
+              <div
+                className="menuitem"
+                onClick={() => {
+                  setCommandsMenuOpen(false);
+                  setToolsMenuOpen(false);
+                  setRepositoryMenuOpen((v) => !v);
+                }}
+                style={{ cursor: "pointer", userSelect: "none" }}
+              >
+                Repository
+              </div>
+              {repositoryMenuOpen ? (
+                <div className="menuDropdown">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
+                      openCloneDialog();
+                    }}
+                    disabled={loading || cloneBusy}
+                  >
+                    Clone repository…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
+                      void pickRepository();
+                    }}
+                    disabled={loading || cloneBusy}
+                  >
+                    Open repository…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
+                      void initializeProject();
+                    }}
+                    disabled={loading || cloneBusy}
+                  >
+                    Initialize project…
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <div className="menuitem">Navigate</div>
             <div className="menuitem">View</div>
             <div style={{ position: "relative" }}>
               <div
                 className="menuitem"
                 onClick={() => {
+                  setRepositoryMenuOpen(false);
                   setToolsMenuOpen(false);
                   setCommandsMenuOpen((v) => !v);
                 }}
@@ -1119,6 +1318,7 @@ function App() {
               <div
                 className="menuitem"
                 onClick={() => {
+                  setRepositoryMenuOpen(false);
                   setCommandsMenuOpen(false);
                   setToolsMenuOpen((v) => !v);
                 }}
@@ -1159,12 +1359,6 @@ function App() {
         </div>
 
         <div className="toolbar">
-          <button type="button" onClick={pickRepository}>
-            Open repository
-          </button>
-          <button type="button" onClick={initializeProject} disabled={loading}>
-            Initialize project
-          </button>
           <button type="button" onClick={() => void loadRepo()} disabled={!activeRepoPath || loading}>
             Refresh
           </button>
@@ -1829,6 +2023,204 @@ function App() {
             <div className="modalFooter">
               <button type="button" onClick={() => void runPush()} disabled={pushBusy || !remoteUrl}>
                 {pushBusy ? "Pushing…" : "Push"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cloneModalOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(80vh, 820px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Clone repository</div>
+              <button type="button" onClick={() => setCloneModalOpen(false)} disabled={cloneBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {cloneError ? <div className="error">{cloneError}</div> : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Repository link</div>
+                  <input
+                    value={cloneRepoUrl}
+                    onChange={(e) => {
+                      setCloneRepoUrl(e.target.value);
+                      setCloneBranches([]);
+                      setCloneBranchesError("");
+                    }}
+                    className="modalInput"
+                    placeholder="https://github.com/user/repo.git"
+                    disabled={cloneBusy}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Destination folder</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      value={cloneDestinationFolder}
+                      onChange={(e) => setCloneDestinationFolder(e.target.value)}
+                      className="modalInput"
+                      placeholder="C:\\Projects"
+                      disabled={cloneBusy}
+                    />
+                    <button type="button" onClick={() => void pickCloneDestinationFolder()} disabled={cloneBusy}>
+                      Browse…
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Create subdirectory</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneCreateSubdir}
+                        onChange={(e) => {
+                          setCloneCreateSubdir(e.target.checked);
+                          if (e.target.checked && !cloneSubdirName.trim()) {
+                            const derived = repoNameFromUrl(cloneRepoUrl);
+                            if (derived) setCloneSubdirName(derived);
+                          }
+                        }}
+                        disabled={cloneBusy}
+                      />
+                      Enable
+                    </label>
+                    {cloneCreateSubdir ? (
+                      <input
+                        value={cloneSubdirName}
+                        onChange={(e) => {
+                          setCloneSubdirAuto(false);
+                          setCloneSubdirName(e.target.value);
+                        }}
+                        className="modalInput"
+                        placeholder={repoNameFromUrl(cloneRepoUrl) || "repository"}
+                        disabled={cloneBusy}
+                      />
+                    ) : null}
+                    <div style={{ opacity: 0.7, fontSize: 12 }}>
+                      Target path: <span className="mono">{cloneTargetPath || "(not set)"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Branch to clone</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => void fetchCloneBranches()}
+                        disabled={cloneBusy || cloneBranchesBusy || !cloneRepoUrl.trim()}
+                        title="Fetch branches from remote (git ls-remote --heads)"
+                      >
+                        {cloneBranchesBusy ? "Fetching…" : "Fetch"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCloneBranch("")}
+                        disabled={cloneBusy || !cloneBranch.trim()}
+                        title="Use default branch"
+                      >
+                        Default
+                      </button>
+                    </div>
+                  </div>
+                  {cloneBranchesError ? <div className="error">{cloneBranchesError}</div> : null}
+                  <input
+                    value={cloneBranch}
+                    onChange={(e) => setCloneBranch(e.target.value)}
+                    className="modalInput"
+                    placeholder="(default)"
+                    list="cloneBranchesList"
+                    disabled={cloneBusy}
+                  />
+                  <datalist id="cloneBranchesList">
+                    {cloneBranches.map((b) => (
+                      <option key={b} value={b} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Options</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneInitSubmodules}
+                        onChange={(e) => setCloneInitSubmodules(e.target.checked)}
+                        disabled={cloneBusy}
+                      />
+                      Initialize all submodules
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneDownloadFullHistory}
+                        onChange={(e) => setCloneDownloadFullHistory(e.target.checked)}
+                        disabled={cloneBusy}
+                      />
+                      Download full history
+                    </label>
+                    <label
+                      style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}
+                      title="Bare repository has no working tree (no project files), only Git history. Useful for read-only storage."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={cloneBare}
+                        onChange={(e) => setCloneBare(e.target.checked)}
+                        disabled={cloneBusy}
+                      />
+                      Bare repository
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneSingleBranch}
+                        onChange={(e) => setCloneSingleBranch(e.target.checked)}
+                        disabled={cloneBusy}
+                      />
+                      Single-branch
+                    </label>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Origin</div>
+                  <input
+                    value={cloneOrigin}
+                    onChange={(e) => setCloneOrigin(e.target.value)}
+                    className="modalInput"
+                    placeholder="origin"
+                    disabled={cloneBusy}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button
+                type="button"
+                onClick={() => void runCloneRepository()}
+                disabled={
+                  cloneBusy ||
+                  !cloneRepoUrl.trim() ||
+                  !cloneDestinationFolder.trim() ||
+                  !cloneOrigin.trim() ||
+                  (cloneCreateSubdir && !cloneSubdirName.trim()) ||
+                  !cloneTargetPath
+                }
+              >
+                {cloneBusy ? "Cloning…" : "Clone"}
+              </button>
+              <button type="button" onClick={() => setCloneModalOpen(false)} disabled={cloneBusy}>
+                Cancel
               </button>
             </div>
           </div>
