@@ -116,6 +116,7 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autoCenterToken, setAutoCenterToken] = useState(0);
 
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const [cloneRepoUrl, setCloneRepoUrl] = useState("");
@@ -249,6 +250,7 @@ function App() {
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const viewportByRepoRef = useRef<Record<string, ViewportState | undefined>>({});
+  const pendingAutoCenterByRepoRef = useRef<Record<string, boolean | undefined>>({});
   const viewportRafRef = useRef<number | null>(null);
 
   const selectedCommit = useMemo(() => {
@@ -573,10 +575,12 @@ function App() {
   useEffect(() => {
     if (viewMode !== "graph") {
       if (cyRef.current && activeRepoPath) {
-        viewportByRepoRef.current[activeRepoPath] = {
-          zoom: cyRef.current.zoom(),
-          pan: cyRef.current.pan(),
-        };
+        if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) {
+          viewportByRepoRef.current[activeRepoPath] = {
+            zoom: cyRef.current.zoom(),
+            pan: cyRef.current.pan(),
+          };
+        }
       }
       cyRef.current?.destroy();
       cyRef.current = null;
@@ -736,10 +740,12 @@ function App() {
       if (viewportRafRef.current) return;
       viewportRafRef.current = requestAnimationFrame(() => {
         viewportRafRef.current = null;
-        viewportByRepoRef.current[activeRepoPath] = {
-          zoom: cy.zoom(),
-          pan: cy.pan(),
-        };
+        if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) {
+          viewportByRepoRef.current[activeRepoPath] = {
+            zoom: cy.zoom(),
+            pan: cy.pan(),
+          };
+        }
         setZoomPct(Math.round(cy.zoom() * 100));
       });
     };
@@ -770,6 +776,10 @@ function App() {
             focusOnHead();
             scheduleViewportUpdate();
             applyRefBadges(cy);
+            if (activeRepoPath) {
+              pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
+              setAutoCenterToken((t) => t + 1);
+            }
           }
         });
       });
@@ -798,6 +808,96 @@ function App() {
     theme,
     viewMode,
   ]);
+
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+
+    const el = graphRef.current;
+    if (!el) return;
+
+    let attemptTimer: number | null = null;
+    let clearPendingTimer: number | null = null;
+
+    const attemptAutoCenter = () => {
+      const cy = cyRef.current;
+      if (!cy) return;
+
+      if (!activeRepoPath) return;
+      if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) return;
+
+      const hash = selectedHash || headHash;
+      if (!hash) return;
+
+      cy.resize();
+
+      const cyW = cy.width() || 0;
+      const cyH = cy.height() || 0;
+      if (cyW <= 0 || cyH <= 0) return;
+
+      const node = cy.$id(hash);
+      if (node.length === 0) return;
+
+      focusOnHash(hash, 1, 0.22);
+
+      if (clearPendingTimer) window.clearTimeout(clearPendingTimer);
+      clearPendingTimer = window.setTimeout(() => {
+        if (!activeRepoPath) return;
+        const c = cyRef.current;
+        if (c) {
+          viewportByRepoRef.current[activeRepoPath] = {
+            zoom: c.zoom(),
+            pan: c.pan(),
+          };
+          setZoomPct(Math.round(c.zoom() * 100));
+        }
+        pendingAutoCenterByRepoRef.current[activeRepoPath] = false;
+      }, 350);
+    };
+
+    const scheduleAttempt = (delayMs: number) => {
+      if (attemptTimer) window.clearTimeout(attemptTimer);
+      attemptTimer = window.setTimeout(attemptAutoCenter, delayMs);
+    };
+
+    const ro = new ResizeObserver(() => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      cy.resize();
+
+      if (clearPendingTimer) {
+        window.clearTimeout(clearPendingTimer);
+        clearPendingTimer = null;
+      }
+      scheduleAttempt(80);
+    });
+
+    ro.observe(el);
+
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scheduleAttempt(0);
+      });
+    });
+
+    const t0 = window.setTimeout(() => scheduleAttempt(0), 0);
+    const t1 = window.setTimeout(() => scheduleAttempt(0), 150);
+    const t2 = window.setTimeout(() => scheduleAttempt(0), 400);
+    const t3 = window.setTimeout(() => scheduleAttempt(0), 1000);
+    const t4 = window.setTimeout(() => scheduleAttempt(0), 2000);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+      window.clearTimeout(t4);
+
+      if (attemptTimer) window.clearTimeout(attemptTimer);
+      if (clearPendingTimer) window.clearTimeout(clearPendingTimer);
+      ro.disconnect();
+    };
+  }, [activeRepoPath, autoCenterToken, headHash, selectedHash, viewMode]);
 
   useEffect(() => {
     const cy = cyRef.current;
