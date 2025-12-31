@@ -4,6 +4,10 @@
 
 A revolutionary Git client that transforms your repository history into an intuitive, interactive graph visualization. Unlike traditional Git clients that display commits in boring tables, Graphoria presents your entire Git history as a beautiful, navigable directed acyclic graph (DAG) that makes understanding complex relationships between commits effortless.
 
+## 🚧 Status (WIP)
+
+This project is still a work in progress. All currently implemented features are functional, but many planned features are not implemented yet.
+
 ## 🚀 Why Graphoria?
 
 Graphoria reimagines Git visualization by treating your repository history as what it truly is—a graph. Every branch, merge, and commit becomes a node in an interconnected web that you can explore, understand, and manipulate with unprecedented clarity. Say goodbye to confusing linear histories and hello to visual Git mastery.
@@ -57,6 +61,16 @@ Built with modern web technologies, Graphoria combines the best of both worlds:
 - **Cross-Platform Excellence**: Native performance on every major operating system
 
 ## 🚀 Getting Started
+
+### Running locally (development)
+
+1. Install Node.js (npm).
+2. Clone/Download this repository.
+3. Go to the project directory.
+4. Install dependencies:
+   - `npm install`
+5. Start the app in Tauri dev mode:
+   - `npm run tauri dev`
 
 Experience the future of Git visualization today. Graphoria transforms how you interact with your code history, making complex Git operations intuitive and enjoyable.
 
