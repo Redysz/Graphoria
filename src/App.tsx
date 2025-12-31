@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
 import cytoscape, { type Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
 import SettingsModal from "./SettingsModal";
@@ -113,14 +112,12 @@ function App() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const [cloneRepoUrl, setCloneRepoUrl] = useState("");
   const [cloneDestinationFolder, setCloneDestinationFolder] = useState("");
-  const [cloneCreateSubdir, setCloneCreateSubdir] = useState(true);
   const [cloneSubdirName, setCloneSubdirName] = useState("");
-  const [cloneSubdirAuto, setCloneSubdirAuto] = useState(true);
   const [cloneBranch, setCloneBranch] = useState("");
-  const [cloneInitSubmodules, setCloneInitSubmodules] = useState(false);
+  const [cloneInitSubmodules, setCloneInitSubmodules] = useState(true);
   const [cloneDownloadFullHistory, setCloneDownloadFullHistory] = useState(true);
   const [cloneBare, setCloneBare] = useState(false);
-  const [cloneOrigin, setCloneOrigin] = useState("origin");
+  const [cloneOrigin, setCloneOrigin] = useState("");
   const [cloneSingleBranch, setCloneSingleBranch] = useState(false);
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneError, setCloneError] = useState("");
@@ -187,31 +184,12 @@ function App() {
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, fontFamily, fontSizePx]);
 
-  useEffect(() => {
-    if (!cloneCreateSubdir) return;
-    if (!cloneSubdirAuto) return;
-    const next = repoNameFromUrl(cloneRepoUrl);
-    if (!next) return;
-    setCloneSubdirName(next);
-  }, [cloneCreateSubdir, cloneRepoUrl, cloneSubdirAuto]);
-
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
-
-  function repoNameFromUrl(url: string) {
-    const trimmed = url.trim().replace(/\/+$/, "");
-    if (!trimmed) return "";
-    const sshParts = trimmed.split(":");
-    const lastChunk = sshParts.length > 1 && trimmed.includes("@") ? sshParts[sshParts.length - 1] : trimmed;
-    const normalized = lastChunk.replace(/\\/g, "/");
-    const parts = normalized.split("/").filter((p) => p.length > 0);
-    const last = parts[parts.length - 1] ?? "";
-    return last.endsWith(".git") ? last.slice(0, -4) : last;
-  }
 
   function joinPath(base: string, child: string) {
     const a = base.trim().replace(/[\\/]+$/, "");
@@ -225,11 +203,10 @@ function App() {
   const cloneTargetPath = useMemo(() => {
     const base = cloneDestinationFolder.trim();
     if (!base) return "";
-    if (!cloneCreateSubdir) return base;
     const name = cloneSubdirName.trim();
-    if (!name) return "";
+    if (!name) return base;
     return joinPath(base, name);
-  }, [cloneCreateSubdir, cloneDestinationFolder, cloneSubdirName]);
+  }, [cloneDestinationFolder, cloneSubdirName]);
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -858,14 +835,12 @@ function App() {
     setCloneBranchesBusy(false);
     setCloneRepoUrl("");
     setCloneDestinationFolder("");
-    setCloneCreateSubdir(true);
-    setCloneSubdirAuto(true);
     setCloneSubdirName("");
     setCloneBranch("");
-    setCloneInitSubmodules(false);
+    setCloneInitSubmodules(true);
     setCloneDownloadFullHistory(true);
     setCloneBare(false);
-    setCloneOrigin("origin");
+    setCloneOrigin("");
     setCloneSingleBranch(false);
     setCloneModalOpen(true);
   }
@@ -910,14 +885,6 @@ function App() {
       setCloneError("Destination folder is empty.");
       return;
     }
-    if (cloneCreateSubdir && !cloneSubdirName.trim()) {
-      setCloneError("Subdirectory name is empty.");
-      return;
-    }
-    if (!origin) {
-      setCloneError("Origin name is empty.");
-      return;
-    }
     if (!cloneTargetPath) {
       setCloneError("Destination path is invalid.");
       return;
@@ -934,7 +901,7 @@ function App() {
         initSubmodules: cloneInitSubmodules,
         downloadFullHistory: cloneDownloadFullHistory,
         bare: cloneBare,
-        origin,
+        origin: origin ? origin : undefined,
         singleBranch: cloneSingleBranch,
       });
       setCloneModalOpen(false);
@@ -1359,6 +1326,21 @@ function App() {
         </div>
 
         <div className="toolbar">
+          {repos.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRepositoryMenuOpen(false);
+                setCommandsMenuOpen(false);
+                setToolsMenuOpen(false);
+                void pickRepository();
+              }}
+              disabled={loading || cloneBusy}
+              title="Open repository"
+            >
+              Open
+            </button>
+          ) : null}
           <button type="button" onClick={() => void loadRepo()} disabled={!activeRepoPath || loading}>
             Refresh
           </button>
@@ -1475,9 +1457,6 @@ function App() {
               <span>Push…</span>
               {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
             </span>
-          </button>
-          <button type="button" onClick={() => void openPath(activeRepoPath)} disabled={!activeRepoPath}>
-            Open folder
           </button>
           <button type="button" disabled>
             Git Bash
@@ -2076,35 +2055,15 @@ function App() {
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Create subdirectory</div>
                   <div style={{ display: "grid", gap: 8 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                      <input
-                        type="checkbox"
-                        checked={cloneCreateSubdir}
-                        onChange={(e) => {
-                          setCloneCreateSubdir(e.target.checked);
-                          if (e.target.checked && !cloneSubdirName.trim()) {
-                            const derived = repoNameFromUrl(cloneRepoUrl);
-                            if (derived) setCloneSubdirName(derived);
-                          }
-                        }}
-                        disabled={cloneBusy}
-                      />
-                      Enable
-                    </label>
-                    {cloneCreateSubdir ? (
-                      <input
-                        value={cloneSubdirName}
-                        onChange={(e) => {
-                          setCloneSubdirAuto(false);
-                          setCloneSubdirName(e.target.value);
-                        }}
-                        className="modalInput"
-                        placeholder={repoNameFromUrl(cloneRepoUrl) || "repository"}
-                        disabled={cloneBusy}
-                      />
-                    ) : null}
+                    <input
+                      value={cloneSubdirName}
+                      onChange={(e) => setCloneSubdirName(e.target.value)}
+                      className="modalInput"
+                      placeholder="(default: do not create subfolder)"
+                      disabled={cloneBusy}
+                    />
                     <div style={{ opacity: 0.7, fontSize: 12 }}>
-                      Target path: <span className="mono">{cloneTargetPath || "(not set)"}</span>
+                      Target path: <span className="mono">{cloneTargetPath || "(choose destination folder first)"}</span>
                     </div>
                   </div>
                 </div>
@@ -2198,7 +2157,7 @@ function App() {
                     value={cloneOrigin}
                     onChange={(e) => setCloneOrigin(e.target.value)}
                     className="modalInput"
-                    placeholder="origin"
+                    placeholder="(default: origin)"
                     disabled={cloneBusy}
                   />
                 </div>
@@ -2212,8 +2171,6 @@ function App() {
                   cloneBusy ||
                   !cloneRepoUrl.trim() ||
                   !cloneDestinationFolder.trim() ||
-                  !cloneOrigin.trim() ||
-                  (cloneCreateSubdir && !cloneSubdirName.trim()) ||
                   !cloneTargetPath
                 }
               >
