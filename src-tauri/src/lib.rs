@@ -1,8 +1,10 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
+use tauri::Emitter;
+use std::io::Read;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -62,6 +64,58 @@ struct PullPredictResult {
     behind: u32,
     action: String,
     conflict_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GitCloneProgressEvent {
+    destination_path: String,
+    phase: Option<String>,
+    percent: Option<u32>,
+    message: String,
+}
+
+fn extract_progress_percent(message: &str) -> Option<u32> {
+    let idx = message.find('%')?;
+    let before = &message[..idx];
+    let start = before
+        .rfind(|c: char| !c.is_ascii_digit())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let digits = before[start..].trim();
+    if digits.is_empty() {
+        return None;
+    }
+    let pct = digits.parse::<u32>().ok()?;
+    if pct > 100 {
+        return None;
+    }
+    Some(pct)
+}
+
+fn parse_git_clone_progress_line(line: &str) -> Option<(String, u32, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_remote = trimmed
+        .strip_prefix("remote:")
+        .map(|s| s.trim())
+        .unwrap_or(trimmed);
+
+    let pct = extract_progress_percent(without_remote)?;
+    let phase = without_remote
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if phase.is_empty() {
+        return None;
+    }
+
+    Some((phase, pct, without_remote.to_string()))
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
@@ -924,6 +978,7 @@ fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn git_clone_repo(
+    app: tauri::AppHandle,
     repo_url: String,
     destination_path: String,
     branch: Option<String>,
@@ -961,6 +1016,7 @@ fn git_clone_repo(
     }
 
     let mut args: Vec<String> = vec![String::from("clone")];
+    args.push(String::from("--progress"));
 
     if bare {
         args.push(String::from("--bare"));
@@ -989,19 +1045,96 @@ fn git_clone_repo(
     args.push(repo_url);
     args.push(destination_path.clone());
 
-    let out = Command::new("git")
+    let mut child = Command::new("git")
         .args(args)
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to spawn git clone: {e}"))?;
 
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        return Err(if !stderr.is_empty() {
-            format!("git clone failed: {stderr}")
-        } else {
-            format!("git clone failed: {stdout}")
-        });
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| String::from("Failed to capture git clone stderr."))?;
+
+    let mut stderr_all: Vec<u8> = Vec::new();
+    let mut pending: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut last_sent: Option<(String, u32)> = None;
+
+    loop {
+        let n = stderr
+            .read(&mut buf)
+            .map_err(|e| format!("Failed to read git clone progress: {e}"))?;
+        if n == 0 {
+            break;
+        }
+
+        stderr_all.extend_from_slice(&buf[..n]);
+        pending.extend_from_slice(&buf[..n]);
+
+        while let Some(pos) = pending.iter().position(|b| *b == b'\r' || *b == b'\n') {
+            let chunk: Vec<u8> = pending.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&chunk)
+                .trim_matches(&['\r', '\n'][..])
+                .trim()
+                .to_string();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some((phase, pct, message)) = parse_git_clone_progress_line(line.as_str()) {
+                let should_emit = match &last_sent {
+                    Some((p, last_pct)) => p != &phase || *last_pct != pct,
+                    None => true,
+                };
+                if should_emit {
+                    let _ = app.emit(
+                        "git_clone_progress",
+                        GitCloneProgressEvent {
+                            destination_path: destination_path.clone(),
+                            phase: Some(phase.clone()),
+                            percent: Some(pct),
+                            message,
+                        },
+                    );
+                    last_sent = Some((phase, pct));
+                }
+            }
+        }
+    }
+
+    if !pending.is_empty() {
+        let line = String::from_utf8_lossy(&pending).trim().to_string();
+        if let Some((phase, pct, message)) = parse_git_clone_progress_line(line.as_str()) {
+            let should_emit = match &last_sent {
+                Some((p, last_pct)) => p != &phase || *last_pct != pct,
+                None => true,
+            };
+            if should_emit {
+                let _ = app.emit(
+                    "git_clone_progress",
+                    GitCloneProgressEvent {
+                        destination_path: destination_path.clone(),
+                        phase: Some(phase),
+                        percent: Some(pct),
+                        message,
+                    },
+                );
+            }
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to wait for git clone: {e}"))?;
+
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(stderr_all.as_slice()).trim().to_string();
+        if !stderr.is_empty() {
+            return Err(format!("git clone failed: {stderr}"));
+        }
+        return Err(String::from("git clone failed."));
     }
 
     if init_submodules {

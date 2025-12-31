@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
@@ -55,6 +56,13 @@ type PullPredictResult = {
   behind: number;
   action: string;
   conflict_files: string[];
+};
+
+type GitCloneProgressEvent = {
+  destination_path: string;
+  phase?: string | null;
+  percent?: number | null;
+  message: string;
 };
 
 type ViewportState = {
@@ -121,6 +129,9 @@ function App() {
   const [cloneSingleBranch, setCloneSingleBranch] = useState(false);
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneError, setCloneError] = useState("");
+  const [cloneProgressMessage, setCloneProgressMessage] = useState<string>("");
+  const [cloneProgressPercent, setCloneProgressPercent] = useState<number | null>(null);
+  const cloneProgressDestRef = useRef<string>("");
   const [cloneBranchesBusy, setCloneBranchesBusy] = useState(false);
   const [cloneBranchesError, setCloneBranchesError] = useState("");
   const [cloneBranches, setCloneBranches] = useState<string[]>([]);
@@ -183,6 +194,33 @@ function App() {
     document.documentElement.style.setProperty("--app-font-family", fontFamily);
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, fontFamily, fontSizePx]);
+
+  useEffect(() => {
+    if (!cloneModalOpen) return;
+
+    let alive = true;
+    let unlisten: (() => void) | null = null;
+    void listen<GitCloneProgressEvent>("git_clone_progress", (event) => {
+      const dest = cloneProgressDestRef.current;
+      if (!dest) return;
+      if (event.payload.destination_path !== dest) return;
+
+      const pct = event.payload.percent;
+      setCloneProgressPercent(typeof pct === "number" ? pct : null);
+      setCloneProgressMessage(event.payload.message);
+    }).then((fn) => {
+      if (!alive) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+
+    return () => {
+      alive = false;
+      if (unlisten) unlisten();
+    };
+  }, [cloneModalOpen]);
 
   const commits = commitsByRepo[activeRepoPath] ?? [];
   const overview = overviewByRepo[activeRepoPath];
@@ -833,6 +871,9 @@ function App() {
     setCloneBranches([]);
     setCloneBusy(false);
     setCloneBranchesBusy(false);
+    setCloneProgressMessage("");
+    setCloneProgressPercent(null);
+    cloneProgressDestRef.current = "";
     setCloneRepoUrl("");
     setCloneDestinationFolder("");
     setCloneSubdirName("");
@@ -890,6 +931,9 @@ function App() {
       return;
     }
 
+    cloneProgressDestRef.current = cloneTargetPath;
+    setCloneProgressMessage("");
+    setCloneProgressPercent(null);
     setCloneBusy(true);
     setCloneError("");
     setError("");
@@ -910,6 +954,7 @@ function App() {
       setCloneError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setCloneBusy(false);
+      cloneProgressDestRef.current = "";
     }
   }
 
@@ -2019,6 +2064,11 @@ function App() {
             </div>
             <div className="modalBody">
               {cloneError ? <div className="error">{cloneError}</div> : null}
+              {cloneBusy && cloneProgressMessage ? (
+                <div style={{ opacity: 0.75, fontSize: 12, marginBottom: 10 }}>
+                  <span className="mono">{cloneProgressMessage}</span>
+                </div>
+              ) : null}
 
               <div style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gap: 6 }}>
@@ -2174,7 +2224,7 @@ function App() {
                   !cloneTargetPath
                 }
               >
-                {cloneBusy ? "Cloning…" : "Clone"}
+                {cloneBusy ? (cloneProgressPercent !== null ? `Cloning ${cloneProgressPercent}%` : "Cloning…") : "Clone"}
               </button>
               <button type="button" onClick={() => setCloneModalOpen(false)} disabled={cloneBusy}>
                 Cancel
