@@ -188,6 +188,12 @@ function App() {
   };
 
   const [selectedHash, setSelectedHash] = useState<string>("");
+  const [commitContextMenu, setCommitContextMenu] = useState<{
+    x: number;
+    y: number;
+    hash: string;
+  } | null>(null);
+  const commitContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomPct, setZoomPct] = useState<number>(100);
 
   useEffect(() => {
@@ -195,6 +201,39 @@ function App() {
     document.documentElement.style.setProperty("--app-font-family", fontFamily);
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, fontFamily, fontSizePx]);
+
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      window.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!commitContextMenu) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      const el = commitContextMenuRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      setCommitContextMenu(null);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCommitContextMenu(null);
+    };
+
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [commitContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -261,6 +300,35 @@ function App() {
   const headHash = useMemo(() => {
     return overview?.head || commits.find((c) => c.is_head)?.hash || "";
   }, [commits, overview?.head]);
+
+  function openCommitContextMenu(hash: string, x: number, y: number) {
+    const menuW = 260;
+    const menuH = 110;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setCommitContextMenu({
+      hash,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
+  async function checkoutCommit(hash: string) {
+    if (!activeRepoPath) return;
+    const commit = hash.trim();
+    if (!commit) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_checkout_commit", { repoPath: activeRepoPath, commit });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
     const cy = cyRef.current;
@@ -731,8 +799,21 @@ function App() {
       setSelectedHash(evt.target.id());
     });
 
+    cy.on("cxttap", "node", (evt) => {
+      if ((evt.target as any).hasClass?.("refBadge")) return;
+      const hash = evt.target.id();
+      const oe = (evt as any).originalEvent as MouseEvent | undefined;
+      if (!oe) return;
+      setSelectedHash(hash);
+      openCommitContextMenu(hash, oe.clientX, oe.clientY);
+    });
+
     cy.on("tap", (evt) => {
       if (evt.target === cy) setSelectedHash("");
+    });
+
+    cy.on("cxttap", (evt) => {
+      if (evt.target === cy) setCommitContextMenu(null);
     });
 
     const scheduleViewportUpdate = () => {
@@ -1762,6 +1843,12 @@ function App() {
                         key={c.hash}
                         type="button"
                         onClick={() => setSelectedHash(c.hash)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setSelectedHash(c.hash);
+                          openCommitContextMenu(c.hash, e.clientX, e.clientY);
+                        }}
                         style={{
                           textAlign: "left",
                           padding: 10,
@@ -1799,7 +1886,11 @@ function App() {
                 <button type="button" disabled={!selectedCommit} onClick={() => void copyText(selectedHash)}>
                   Copy hash
                 </button>
-                <button type="button" disabled>
+                <button
+                  type="button"
+                  disabled={!selectedCommit || !activeRepoPath || loading}
+                  onClick={() => void checkoutCommit(selectedHash)}
+                >
                   Checkout…
                 </button>
               </div>
@@ -1828,6 +1919,41 @@ function App() {
           </div>
         </div>
       </div>
+
+      {commitContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={commitContextMenuRef}
+          style={{
+            position: "fixed",
+            left: commitContextMenu.x,
+            top: commitContextMenu.y,
+            zIndex: 200,
+            minWidth: 220,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              void copyText(commitContextMenu.hash);
+              setCommitContextMenu(null);
+            }}
+          >
+            Copy hash
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
+              void checkoutCommit(hash);
+            }}
+          >
+            Checkout this commit
+          </button>
+        </div>
+      ) : null}
 
       {pullPredictOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">

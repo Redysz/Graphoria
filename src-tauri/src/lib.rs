@@ -938,6 +938,18 @@ fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, S
 }
 
 #[tauri::command]
+fn git_checkout_commit(repo_path: String, commit: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+
+    run_git(&repo_path, &["checkout", commit.as_str()])
+}
+
+#[tauri::command]
 fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, String> {
     let repo_url = repo_url.trim().to_string();
     if repo_url.is_empty() {
@@ -1167,6 +1179,7 @@ pub fn run() {
             git_set_remote_url,
             git_push,
             git_fetch,
+            git_checkout_commit,
             git_pull,
             git_pull_rebase,
             git_merge_continue,
