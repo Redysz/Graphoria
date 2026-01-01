@@ -371,12 +371,13 @@ fn repo_overview(repo_path: String) -> Result<RepoOverview, String> {
         .collect();
 
     let tags_raw = run_git(&repo_path, &["tag", "--list"])?;
-    let tags = tags_raw
+    let mut tags: Vec<String> = tags_raw
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
+    tags.reverse();
 
     let remotes_raw = run_git(&repo_path, &["remote"])?;
     let remotes = remotes_raw
@@ -393,6 +394,58 @@ fn repo_overview(repo_path: String) -> Result<RepoOverview, String> {
         tags,
         remotes,
     })
+}
+
+#[tauri::command]
+fn git_resolve_ref(repo_path: String, reference: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let reference = reference.trim().to_string();
+    if reference.is_empty() {
+        return Err(String::from("reference is empty"));
+    }
+
+    let hash = run_git(&repo_path, &["rev-list", "-n", "1", reference.as_str()])?;
+    let hash = hash.trim().to_string();
+    if hash.is_empty() {
+        return Err(String::from("Could not resolve reference to a commit."));
+    }
+
+    Ok(hash)
+}
+
+#[tauri::command]
+fn open_in_file_explorer(path: String) -> Result<(), String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file explorer: {e}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open Finder: {e}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file manager: {e}"))?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1169,6 +1222,8 @@ pub fn run() {
             repo_overview,
             list_commits,
             init_repo,
+            open_in_file_explorer,
+            git_resolve_ref,
             git_ls_remote_heads,
             git_clone_repo,
             git_status,

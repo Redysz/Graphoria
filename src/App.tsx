@@ -105,6 +105,7 @@ function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
   const [viewModeByRepo, setViewModeByRepo] = useState<Record<string, "graph" | "commits">>({});
+  const [tagsExpandedByRepo, setTagsExpandedByRepo] = useState<Record<string, boolean>>({});
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
@@ -194,6 +195,12 @@ function App() {
     hash: string;
   } | null>(null);
   const commitContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [tagContextMenu, setTagContextMenu] = useState<{
+    x: number;
+    y: number;
+    tag: string;
+  } | null>(null);
+  const tagContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomPct, setZoomPct] = useState<number>(100);
 
   useEffect(() => {
@@ -214,17 +221,24 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!commitContextMenu) return;
+    if (!commitContextMenu && !tagContextMenu) return;
 
     const onMouseDown = (e: MouseEvent) => {
-      const el = commitContextMenuRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && el.contains(e.target)) return;
+      const commitEl = commitContextMenuRef.current;
+      const tagEl = tagContextMenuRef.current;
+      if (e.target instanceof Node) {
+        if (commitEl && commitEl.contains(e.target)) return;
+        if (tagEl && tagEl.contains(e.target)) return;
+      }
       setCommitContextMenu(null);
+      setTagContextMenu(null);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCommitContextMenu(null);
+      if (e.key === "Escape") {
+        setCommitContextMenu(null);
+        setTagContextMenu(null);
+      }
     };
 
     window.addEventListener("mousedown", onMouseDown);
@@ -233,7 +247,7 @@ function App() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [commitContextMenu]);
+  }, [commitContextMenu, tagContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -301,6 +315,8 @@ function App() {
     return overview?.head || commits.find((c) => c.is_head)?.hash || "";
   }, [commits, overview?.head]);
 
+  const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
+
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
     const menuH = 110;
@@ -308,6 +324,18 @@ function App() {
     const maxY = Math.max(0, window.innerHeight - menuH);
     setCommitContextMenu({
       hash,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
+  function openTagContextMenu(tag: string, x: number, y: number) {
+    const menuW = 260;
+    const menuH = 110;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setTagContextMenu({
+      tag,
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
@@ -328,6 +356,56 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function openActiveRepoInExplorer() {
+    if (!activeRepoPath) return;
+
+    setError("");
+    try {
+      await invoke<void>("open_in_file_explorer", { path: activeRepoPath });
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
+  async function resolveReferenceToHash(reference: string) {
+    if (!activeRepoPath) return "";
+    const ref = reference.trim();
+    if (!ref) return "";
+
+    setLoading(true);
+    setError("");
+    try {
+      const hash = await invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference: ref });
+      return hash;
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+      return "";
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function requestAutoCenter() {
+    if (!activeRepoPath) return;
+    pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
+    setAutoCenterToken((t) => t + 1);
+  }
+
+  async function focusTagOnGraph(tag: string) {
+    const hash = await resolveReferenceToHash(tag);
+    if (!hash) return;
+    setSelectedHash(hash);
+    setViewMode("graph");
+    requestAutoCenter();
+  }
+
+  async function focusTagOnCommits(tag: string) {
+    const hash = await resolveReferenceToHash(tag);
+    if (!hash) return;
+    setSelectedHash(hash);
+    setViewMode("commits");
   }
 
   function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
@@ -998,6 +1076,16 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoPath]);
 
+  useEffect(() => {
+    if (viewMode !== "commits") return;
+    if (!selectedHash) return;
+    const el = document.querySelector(`[data-commit-hash="${selectedHash}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+  }, [activeRepoPath, selectedHash, viewMode]);
+
   async function refreshIndicators(path: string) {
     if (!path) return;
     try {
@@ -1447,6 +1535,26 @@ function App() {
                   >
                     Initialize project…
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
+                      void loadRepo(activeRepoPath);
+                    }}
+                    disabled={!activeRepoPath || loading}
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
+                      void openActiveRepoInExplorer();
+                    }}
+                    disabled={!activeRepoPath}
+                  >
+                    Open in file explorer
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -1746,11 +1854,39 @@ function App() {
           <div className="sidebarSection">
             <div className="sidebarTitle">Tags</div>
             <div className="sidebarList">
-              {(overview?.tags ?? []).slice(0, 30).map((t) => (
-                <div key={t} className="sidebarItem">
+              {(tagsExpanded ? overview?.tags ?? [] : (overview?.tags ?? []).slice(0, 10)).map((t) => (
+                <div
+                  key={t}
+                  className="sidebarItem"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openTagContextMenu(t, e.clientX, e.clientY);
+                  }}
+                >
                   {t}
                 </div>
               ))}
+              {!tagsExpanded && (overview?.tags ?? []).length > 10 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!activeRepoPath) return;
+                    setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "6px 8px",
+                    border: "1px solid transparent",
+                    background: "transparent",
+                    color: "inherit",
+                  }}
+                  className="sidebarItem"
+                >
+                  Show all tags
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -1841,6 +1977,7 @@ function App() {
                     {commits.map((c) => (
                       <button
                         key={c.hash}
+                        data-commit-hash={c.hash}
                         type="button"
                         onClick={() => setSelectedHash(c.hash)}
                         onContextMenu={(e) => {
@@ -1951,6 +2088,41 @@ function App() {
             }}
           >
             Checkout this commit
+          </button>
+        </div>
+      ) : null}
+
+      {tagContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={tagContextMenuRef}
+          style={{
+            position: "fixed",
+            left: tagContextMenu.x,
+            top: tagContextMenu.y,
+            zIndex: 200,
+            minWidth: 220,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const tag = tagContextMenu.tag;
+              setTagContextMenu(null);
+              void focusTagOnGraph(tag);
+            }}
+          >
+            Focus on graph
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const tag = tagContextMenu.tag;
+              setTagContextMenu(null);
+              void focusTagOnCommits(tag);
+            }}
+          >
+            Focus on commits
           </button>
         </div>
       ) : null}

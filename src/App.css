@@ -5,6 +5,7 @@
   --border: rgba(15, 15, 15, 0.12);
   --text: #0f0f0f;
   --muted: rgba(15, 15, 15, 0.65);
+  --menubar-text: rgba(8, 8, 8, 0.82);
   --accent: #2f6fed;
   --accent-2: #1f56c6;
   --danger: #b00020;
@@ -36,6 +37,7 @@
   --border: rgba(255, 255, 255, 0.12);
   --text: #f2f4f8;
   --muted: rgba(242, 244, 248, 0.70);
+  --menubar-text: rgba(249, 250, 252, 0.85);
   --accent: #4b8bff;
   --accent-2: #80b3ff;
 
@@ -52,6 +54,7 @@
   --border: rgba(10, 35, 70, 0.16);
   --text: #0a2346;
   --muted: rgba(10, 35, 70, 0.70);
+  --menubar-text: rgba(5, 18, 35, 0.85);
   --accent: #1f6feb;
   --accent-2: #0f4fb4;
 
@@ -68,6 +71,7 @@
   --border: rgba(61, 43, 31, 0.18);
   --text: #3d2b1f;
   --muted: rgba(61, 43, 31, 0.70);
+  --menubar-text: rgba(31, 22, 16, 0.85);
   --accent: #a35b1d;
   --accent-2: #7d4212;
 
@@ -171,7 +175,7 @@ button:disabled {
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--muted);
+  color: var(--menubar-text);
   font-weight: 700;
   cursor: default;
 }
