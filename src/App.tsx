@@ -935,6 +935,26 @@ function App() {
     focusOnHash(headHash, 1, 0.22);
   }
 
+  function focusOnNewest() {
+    if (!activeRepoPath) return;
+    if (commits.length === 0) return;
+
+    let newestHash = "";
+    let newestTs = -Infinity;
+
+    for (const c of commits) {
+      const ts = Date.parse(c.date);
+      if (!Number.isFinite(ts)) continue;
+      if (ts > newestTs) {
+        newestTs = ts;
+        newestHash = c.hash;
+      }
+    }
+
+    if (!newestHash) return;
+    focusOnHash(newestHash, 1, 0.22);
+  }
+
   function zoomBy(factor: number) {
     const cy = cyRef.current;
     if (!cy) return;
@@ -2336,18 +2356,6 @@ function App() {
                   ) : null}
                   <div className="zoomControls">
                     <div className="zoomIndicator">{zoomPct}%</div>
-                    <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
-                      +
-                    </button>
-                    <button type="button" onClick={() => zoomBy(1 / 1.2)} disabled={!activeRepoPath}>
-                      -
-                    </button>
-                    <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1, 0.22)} disabled={!activeRepoPath}>
-                      Reset
-                    </button>
-                    <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
-                      HEAD
-                    </button>
                     <button
                       type="button"
                       onClick={() => void openRemoteDialog()}
@@ -2360,6 +2368,21 @@ function App() {
                         style={{ backgroundColor: remoteUrl ? "rgba(0, 140, 0, 0.85)" : "rgba(176, 0, 32, 0.85)" }}
                       />
                       Remote
+                    </button>
+                    <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
+                      +
+                    </button>
+                    <button type="button" onClick={() => zoomBy(1 / 1.2)} disabled={!activeRepoPath}>
+                      -
+                    </button>
+                    <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1, 0.22)} disabled={!activeRepoPath}>
+                      Reset focus
+                    </button>
+                    <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
+                      Focus on HEAD
+                    </button>
+                    <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commits.length === 0}>
+                      Focus on newest
                     </button>
                   </div>
                 </div>
