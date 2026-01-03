@@ -13,6 +13,13 @@ export type GeneralSettings = {
 export type GitSettings = {
   userName: string;
   userEmail: string;
+  diffTool: DiffToolSettings;
+};
+
+export type DiffToolSettings = {
+  difftool: string;
+  path: string;
+  command: string;
 };
 
 export type AppearanceSettings = {
@@ -60,6 +67,11 @@ export const defaultAppearanceSettings: AppearanceSettings = {
 export const defaultGitSettings: GitSettings = {
   userName: "",
   userEmail: "",
+  diffTool: {
+    difftool: "Graphoria builtin diff",
+    path: "",
+    command: "",
+  },
 };
 
 export const defaultGraphSettings: GraphSettings = {
@@ -104,7 +116,16 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 1,
+      version: 2,
+      migrate: (persisted, _version) => {
+        const s = persisted as any;
+        if (!s || typeof s !== "object") return s;
+        if (!s.git || typeof s.git !== "object") return s;
+        if (!s.git.diffTool) {
+          s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        return s;
+      },
     },
   ),
 );

@@ -23,6 +23,8 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
 
   const [section, setSection] = useState<SettingsSection>("general");
 
+  const diffTool = git.diffTool;
+
   const title = useMemo(() => {
     switch (section) {
       case "general":
@@ -251,6 +253,79 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                       placeholder="you@example.com"
                     />,
                   )}
+
+                  {field(
+                    "Diff tool",
+                    <select
+                      value={diffTool.difftool}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "DiffMerge") {
+                          setGit({
+                            diffTool: {
+                              difftool: "DiffMerge",
+                              path: "sgdm.exe",
+                              command: 'sgdm.exe "$LOCAL" "$REMOTE"',
+                            },
+                          });
+                          return;
+                        }
+                        if (v === "Meld") {
+                          setGit({
+                            diffTool: {
+                              difftool: "Meld",
+                              path: "meld.exe",
+                              command: 'meld.exe "$LOCAL" "$REMOTE"',
+                            },
+                          });
+                          return;
+                        }
+                        if (v === "Graphoria builtin diff") {
+                          setGit({
+                            diffTool: {
+                              difftool: "Graphoria builtin diff",
+                              path: "",
+                              command: "",
+                            },
+                          });
+                          return;
+                        }
+                        setGit({ diffTool: { ...diffTool, difftool: v } });
+                      }}
+                    >
+                      <option value="Graphoria builtin diff">Graphoria builtin diff</option>
+                      <option value="DiffMerge">DiffMerge</option>
+                      <option value="Meld">Meld</option>
+                      <option value="Custom">Custom</option>
+                    </select>,
+                    "Builtin renders inside Graphoria. External tools use the Path/Command below.",
+                  )}
+
+                  {diffTool.difftool !== "Graphoria builtin diff" ? (
+                    <>
+                      {field(
+                        "Path",
+                        <input
+                          className="modalInput"
+                          value={diffTool.path}
+                          onChange={(e) => setGit({ diffTool: { ...diffTool, path: e.target.value } })}
+                          placeholder="meld.exe"
+                        />,
+                        "Executable name or full path.",
+                      )}
+
+                      {field(
+                        "Command",
+                        <input
+                          className="modalInput"
+                          value={diffTool.command}
+                          onChange={(e) => setGit({ diffTool: { ...diffTool, command: e.target.value } })}
+                          placeholder='meld.exe "$LOCAL" "$REMOTE"'
+                        />,
+                        "Variables: $LOCAL, $REMOTE (and $BASE reserved for future merge/conflict tooling).",
+                      )}
+                    </>
+                  ) : null}
                 </div>
               ) : null}
             </div>

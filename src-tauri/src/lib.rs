@@ -3,8 +3,9 @@ use serde::Serialize;
 use tauri::Emitter;
 use std::io::Read;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -35,6 +36,13 @@ struct RepoOverview {
 struct GitStatusEntry {
     status: String,
     path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GitChangeEntry {
+    status: String,
+    path: String,
+    old_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,6 +139,130 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     }
 
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+fn run_git_stdout_raw(repo_path: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["-C", repo_path])
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+fn safe_repo_join(repo_path: &str, rel_path: &str) -> Result<PathBuf, String> {
+    let rel_path = rel_path.trim();
+    if rel_path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let p = Path::new(rel_path);
+    if p.is_absolute() {
+        return Err(String::from("path must be relative"));
+    }
+
+    for c in p.components() {
+        if matches!(c, std::path::Component::ParentDir) {
+            return Err(String::from("path must not contain '..'"));
+        }
+    }
+
+    Ok(Path::new(repo_path).join(p))
+}
+
+fn sanitize_filename(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        String::from("file")
+    } else {
+        out
+    }
+}
+
+fn make_temp_diff_dir() -> Result<PathBuf, String> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("Failed to get system time: {e}"))?
+        .as_millis();
+    let dir = std::env::temp_dir().join(format!("graphoria-diff-{ts}"));
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    Ok(dir)
+}
+
+fn write_temp_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf, String> {
+    let p = dir.join(name);
+    fs::write(&p, content.as_bytes()).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    Ok(p)
+}
+
+fn expand_external_diff_command(tool_path: &str, command: &str, local: &Path, remote: &Path, base: &Path) -> Result<String, String> {
+    let tool_path = tool_path.trim();
+    let mut cmd = command.trim().to_string();
+
+    if cmd.is_empty() {
+        if tool_path.is_empty() {
+            return Err(String::from("Diff tool Path and Command are empty."));
+        }
+        cmd = format!("\"{tool_path}\" \"$LOCAL\" \"$REMOTE\"");
+    }
+
+    if !tool_path.is_empty() {
+        let base_name = Path::new(tool_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if !base_name.is_empty() {
+            let lower = cmd.to_lowercase();
+            let bn_lower = base_name.to_lowercase();
+            if lower.starts_with(&bn_lower) {
+                cmd = format!("\"{tool_path}\"{}", &cmd[base_name.len()..]);
+            }
+        }
+    }
+
+    let local_s = local.to_string_lossy();
+    let remote_s = remote.to_string_lossy();
+    let base_s = base.to_string_lossy();
+    cmd = cmd.replace("$LOCAL", local_s.as_ref());
+    cmd = cmd.replace("$REMOTE", remote_s.as_ref());
+    cmd = cmd.replace("$BASE", base_s.as_ref());
+    Ok(cmd)
+}
+
+fn spawn_external_command(repo_path: &str, command: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .current_dir(repo_path)
+            .args(["/C", command])
+            .spawn()
+            .map_err(|e| format!("Failed to start diff tool: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("sh")
+            .current_dir(repo_path)
+            .args(["-lc", command])
+            .spawn()
+            .map_err(|e| format!("Failed to start diff tool: {e}"))?;
+        return Ok(());
+    }
 }
 
 fn run_git_status(repo_path: &str, args: &[&str]) -> Result<(bool, String, String), String> {
@@ -582,6 +714,223 @@ fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, String> {
     }
 
     Ok(entries)
+}
+
+#[tauri::command]
+fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChangeEntry>, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+
+    let raw = run_git(&repo_path, &["show", "--name-status", "--pretty=format:", commit.as_str()])
+        .unwrap_or_default();
+
+    let mut out: Vec<GitChangeEntry> = Vec::new();
+    for line in raw.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = t.split('\t').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let status = parts[0].trim().to_string();
+        if parts.len() == 2 {
+            let path = parts[1].trim().to_string();
+            if !path.is_empty() {
+                out.push(GitChangeEntry {
+                    status,
+                    path,
+                    old_path: None,
+                });
+            }
+            continue;
+        }
+
+        if parts.len() >= 3 {
+            let old_path = parts[1].trim().to_string();
+            let path = parts[2].trim().to_string();
+            if !path.is_empty() {
+                out.push(GitChangeEntry {
+                    status,
+                    path,
+                    old_path: if old_path.is_empty() { None } else { Some(old_path) },
+                });
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+#[tauri::command]
+fn git_commit_file_diff(repo_path: String, commit: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    let path = path.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    run_git(
+        &repo_path,
+        &[
+            "show",
+            "--no-color",
+            "--format=",
+            "--unified=3",
+            commit.as_str(),
+            "--",
+            path.as_str(),
+        ],
+    )
+}
+
+#[tauri::command]
+fn git_commit_file_content(repo_path: String, commit: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    let path = path.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let spec = format!("{commit}:{path}");
+    run_git_stdout_raw(&repo_path, &["show", spec.as_str()])
+}
+
+#[tauri::command]
+fn git_working_file_diff(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    run_git(
+        &repo_path,
+        &["diff", "--no-color", "--unified=3", "HEAD", "--", path.as_str()],
+    )
+}
+
+#[tauri::command]
+fn git_working_file_content(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let full = safe_repo_join(&repo_path, path.as_str())
+        .map_err(|e| format!("Invalid path: {e}"))?;
+
+    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    if bytes.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+    Ok(String::from_utf8_lossy(bytes.as_slice()).to_string())
+}
+
+#[tauri::command]
+fn git_launch_external_diff_working(
+    repo_path: String,
+    path: String,
+    tool_path: Option<String>,
+    command: Option<String>,
+) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let tool_path = tool_path.unwrap_or_default();
+    let command = command.unwrap_or_default();
+
+    let head_content = match run_git_stdout_raw(&repo_path, &["show", format!("HEAD:{path}").as_str()]) {
+        Ok(s) => s,
+        Err(_) => String::new(),
+    };
+
+    let working_content = match git_working_file_content(repo_path.clone(), path.clone()) {
+        Ok(s) => s,
+        Err(_) => String::new(),
+    };
+
+    let dir = make_temp_diff_dir()?;
+    let safe = sanitize_filename(path.as_str());
+    let local = write_temp_file(&dir, format!("LOCAL_{safe}").as_str(), head_content.as_str())?;
+    let remote = write_temp_file(&dir, format!("REMOTE_{safe}").as_str(), working_content.as_str())?;
+    let base = write_temp_file(&dir, format!("BASE_{safe}").as_str(), "")?;
+
+    let expanded = expand_external_diff_command(
+        tool_path.as_str(),
+        command.as_str(),
+        local.as_path(),
+        remote.as_path(),
+        base.as_path(),
+    )?;
+    spawn_external_command(repo_path.as_str(), expanded.as_str())
+}
+
+#[tauri::command]
+fn git_launch_external_diff_commit(
+    repo_path: String,
+    commit: String,
+    path: String,
+    old_path: Option<String>,
+    tool_path: Option<String>,
+    command: Option<String>,
+) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    let path = path.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let tool_path = tool_path.unwrap_or_default();
+    let command = command.unwrap_or_default();
+    let old_path = old_path.unwrap_or_else(|| path.clone());
+
+    let parent = run_git(&repo_path, &["rev-parse", format!("{commit}^").as_str()]).ok();
+    let local_content = match parent {
+        Some(p) if !p.trim().is_empty() => run_git_stdout_raw(&repo_path, &["show", format!("{p}:{old_path}").as_str()]).unwrap_or_default(),
+        _ => String::new(),
+    };
+
+    let remote_content = run_git_stdout_raw(&repo_path, &["show", format!("{commit}:{path}").as_str()]).unwrap_or_default();
+
+    let dir = make_temp_diff_dir()?;
+    let safe = sanitize_filename(path.as_str());
+    let local = write_temp_file(&dir, format!("LOCAL_{safe}").as_str(), local_content.as_str())?;
+    let remote = write_temp_file(&dir, format!("REMOTE_{safe}").as_str(), remote_content.as_str())?;
+    let base = write_temp_file(&dir, format!("BASE_{safe}").as_str(), "")?;
+
+    let expanded = expand_external_diff_command(
+        tool_path.as_str(),
+        command.as_str(),
+        local.as_path(),
+        remote.as_path(),
+        base.as_path(),
+    )?;
+    spawn_external_command(repo_path.as_str(), expanded.as_str())
 }
 
 #[tauri::command]
@@ -1434,6 +1783,13 @@ pub fn run() {
             git_ls_remote_heads,
             git_clone_repo,
             git_status,
+            git_commit_changes,
+            git_commit_file_diff,
+            git_commit_file_content,
+            git_working_file_diff,
+            git_working_file_content,
+            git_launch_external_diff_working,
+            git_launch_external_diff_commit,
             git_commit,
             git_status_summary,
             git_ahead_behind,

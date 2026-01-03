@@ -6,6 +6,7 @@ import cytoscape, { type Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings, type ThemeName } from "./appSettingsStore";
+import DiffView, { parseUnifiedDiff } from "./DiffView";
 import "./App.css";
 
 let dagreRegistered = false;
@@ -146,6 +147,13 @@ function App() {
   const [commitBusy, setCommitBusy] = useState(false);
   const [commitError, setCommitError] = useState("");
 
+  const [commitPreviewPath, setCommitPreviewPath] = useState("");
+  const [commitPreviewStatus, setCommitPreviewStatus] = useState("");
+  const [commitPreviewDiff, setCommitPreviewDiff] = useState("");
+  const [commitPreviewContent, setCommitPreviewContent] = useState("");
+  const [commitPreviewLoading, setCommitPreviewLoading] = useState(false);
+  const [commitPreviewError, setCommitPreviewError] = useState("");
+
   const [remoteModalOpen, setRemoteModalOpen] = useState(false);
   const [remoteUrlDraft, setRemoteUrlDraft] = useState("");
   const [remoteBusy, setRemoteBusy] = useState(false);
@@ -196,6 +204,7 @@ function App() {
   const fontFamily = useAppSettings((s) => s.appearance.fontFamily);
   const fontSizePx = useAppSettings((s) => s.appearance.fontSizePx);
   const graphSettings = useAppSettings((s) => s.graph);
+  const diffTool = useAppSettings((s) => s.git.diffTool);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -205,6 +214,9 @@ function App() {
   };
 
   const [selectedHash, setSelectedHash] = useState<string>("");
+  const [detailsTab, setDetailsTab] = useState<"details" | "changes">("details");
+  const [showChangesOpen, setShowChangesOpen] = useState(false);
+  const [showChangesCommit, setShowChangesCommit] = useState("");
   const [commitContextMenu, setCommitContextMenu] = useState<{
     x: number;
     y: number;
@@ -1633,6 +1645,11 @@ function App() {
     setCommitMessage("");
     setCommitAlsoPush(false);
     setCommitModalOpen(true);
+    setCommitPreviewPath("");
+    setCommitPreviewStatus("");
+    setCommitPreviewDiff("");
+    setCommitPreviewContent("");
+    setCommitPreviewError("");
 
     try {
       const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
@@ -1640,6 +1657,9 @@ function App() {
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;
       setSelectedPaths(nextSelected);
+      const first = entries[0];
+      setCommitPreviewPath(first?.path ?? "");
+      setCommitPreviewStatus(first?.status ?? "");
       setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
     } catch (e) {
       setStatusEntries([]);
@@ -1647,6 +1667,68 @@ function App() {
       setCommitError(typeof e === "string" ? e : JSON.stringify(e));
     }
   }
+
+  useEffect(() => {
+    if (!commitModalOpen || !activeRepoPath || !commitPreviewPath) {
+      setCommitPreviewDiff("");
+      setCommitPreviewContent("");
+      setCommitPreviewError("");
+      setCommitPreviewLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setCommitPreviewLoading(true);
+    setCommitPreviewError("");
+    setCommitPreviewDiff("");
+    setCommitPreviewContent("");
+
+    const run = async () => {
+      try {
+        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
+        if (useExternal) {
+          await invoke<void>("git_launch_external_diff_working", {
+            repoPath: activeRepoPath,
+            path: commitPreviewPath,
+            toolPath: diffTool.path,
+            command: diffTool.command,
+          });
+          if (!alive) return;
+          setCommitPreviewContent("Opened in external diff tool.");
+          return;
+        }
+
+        const st = commitPreviewStatus.trim();
+        if (st.startsWith("??")) {
+          const content = await invoke<string>("git_working_file_content", {
+            repoPath: activeRepoPath,
+            path: commitPreviewPath,
+          });
+          if (!alive) return;
+          setCommitPreviewContent(content);
+          return;
+        }
+
+        const diff = await invoke<string>("git_working_file_diff", {
+          repoPath: activeRepoPath,
+          path: commitPreviewPath,
+        });
+        if (!alive) return;
+        setCommitPreviewDiff(diff);
+      } catch (e) {
+        if (!alive) return;
+        setCommitPreviewError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        if (!alive) return;
+        setCommitPreviewLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [activeRepoPath, commitModalOpen, commitPreviewPath, commitPreviewStatus, diffTool.command, diffTool.difftool, diffTool.path]);
 
   async function runCommit() {
     if (!activeRepoPath) return;
@@ -2437,7 +2519,14 @@ function App() {
 
           <div className="details">
             <div className="detailsTitle">
-              <h3>Details</h3>
+              <div className="segmented small">
+                <button type="button" className={detailsTab === "details" ? "active" : ""} onClick={() => setDetailsTab("details")}> 
+                  Details
+                </button>
+                <button type="button" className={detailsTab === "changes" ? "active" : ""} onClick={() => setDetailsTab("changes")}> 
+                  Changes
+                </button>
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" disabled={!selectedCommit} onClick={() => void copyText(selectedHash)}>
                   Copy hash
@@ -2454,7 +2543,7 @@ function App() {
 
             {!selectedCommit ? (
               <div style={{ opacity: 0.7 }}>Select a commit to see details.</div>
-            ) : (
+            ) : detailsTab === "details" ? (
               <div className="detailsGrid">
                 <div className="detailsLabel">Hash</div>
                 <div className="detailsValue mono">{selectedCommit.hash}</div>
@@ -2470,6 +2559,19 @@ function App() {
 
                 <div className="detailsLabel">Refs</div>
                 <div className="detailsValue mono">{selectedCommit.refs || "(none)"}</div>
+              </div>
+            ) : (
+              <div style={{ height: 180, minHeight: 0 }}>
+                {activeRepoPath ? (
+                  <DiffView
+                    repoPath={activeRepoPath}
+                    source={{ kind: "commit", commit: selectedCommit.hash }}
+                    tool={diffTool}
+                    height={180}
+                  />
+                ) : (
+                  <div style={{ opacity: 0.7 }}>No repository selected.</div>
+                )}
               </div>
             )}
           </div>
@@ -2488,6 +2590,20 @@ function App() {
             minWidth: 220,
           }}
         >
+          <button
+            type="button"
+            disabled={!activeRepoPath}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
+              setShowChangesCommit(hash);
+              setShowChangesOpen(true);
+              setDetailsTab("changes");
+              setSelectedHash(hash);
+            }}
+          >
+            Show changes
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -3053,7 +3169,7 @@ function App() {
 
       {commitModalOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(900px, 96vw)" }}>
+          <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
             <div className="modalHeader">
               <div style={{ fontWeight: 900 }}>Commit</div>
               <button type="button" onClick={() => setCommitModalOpen(false)} disabled={commitBusy}>
@@ -3063,63 +3179,110 @@ function App() {
             <div className="modalBody">
               {commitError ? <div className="error">{commitError}</div> : null}
 
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
-                <textarea
-                  value={commitMessage}
-                  onChange={(e) => setCommitMessage(e.target.value)}
-                  rows={3}
-                  className="modalTextarea"
-                  placeholder="Commit message"
-                  disabled={commitBusy}
-                />
-              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
+                    <textarea
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      rows={3}
+                      className="modalTextarea"
+                      placeholder="Commit message"
+                      disabled={commitBusy}
+                    />
+                  </div>
 
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-                <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next: Record<string, boolean> = {};
-                    for (const e of statusEntries) next[e.path] = true;
-                    setSelectedPaths(next);
-                  }}
-                  disabled={commitBusy || statusEntries.length === 0}
-                >
-                  Select all
-                </button>
-              </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next: Record<string, boolean> = {};
+                        for (const e of statusEntries) next[e.path] = true;
+                        setSelectedPaths(next);
+                      }}
+                      disabled={commitBusy || statusEntries.length === 0}
+                    >
+                      Select all
+                    </button>
+                  </div>
 
-              {statusEntries.length === 0 ? (
-                <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to commit.</div>
-              ) : (
-                <div className="statusList">
-                  {statusEntries.map((e) => (
-                    <label key={e.path} className="statusRow">
+                  {statusEntries.length === 0 ? (
+                    <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to commit.</div>
+                  ) : (
+                    <div className="statusList">
+                      {statusEntries.map((e) => (
+                        <div
+                          key={e.path}
+                          className="statusRow"
+                          onClick={() => {
+                            setCommitPreviewPath(e.path);
+                            setCommitPreviewStatus(e.status);
+                          }}
+                          style={
+                            e.path === commitPreviewPath
+                              ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
+                              : undefined
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!selectedPaths[e.path]}
+                            onClick={(ev) => ev.stopPropagation()}
+                            onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                            disabled={commitBusy}
+                          />
+                          <span className="statusCode">{e.status}</span>
+                          <span className="statusPath">{e.path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 2 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
                       <input
                         type="checkbox"
-                        checked={!!selectedPaths[e.path]}
-                        onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
-                        disabled={commitBusy}
+                        checked={commitAlsoPush}
+                        onChange={(e) => setCommitAlsoPush(e.target.checked)}
+                        disabled={commitBusy || !remoteUrl}
                       />
-                      <span className="statusCode">{e.status}</span>
-                      <span className="statusPath">{e.path}</span>
+                      Push after commit
                     </label>
-                  ))}
+                    {!remoteUrl ? <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin.</div> : null}
+                  </div>
                 </div>
-              )}
 
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                  <input
-                    type="checkbox"
-                    checked={commitAlsoPush}
-                    onChange={(e) => setCommitAlsoPush(e.target.checked)}
-                    disabled={commitBusy || !remoteUrl}
-                  />
-                  Push after commit
-                </label>
-                {!remoteUrl ? <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin.</div> : null}
+                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
+                  <div style={{ opacity: 0.75, fontSize: 12 }}>
+                    Green: added, red: removed. Yellow/blue: detected moved lines.
+                  </div>
+
+                  {commitPreviewError ? <div className="error">{commitPreviewError}</div> : null}
+                  {commitPreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+
+                  {!commitPreviewLoading && !commitPreviewError ? (
+                    diffTool.difftool !== "Graphoria builtin diff" ? (
+                      <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                    ) : commitPreviewDiff ? (
+                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                        {parseUnifiedDiff(commitPreviewDiff).map((l, i) => (
+                          <div key={i} className={`diffLine diffLine-${l.kind}`}>
+                            {l.text}
+                          </div>
+                        ))}
+                      </pre>
+                    ) : commitPreviewContent ? (
+                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                        {commitPreviewContent.replace(/\r\n/g, "\n")}
+                      </pre>
+                    ) : (
+                      <div style={{ opacity: 0.75 }}>Select a file.</div>
+                    )
+                  ) : null}
+                </div>
               </div>
             </div>
             <div className="modalFooter">
@@ -3129,6 +3292,33 @@ function App() {
                 disabled={commitBusy || !commitMessage.trim() || statusEntries.filter((e) => selectedPaths[e.path]).length === 0}
               >
                 {commitBusy ? "Committing…" : "Commit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showChangesOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 300 }}>
+          <div className="modal" style={{ width: "min(1200px, 96vw)", maxHeight: "min(80vh, 900px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Changes</div>
+              <button type="button" onClick={() => setShowChangesOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody" style={{ padding: 12 }}>
+              {!activeRepoPath ? (
+                <div style={{ opacity: 0.7 }}>No repository selected.</div>
+              ) : !showChangesCommit ? (
+                <div style={{ opacity: 0.7 }}>No commit selected.</div>
+              ) : (
+                <DiffView repoPath={activeRepoPath} source={{ kind: "commit", commit: showChangesCommit }} tool={diffTool} height={"min(68vh, 720px)"} />
+              )}
+            </div>
+            <div className="modalFooter">
+              <button type="button" onClick={() => setShowChangesOpen(false)}>
+                Close
               </button>
             </div>
           </div>

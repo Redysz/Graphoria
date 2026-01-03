@@ -718,4 +718,133 @@ button:disabled {
  .settingsHint {
   font-size: 12px;
   color: var(--muted);
+}
+
+ .diffLayout {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+ }
+
+ .diffLeft {
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--panel-2);
+ }
+
+ .diffRight {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--panel);
+ }
+
+ .diffLeftHeader,
+ .diffRightHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(15, 15, 15, 0.08);
+  background: var(--panel);
+ }
+
+ .diffFileList {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+ }
+
+ .diffFile {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(15, 15, 15, 0.10);
+  background: var(--panel);
+ }
+
+ .diffFileActive {
+  background: rgba(47, 111, 237, 0.12);
+  border-color: rgba(47, 111, 237, 0.35);
+ }
+
+ .diffStatus {
+  font-weight: 900;
+  font-size: 12px;
+  color: var(--muted);
+ }
+
+ .diffPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
+ .diffEmpty {
+  padding: 12px;
+  opacity: 0.75;
+ }
+
+ .diffError {
+  color: var(--danger);
+  opacity: 1;
+  font-weight: 700;
+ }
+
+ .diffCode {
+  margin: 0;
+  padding: 10px;
+  min-height: 0;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre;
+ }
+
+ .diffLine {
+  padding: 0 8px;
+  border-radius: 6px;
+ }
+
+ .diffLine-meta {
+  opacity: 0.75;
+ }
+
+ .diffLine-hunk {
+  background: rgba(120, 185, 255, 0.14);
+  border: 1px solid rgba(120, 185, 255, 0.18);
+ }
+
+ .diffLine-add {
+  background: rgba(0, 140, 0, 0.12);
+  border: 1px solid rgba(0, 140, 0, 0.18);
+ }
+
+ .diffLine-del {
+  background: rgba(176, 0, 32, 0.10);
+  border: 1px solid rgba(176, 0, 32, 0.18);
+ }
+
+ .diffLine-moved_add {
+  background: rgba(255, 215, 130, 0.22);
+  border: 1px solid rgba(255, 215, 130, 0.30);
+ }
+
+ .diffLine-moved_del {
+  background: rgba(120, 185, 255, 0.18);
+  border: 1px solid rgba(120, 185, 255, 0.28);
  }
