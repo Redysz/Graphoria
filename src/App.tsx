@@ -210,6 +210,8 @@ function App() {
     y: number;
     hash: string;
   } | null>(null);
+  const [commitContextBranches, setCommitContextBranches] = useState<string[]>([]);
+  const [commitContextBranchesLoading, setCommitContextBranchesLoading] = useState<boolean>(false);
   const commitContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [tagContextMenu, setTagContextMenu] = useState<{
     x: number;
@@ -304,6 +306,34 @@ function App() {
   }, [commits, overview?.head]);
 
   const isDetached = overview?.head_name === "(detached)";
+
+  useEffect(() => {
+    if (!commitContextMenu || !activeRepoPath || !isDetached) {
+      setCommitContextBranches([]);
+      setCommitContextBranchesLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setCommitContextBranches([]);
+    setCommitContextBranchesLoading(true);
+    void invoke<string[]>("git_branches_points_at", { repoPath: activeRepoPath, commit: commitContextMenu.hash })
+      .then((branches) => {
+        if (!alive) return;
+        const next = Array.isArray(branches) ? branches : [];
+        setCommitContextBranches(normalizeBranchList(next));
+        setCommitContextBranchesLoading(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCommitContextBranches([]);
+        setCommitContextBranchesLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [commitContextMenu?.hash, activeRepoPath, isDetached]);
 
   function normalizeBranchName(name: string) {
     let t = name.trim();
@@ -2456,18 +2486,23 @@ function App() {
             Checkout this commit
           </button>
 
+          {isDetached && commitContextBranchesLoading ? (
+            <button type="button" disabled title="Checking branches that point at this commit…">
+              Checking branches…
+            </button>
+          ) : null}
+
           {(() => {
             if (!isDetached) return null;
-            const c = commits.find((x) => x.hash === commitContextMenu.hash);
-            if (!c?.is_head) return null;
-            const b = detachedTargetBranch.trim();
+            if (commitContextBranches.length === 0) return null;
+            const b = pickPreferredBranch(commitContextBranches);
             if (!b) return null;
 
             if (changedCount === 0) {
               return (
                 <button
                   type="button"
-                  title="Re-attaches HEAD by checking out the branch that points at this commit."
+                  title={`Re-attaches HEAD by checking out '${b}'.`}
                   disabled={!activeRepoPath || loading}
                   onClick={() => {
                     setCommitContextMenu(null);
@@ -2482,7 +2517,7 @@ function App() {
             return (
               <button
                 type="button"
-                title="Discards local changes (git reset --hard) and re-attaches HEAD by checking out the branch that points at this commit."
+                title={`Discards local changes (git reset --hard) and re-attaches HEAD by checking out '${b}'.`}
                 disabled={!activeRepoPath || loading}
                 onClick={() => {
                   setCommitContextMenu(null);
