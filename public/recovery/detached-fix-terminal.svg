@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <rect width="560" height="280" rx="16" fill="#ffffff"/>
+  <rect x="16" y="16" width="528" height="248" rx="12" fill="#0b0f17" stroke="#2b3443"/>
+
+  <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#f2f4f8">Open terminal</text>
+  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#c9d3ea">Use Git Bash on Windows or default terminal elsewhere</text>
+
+  <rect x="28" y="92" width="504" height="156" rx="10" fill="#151922" stroke="#2b3443"/>
+  <text x="44" y="122" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#c9d3ea">$ cd /path/to/repo</text>
+  <text x="44" y="146" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#c9d3ea">$ git status</text>
+  <text x="44" y="170" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#c9d3ea">$ git checkout &lt;branch&gt;</text>
+</svg>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <rect width="560" height="280" rx="16" fill="#ffffff"/>
+  <rect x="16" y="16" width="528" height="248" rx="12" fill="#fff5f6" stroke="#f0c7cf"/>
+
+  <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">Detached HEAD</text>
+  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#3b4250">Discard local changes, then checkout branch</text>
+
+  <line x1="120" y1="110" x2="420" y2="110" stroke="#b7c2d6" stroke-width="2"/>
+  <circle cx="140" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="230" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="320" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="410" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+
+  <text x="290" y="92" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">HEAD</text>
+  <path d="M330 92 L330 100" stroke="#b00020" stroke-width="3"/>
+
+  <text x="396" y="144" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#2f6fed">branch</text>
+  <path d="M404 118 L404 132" stroke="#2f6fed" stroke-width="3"/>
+
+  <text x="210" y="212" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git reset --hard</text>
+  <text x="210" y="232" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git checkout &lt;branch&gt;</text>
+</svg>

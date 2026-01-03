@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <rect width="560" height="280" rx="16" fill="#ffffff"/>
+  <rect x="16" y="16" width="528" height="248" rx="12" fill="#f5f7fb" stroke="#d7dbe3"/>
+
+  <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">Save changes with a branch</text>
+  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#3b4250">Commit, create temp branch, checkout target, merge</text>
+
+  <line x1="120" y1="110" x2="420" y2="110" stroke="#b7c2d6" stroke-width="2"/>
+  <circle cx="140" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="230" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="320" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <circle cx="410" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+
+  <path d="M330 118 L360 140" stroke="#b00020" stroke-width="3"/>
+  <text x="304" y="92" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">HEAD</text>
+
+  <text x="372" y="156" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">temp</text>
+  <circle cx="368" cy="148" r="6" fill="#b00020"/>
+
+  <text x="396" y="144" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#2f6fed">target</text>
+  <path d="M404 118 L404 132" stroke="#2f6fed" stroke-width="3"/>
+
+  <text x="170" y="212" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git commit -a -m &quot;...&quot;</text>
+  <text x="170" y="232" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git branch &lt;temp&gt;  &amp;&amp;  git merge &lt;temp&gt;</text>
+</svg>
