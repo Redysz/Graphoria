@@ -1003,6 +1003,213 @@ fn git_checkout_commit(repo_path: String, commit: String) -> Result<String, Stri
 }
 
 #[tauri::command]
+fn git_checkout_branch(repo_path: String, branch: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err(String::from("branch is empty"));
+    }
+
+    run_git(&repo_path, &["checkout", branch.as_str()])
+}
+
+#[tauri::command]
+fn git_reset_hard(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    run_git(&repo_path, &["reset", "--hard"])
+}
+
+#[tauri::command]
+fn git_commit_all(repo_path: String, message: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err(String::from("Commit message is empty."));
+    }
+
+    let out = Command::new("git")
+        .args(["-C", &repo_path, "commit", "-a", "-m", &message])
+        .output()
+        .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git commit failed: {stderr}"));
+    }
+
+    let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    Ok(new_head)
+}
+
+#[tauri::command]
+fn git_create_branch(repo_path: String, branch: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err(String::from("branch is empty"));
+    }
+
+    run_git(&repo_path, &["branch", branch.as_str()])
+}
+
+#[tauri::command]
+fn git_delete_branch(repo_path: String, branch: String, force: Option<bool>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err(String::from("branch is empty"));
+    }
+
+    let force = force.unwrap_or(false);
+    if force {
+        run_git(&repo_path, &["branch", "-D", branch.as_str()])
+    } else {
+        run_git(&repo_path, &["branch", "-d", branch.as_str()])
+    }
+}
+
+#[tauri::command]
+fn git_merge_branch(repo_path: String, branch: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err(String::from("branch is empty"));
+    }
+
+    run_git(&repo_path, &["merge", branch.as_str()])
+}
+
+#[tauri::command]
+fn git_reflog(repo_path: String, max_count: Option<u32>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let max_count = max_count.unwrap_or(30).min(200);
+    let max_count_s = max_count.to_string();
+    run_git(&repo_path, &["reflog", "-n", max_count_s.as_str()])
+}
+
+#[tauri::command]
+fn git_cherry_pick(repo_path: String, commits: Vec<String>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commits: Vec<String> = commits.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    if commits.is_empty() {
+        return Err(String::from("No commits provided."));
+    }
+
+    let mut args: Vec<&str> = Vec::new();
+    args.push("cherry-pick");
+    for c in &commits {
+        args.push(c.as_str());
+    }
+    run_git(&repo_path, args.as_slice())
+}
+
+#[tauri::command]
+fn git_branches_points_at(repo_path: String, commit: String) -> Result<Vec<String>, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+
+    let raw = run_git(&repo_path, &["branch", "--format=%(refname:short)", "--points-at", commit.as_str()])?;
+    let mut out: Vec<String> = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+#[tauri::command]
+fn open_terminal(repo_path: String) -> Result<(), String> {
+    let repo_path = repo_path.trim().to_string();
+    if repo_path.is_empty() {
+        return Err(String::from("repo_path is empty"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let candidates: Vec<String> = vec![
+            std::env::var("ProgramFiles").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
+            std::env::var("ProgramFiles(x86)").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
+            std::env::var("LocalAppData").ok().map(|p| format!("{p}\\Programs\\Git\\git-bash.exe")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        for p in candidates {
+            if Path::new(p.as_str()).exists() {
+                Command::new("cmd")
+                    .current_dir(&repo_path)
+                    .args(["/C", "start", "", p.as_str()])
+                    .spawn()
+                    .map_err(|e| format!("Failed to open Git Bash: {e}"))?;
+                return Ok(());
+            }
+        }
+
+        if Command::new("cmd")
+            .current_dir(&repo_path)
+            .args(["/C", "start", "", "bash", "--login", "-i"])
+            .spawn()
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        Command::new("cmd")
+            .current_dir(&repo_path)
+            .args(["/C", "start", "", "powershell"])
+            .spawn()
+            .map_err(|e| format!("Failed to open terminal: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-a", "Terminal", repo_path.as_str()])
+            .spawn()
+            .map_err(|e| format!("Failed to open Terminal: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let attempts: Vec<(&str, Vec<&str>)> = vec![
+            ("x-terminal-emulator", vec![]),
+            ("gnome-terminal", vec!["--working-directory", repo_path.as_str()]),
+            ("konsole", vec!["--workdir", repo_path.as_str()]),
+            ("xterm", vec!["-e", "bash", "-lc", "pwd; exec bash"]),
+        ];
+
+        for (bin, args) in attempts {
+            let mut cmd = Command::new(bin);
+            if bin == "x-terminal-emulator" {
+                cmd.current_dir(&repo_path);
+            }
+            cmd.args(args);
+            if cmd.spawn().is_ok() {
+                return Ok(());
+            }
+        }
+        return Err(String::from("Could not open a terminal emulator."));
+    }
+}
+
+#[tauri::command]
 fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, String> {
     let repo_url = repo_url.trim().to_string();
     if repo_url.is_empty() {
@@ -1235,6 +1442,16 @@ pub fn run() {
             git_push,
             git_fetch,
             git_checkout_commit,
+            git_checkout_branch,
+            git_reset_hard,
+            git_commit_all,
+            git_create_branch,
+            git_delete_branch,
+            git_merge_branch,
+            git_reflog,
+            git_cherry_pick,
+            git_branches_points_at,
+            open_terminal,
             git_pull,
             git_pull_rebase,
             git_merge_continue,

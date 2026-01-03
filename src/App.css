@@ -381,6 +381,71 @@ button:disabled {
   gap: 6px;
 }
 
+ .graphStatusControls {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: grid;
+  gap: 6px;
+ }
+
+ .statusPill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid var(--border);
+  background: var(--panel);
+ }
+
+ .statusPillDanger {
+  border-color: rgba(176, 0, 32, 0.45);
+  background: rgba(176, 0, 32, 0.10);
+  color: var(--danger);
+ }
+
+ .recoveryOption {
+  border: 1px solid rgba(15, 15, 15, 0.10);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 12px;
+  align-items: start;
+ }
+
+ .recoveryOptionTitle {
+  font-weight: 900;
+  margin-bottom: 6px;
+ }
+
+ .recoveryOptionDesc {
+  opacity: 0.78;
+  font-size: 12px;
+  margin-bottom: 10px;
+ }
+
+ .recoveryPreview {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 15, 15, 0.10);
+  background: #ffffff;
+ }
+
+ .recoveryFields {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+ }
+
+ .recoveryRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+ }
+
 .zoomIndicator {
   padding: 6px 8px;
   border-radius: 10px;

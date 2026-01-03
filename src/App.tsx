@@ -174,6 +174,22 @@ function App() {
   const [pullPredictRebase, setPullPredictRebase] = useState(false);
   const [pullPredictResult, setPullPredictResult] = useState<PullPredictResult | null>(null);
 
+  const [detachedHelpOpen, setDetachedHelpOpen] = useState(false);
+  const [detachedBusy, setDetachedBusy] = useState(false);
+  const [detachedError, setDetachedError] = useState("");
+  const [detachedPointsAtBranches, setDetachedPointsAtBranches] = useState<string[]>([]);
+  const [detachedTargetBranch, setDetachedTargetBranch] = useState<string>("");
+  const [detachedSaveCommitMessage, setDetachedSaveCommitMessage] = useState<string>("WIP: detached HEAD changes");
+  const [detachedTempBranchName, setDetachedTempBranchName] = useState<string>("");
+  const [detachedTempBranchRandom, setDetachedTempBranchRandom] = useState<boolean>(true);
+  const [detachedMergeAfterSave, setDetachedMergeAfterSave] = useState<boolean>(true);
+
+  const [cherryStepsOpen, setCherryStepsOpen] = useState(false);
+  const [cherryCommitHash, setCherryCommitHash] = useState<string>("");
+  const [cherryReflog, setCherryReflog] = useState<string>("");
+
+  const [previewZoomSrc, setPreviewZoomSrc] = useState<string | null>(null);
+
   const defaultViewMode = useAppSettings((s) => s.viewMode);
   const theme = useAppSettings((s) => s.appearance.theme);
   const setTheme = useAppSettings((s) => s.setTheme);
@@ -283,6 +299,136 @@ function App() {
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
 
+  const headHash = useMemo(() => {
+    return overview?.head || commits.find((c) => c.is_head)?.hash || "";
+  }, [commits, overview?.head]);
+
+  const isDetached = overview?.head_name === "(detached)";
+
+  function normalizeBranchName(name: string) {
+    let t = name.trim();
+    if (t.startsWith("* ")) t = t.slice(2).trim();
+    return t;
+  }
+
+  function isSelectableTargetBranch(name: string) {
+    const t = normalizeBranchName(name);
+    if (!t) return false;
+    if (t === "(detached)") return false;
+    if (t.includes("HEAD detached")) return false;
+    if (t.includes("(HEAD detached")) return false;
+    if (t.includes("detached at ")) return false;
+    if (t.includes("detached from ")) return false;
+    if (t.includes("(detached")) return false;
+    if (t.startsWith("(") && t.endsWith(")")) return false;
+    return true;
+  }
+
+  function normalizeBranchList(list: string[]) {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of list) {
+      const t = normalizeBranchName(raw);
+      if (!isSelectableTargetBranch(t)) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    return out;
+  }
+
+  const detachedBranchOptions = useMemo(() => {
+    const src = detachedPointsAtBranches.length > 0 ? detachedPointsAtBranches : overview?.branches ?? [];
+    return normalizeBranchList(src);
+  }, [detachedPointsAtBranches, overview?.branches]);
+
+  function togglePreviewZoom(src: string) {
+    setPreviewZoomSrc((prev) => (prev === src ? null : src));
+  }
+
+  function PreviewZoomBadge() {
+    return (
+      <span
+        style={{
+          position: "absolute",
+          right: 10,
+          top: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 30,
+          height: 30,
+          borderRadius: 10,
+          border: "1px solid rgba(15, 15, 15, 0.14)",
+          background: "rgba(255, 255, 255, 0.92)",
+          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.12)",
+          pointerEvents: "none",
+        }}
+        aria-hidden="true"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M10.5 18.5C14.6421 18.5 18 15.1421 18 11C18 6.85786 14.6421 3.5 10.5 3.5C6.35786 3.5 3 6.85786 3 11C3 15.1421 6.35786 18.5 10.5 18.5Z"
+            stroke="rgba(15, 15, 15, 0.7)"
+            strokeWidth="2"
+          />
+          <path d="M16.2 16.2L21 21" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
+          <path d="M10.5 8V14" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
+          <path d="M7.5 11H13.5" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+
+  function pickPreferredBranch(branches: string[]) {
+    const preferred = ["main", "master", "develop"];
+    for (const p of preferred) {
+      if (branches.includes(p)) return p;
+    }
+    return branches[0] ?? "";
+  }
+
+  useEffect(() => {
+    if (!activeRepoPath || !isDetached || !headHash) {
+      setDetachedPointsAtBranches([]);
+      setDetachedTargetBranch("");
+      return;
+    }
+
+    let alive = true;
+    void invoke<string[]>("git_branches_points_at", { repoPath: activeRepoPath, commit: headHash })
+      .then((branches) => {
+        if (!alive) return;
+        const next = Array.isArray(branches) ? branches : [];
+        setDetachedPointsAtBranches(next);
+
+        const options = normalizeBranchList(next.length > 0 ? next : overview?.branches ?? []);
+        setDetachedTargetBranch((prev) => {
+          if (prev && options.includes(prev)) return prev;
+          return pickPreferredBranch(options);
+        });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setDetachedPointsAtBranches([]);
+        setDetachedTargetBranch(pickPreferredBranch(normalizeBranchList(overview?.branches ?? [])));
+        setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeRepoPath, isDetached, headHash, overview?.branches]);
+
+  useEffect(() => {
+    if (!previewZoomSrc) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewZoomSrc(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [previewZoomSrc]);
+
   function joinPath(base: string, child: string) {
     const a = base.trim().replace(/[\\/]+$/, "");
     const b = child.trim().replace(/^[\\/]+/, "");
@@ -311,15 +457,11 @@ function App() {
     return commits.find((c) => c.hash === selectedHash);
   }, [commits, selectedHash]);
 
-  const headHash = useMemo(() => {
-    return overview?.head || commits.find((c) => c.is_head)?.hash || "";
-  }, [commits, overview?.head]);
-
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
 
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 110;
+    const menuH = 190;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setCommitContextMenu({
@@ -355,6 +497,214 @@ function App() {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function checkoutBranch(branch: string) {
+    if (!activeRepoPath) return;
+    const b = branch.trim();
+    if (!b) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resetHardAndCheckoutBranch(branch: string) {
+    if (!activeRepoPath) return;
+    const b = branch.trim();
+    if (!b) return;
+
+    const ok = window.confirm("This will discard your local changes (git reset --hard). Continue?");
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openTerminal() {
+    if (!activeRepoPath) return;
+    setError("");
+    try {
+      await invoke<void>("open_terminal", { repoPath: activeRepoPath });
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
+  function generateTempBranchName() {
+    const base = headHash ? shortHash(headHash) : "head";
+    return `tmp-detached-${base}-${Date.now().toString(36)}`;
+  }
+
+  useEffect(() => {
+    if (!detachedHelpOpen) return;
+    if (!detachedTempBranchRandom) return;
+    setDetachedTempBranchName(generateTempBranchName());
+  }, [detachedHelpOpen, detachedTempBranchRandom, headHash]);
+
+  async function detachedFixSimple() {
+    if (!activeRepoPath) return;
+    const b = detachedTargetBranch.trim();
+    if (!b) {
+      setDetachedError("Select a target branch.");
+      return;
+    }
+
+    setDetachedBusy(true);
+    setDetachedError("");
+    setError("");
+    try {
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      setDetachedHelpOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setDetachedBusy(false);
+    }
+  }
+
+  async function detachedFixDiscardChanges() {
+    if (!activeRepoPath) return;
+    const b = detachedTargetBranch.trim();
+    if (!b) {
+      setDetachedError("Select a target branch.");
+      return;
+    }
+
+    const ok = window.confirm("This will discard your local changes (git reset --hard). Continue?");
+    if (!ok) return;
+
+    setDetachedBusy(true);
+    setDetachedError("");
+    setError("");
+    try {
+      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      setDetachedHelpOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setDetachedBusy(false);
+    }
+  }
+
+  async function detachedSaveByBranch() {
+    if (!activeRepoPath) return;
+    const b = detachedTargetBranch.trim();
+    if (!b) {
+      setDetachedError("Select a target branch.");
+      return;
+    }
+
+    const msg = detachedSaveCommitMessage.trim();
+    if (!msg) {
+      setDetachedError("Commit message is empty.");
+      return;
+    }
+
+    const tmp = detachedTempBranchName.trim();
+    if (!tmp) {
+      setDetachedError("Temporary branch name is empty.");
+      return;
+    }
+
+    setDetachedBusy(true);
+    setDetachedError("");
+    setError("");
+    try {
+      await invoke<string>("git_commit_all", { repoPath: activeRepoPath, message: msg });
+      await invoke<string>("git_create_branch", { repoPath: activeRepoPath, branch: tmp });
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+
+      if (detachedMergeAfterSave) {
+        await invoke<string>("git_merge_branch", { repoPath: activeRepoPath, branch: tmp });
+        await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: tmp, force: false });
+      }
+
+      setDetachedHelpOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setDetachedBusy(false);
+    }
+  }
+
+  async function detachedPrepareCherryPickSteps() {
+    if (!activeRepoPath) return;
+    const msg = detachedSaveCommitMessage.trim();
+    if (!msg) {
+      setDetachedError("Commit message is empty.");
+      return;
+    }
+
+    setDetachedBusy(true);
+    setDetachedError("");
+    setCherryCommitHash("");
+    setCherryReflog("");
+    setError("");
+    try {
+      const newHash = await invoke<string>("git_commit_all", { repoPath: activeRepoPath, message: msg });
+      setCherryCommitHash(newHash.trim());
+      const reflog = await invoke<string>("git_reflog", { repoPath: activeRepoPath, maxCount: 20 });
+      setCherryReflog(reflog);
+
+      setDetachedHelpOpen(false);
+      setCherryStepsOpen(true);
+    } catch (e) {
+      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setDetachedBusy(false);
+    }
+  }
+
+  async function detachedApplyCherryPick() {
+    if (!activeRepoPath) return;
+    const b = detachedTargetBranch.trim();
+    if (!b) {
+      setDetachedError("Select a target branch.");
+      return;
+    }
+
+    const h = cherryCommitHash.trim();
+    if (!h) {
+      setDetachedError("Missing commit hash to cherry-pick.");
+      return;
+    }
+
+    setDetachedBusy(true);
+    setDetachedError("");
+    setError("");
+    try {
+      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
+      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await invoke<string>("git_cherry_pick", { repoPath: activeRepoPath, commits: [h] });
+
+      setCherryStepsOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setDetachedBusy(false);
     }
   }
 
@@ -1792,7 +2142,7 @@ function App() {
               {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
             </span>
           </button>
-          <button type="button" disabled>
+          <button type="button" onClick={() => void openTerminal()} disabled={!activeRepoPath} title="Open terminal in repository">
             Git Bash
           </button>
           {loading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
@@ -1938,6 +2288,22 @@ function App() {
                   style={graphSettings.canvasBackground ? { background: graphSettings.canvasBackground } : undefined}
                 >
                   <div className="cyCanvas" ref={graphRef} />
+                  {isDetached ? (
+                    <div className="graphStatusControls">
+                      <button
+                        type="button"
+                        className="statusPill statusPillDanger"
+                        onClick={() => {
+                          setDetachedError("");
+                          setDetachedHelpOpen(true);
+                        }}
+                        disabled={!activeRepoPath}
+                        title="HEAD is detached. Click for recovery options."
+                      >
+                        Head detached
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="zoomControls">
                     <div className="zoomIndicator">{zoomPct}%</div>
                     <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
@@ -2089,6 +2455,44 @@ function App() {
           >
             Checkout this commit
           </button>
+
+          {(() => {
+            if (!isDetached) return null;
+            const c = commits.find((x) => x.hash === commitContextMenu.hash);
+            if (!c?.is_head) return null;
+            const b = detachedTargetBranch.trim();
+            if (!b) return null;
+
+            if (changedCount === 0) {
+              return (
+                <button
+                  type="button"
+                  title="Re-attaches HEAD by checking out the branch that points at this commit."
+                  disabled={!activeRepoPath || loading}
+                  onClick={() => {
+                    setCommitContextMenu(null);
+                    void checkoutBranch(b);
+                  }}
+                >
+                  Checkout this commit and branch
+                </button>
+              );
+            }
+
+            return (
+              <button
+                type="button"
+                title="Discards local changes (git reset --hard) and re-attaches HEAD by checking out the branch that points at this commit."
+                disabled={!activeRepoPath || loading}
+                onClick={() => {
+                  setCommitContextMenu(null);
+                  void resetHardAndCheckoutBranch(b);
+                }}
+              >
+                Reset hard my changes and checkout this commit
+              </button>
+            );
+          })()}
         </div>
       ) : null}
 
@@ -2124,6 +2528,348 @@ function App() {
           >
             Focus on commits
           </button>
+        </div>
+      ) : null}
+
+      {detachedHelpOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(78vh, 720px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Detached HEAD</div>
+              <button type="button" onClick={() => setDetachedHelpOpen(false)} disabled={detachedBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ opacity: 0.85 }}>
+                  Detached HEAD is a normal Git state after checking out a commit directly. If this is intentional (you are
+                  inspecting history), you don't need to do anything.
+                </div>
+
+                <div style={{ opacity: 0.85 }}>
+                  If you don't want to stay in detached HEAD state (or you're not sure how it happened), choose one of the
+                  solutions below.
+                </div>
+
+                {detachedError ? <div className="error">{detachedError}</div> : null}
+
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900, opacity: 0.8 }}>Target branch</div>
+                  <select
+                    value={detachedTargetBranch}
+                    onChange={(e) => setDetachedTargetBranch(e.target.value)}
+                    disabled={detachedBusy || detachedBranchOptions.length <= 1}
+                    title={
+                      detachedBranchOptions.length === 0
+                        ? "No local branch available."
+                        : "Select which branch should be checked out to re-attach HEAD."
+                    }
+                  >
+                    {detachedBranchOptions.length === 0 ? <option value="">(none)</option> : null}
+                    {detachedBranchOptions.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="recoveryOption">
+                  <div>
+                    <div className="recoveryOptionTitle">I have no changes, just fix it</div>
+                    <div className="recoveryOptionDesc">Checks out the target branch that points at the current commit.</div>
+                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
+                      git checkout &lt;target-branch&gt;
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void detachedFixSimple()}
+                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch}
+                    >
+                      {detachedBusy ? "Working…" : "Fix detached HEAD"}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => togglePreviewZoom("/recovery/detached-fix-simple.svg")}
+                    title="Click to zoom"
+                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
+                  >
+                    <PreviewZoomBadge />
+                    <img className="recoveryPreview" src="/recovery/detached-fix-simple.svg" alt="Preview" />
+                  </button>
+                </div>
+
+                <div className="recoveryOption">
+                  <div>
+                    <div className="recoveryOptionTitle">I have changes, but they are not important. Discard them and fix</div>
+                    <div className="recoveryOptionDesc">Discards local changes and checks out the target branch.</div>
+                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
+                      git reset --hard
+                      <br />
+                      git checkout &lt;target-branch&gt;
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void detachedFixDiscardChanges()}
+                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || changedCount === 0}
+                      title={changedCount === 0 ? "No local changes detected." : undefined}
+                    >
+                      {detachedBusy ? "Working…" : "Discard changes and fix"}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => togglePreviewZoom("/recovery/detached-fix-hard.svg")}
+                    title="Click to zoom"
+                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
+                  >
+                    <PreviewZoomBadge />
+                    <img className="recoveryPreview" src="/recovery/detached-fix-hard.svg" alt="Preview" />
+                  </button>
+                </div>
+
+                <div className="recoveryOption">
+                  <div>
+                    <div className="recoveryOptionTitle">Save changes by creating a branch</div>
+                    <div className="recoveryOptionDesc">
+                      Commits your current changes, creates a temporary branch, then checks out the target branch. Optionally
+                      merges and deletes the temporary branch.
+                    </div>
+
+                    <div className="recoveryFields">
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Commit message</div>
+                        <input
+                          value={detachedSaveCommitMessage}
+                          onChange={(e) => setDetachedSaveCommitMessage(e.target.value)}
+                          className="modalInput"
+                          disabled={detachedBusy || changedCount === 0}
+                          placeholder="Commit message"
+                        />
+                      </div>
+
+                      <div className="recoveryRow">
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 900, opacity: 0.85 }}>
+                          <input
+                            type="checkbox"
+                            checked={detachedTempBranchRandom}
+                            onChange={(e) => setDetachedTempBranchRandom(e.target.checked)}
+                            disabled={detachedBusy}
+                          />
+                          Set random branch name
+                        </label>
+                        <input
+                          value={detachedTempBranchName}
+                          onChange={(e) => setDetachedTempBranchName(e.target.value)}
+                          className="modalInput"
+                          disabled={detachedBusy || detachedTempBranchRandom}
+                          placeholder="temporary-branch-name"
+                          style={{ width: 320 }}
+                        />
+                      </div>
+
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 900, opacity: 0.85 }}>
+                        <input
+                          type="checkbox"
+                          checked={detachedMergeAfterSave}
+                          onChange={(e) => setDetachedMergeAfterSave(e.target.checked)}
+                          disabled={detachedBusy}
+                        />
+                        Merge temporary branch into target branch
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void detachedSaveByBranch()}
+                      disabled={
+                        detachedBusy ||
+                        !activeRepoPath ||
+                        !detachedTargetBranch ||
+                        changedCount === 0 ||
+                        !detachedSaveCommitMessage.trim() ||
+                        !detachedTempBranchName.trim()
+                      }
+                      title={changedCount === 0 ? "No local changes detected." : undefined}
+                    >
+                      {detachedBusy ? "Working…" : "Save changes using a branch"}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => togglePreviewZoom("/recovery/detached-fix-branch.svg")}
+                    title="Click to zoom"
+                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
+                  >
+                    <PreviewZoomBadge />
+                    <img className="recoveryPreview" src="/recovery/detached-fix-branch.svg" alt="Preview" />
+                  </button>
+                </div>
+
+                <div className="recoveryOption">
+                  <div>
+                    <div className="recoveryOptionTitle">Save changes by cherry-picks</div>
+                    <div className="recoveryOptionDesc">Commits your changes, then shows the steps to cherry-pick onto the target branch.</div>
+                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
+                      git commit -a -m &quot;&lt;message&gt;&quot;
+                      <br />
+                      git reset --hard
+                      <br />
+                      git checkout &lt;target-branch&gt;
+                      <br />
+                      git reflog
+                      <br />
+                      git cherry-pick &lt;hash&gt;
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void detachedPrepareCherryPickSteps()}
+                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || changedCount === 0}
+                      title={changedCount === 0 ? "No local changes detected." : undefined}
+                    >
+                      {detachedBusy ? "Working…" : "Show cherry-pick steps"}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => togglePreviewZoom("/recovery/detached-fix-cherry.svg")}
+                    title="Click to zoom"
+                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
+                  >
+                    <PreviewZoomBadge />
+                    <img className="recoveryPreview" src="/recovery/detached-fix-cherry.svg" alt="Preview" />
+                  </button>
+                </div>
+
+                <div className="recoveryOption">
+                  <div>
+                    <div className="recoveryOptionTitle">I'll handle it myself — open terminal</div>
+                    <div className="recoveryOptionDesc">Opens a terminal in the repository folder (Git Bash on Windows if available).</div>
+                    <button type="button" onClick={() => void openTerminal()} disabled={detachedBusy || !activeRepoPath}>
+                      Open terminal
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => togglePreviewZoom("/recovery/detached-fix-terminal.svg")}
+                    title="Click to zoom"
+                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
+                  >
+                    <PreviewZoomBadge />
+                    <img className="recoveryPreview" src="/recovery/detached-fix-terminal.svg" alt="Preview" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button type="button" onClick={() => setDetachedHelpOpen(false)} disabled={detachedBusy}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cherryStepsOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(900px, 96vw)", maxHeight: "min(72vh, 680px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Cherry-pick steps</div>
+              <button type="button" onClick={() => setCherryStepsOpen(false)} disabled={detachedBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ opacity: 0.85 }}>
+                  Apply your detached commit to <span className="mono">{detachedTargetBranch || "<target-branch>"}</span>.
+                </div>
+
+                {detachedError ? <div className="error">{detachedError}</div> : null}
+
+                <div>
+                  <div style={{ fontWeight: 900, opacity: 0.8, marginBottom: 6 }}>Commit to cherry-pick</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div className="mono" style={{ opacity: 0.9 }}>
+                      {cherryCommitHash || "(missing)"}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!cherryCommitHash}
+                      onClick={() => void copyText(cherryCommitHash)}
+                    >
+                      Copy hash
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 900, opacity: 0.8, marginBottom: 6 }}>Reflog (for reference)</div>
+                  <textarea className="modalTextarea" value={cherryReflog} readOnly rows={10} />
+                </div>
+
+                <div className="mono" style={{ opacity: 0.9 }}>
+                  git reset --hard
+                  <br />
+                  git checkout {detachedTargetBranch || "<target-branch>"}
+                  <br />
+                  git cherry-pick {cherryCommitHash || "<hash>"}
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button
+                type="button"
+                onClick={() => void detachedApplyCherryPick()}
+                disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || !cherryCommitHash}
+              >
+                Apply
+              </button>
+              <button type="button" onClick={() => setCherryStepsOpen(false)} disabled={detachedBusy}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewZoomSrc ? (
+        <div
+          className="modalOverlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewZoomSrc(null)}
+          style={{ zIndex: 500 }}
+        >
+          <div
+            style={{
+              width: "min(1100px, 96vw)",
+              maxHeight: "min(86vh, 860px)",
+              borderRadius: 14,
+              border: "1px solid rgba(15, 15, 15, 0.18)",
+              background: "var(--panel)",
+              boxShadow: "0 24px 90px rgba(0, 0, 0, 0.40)",
+              padding: 10,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 6 }}>
+              <div style={{ fontWeight: 900, opacity: 0.8 }}>Preview</div>
+              <button type="button" onClick={() => setPreviewZoomSrc(null)}>
+                Close
+              </button>
+            </div>
+            <div style={{ overflow: "auto", maxHeight: "calc(min(86vh, 860px) - 58px)" }}>
+              <img
+                src={previewZoomSrc}
+                alt="Preview zoom"
+                onClick={() => setPreviewZoomSrc(null)}
+                style={{ width: "100%", height: "auto", display: "block", borderRadius: 12, border: "1px solid rgba(15, 15, 15, 0.10)" }}
+              />
+            </div>
+          </div>
         </div>
       ) : null}
 
