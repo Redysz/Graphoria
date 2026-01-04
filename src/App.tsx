@@ -130,12 +130,15 @@ function App() {
   const [gitTrustDetailsOpen, setGitTrustDetailsOpen] = useState(false);
   const [gitTrustBusy, setGitTrustBusy] = useState(false);
   const [gitTrustActionError, setGitTrustActionError] = useState<string>("");
+  const [gitTrustCopied, setGitTrustCopied] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string>("");
   const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [autoCenterToken, setAutoCenterToken] = useState(0);
+
+  const gitTrustCopyTimeoutRef = useRef<number | null>(null);
 
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const [cloneRepoUrl, setCloneRepoUrl] = useState("");
@@ -375,6 +378,14 @@ function App() {
         setCurrentUsername("");
       });
   }, [gitTrustOpen, currentUsername]);
+
+  useEffect(() => {
+    if (gitTrustCopyTimeoutRef.current) {
+      window.clearTimeout(gitTrustCopyTimeoutRef.current);
+      gitTrustCopyTimeoutRef.current = null;
+    }
+    setGitTrustCopied(false);
+  }, [gitTrustOpen, gitTrustRepoPath]);
 
   function normalizeBranchName(name: string) {
     let t = name.trim();
@@ -2115,6 +2126,27 @@ function App() {
     }
   }
 
+  const gitTrustGlobalCommand = gitTrustRepoPath
+    ? `git config --global --add safe.directory ${normalizeGitPath(gitTrustRepoPath)}`
+    : "";
+
+  async function copyGitTrustGlobalCommand() {
+    if (!gitTrustGlobalCommand) return;
+    try {
+      await copyText(gitTrustGlobalCommand);
+      setGitTrustCopied(true);
+      if (gitTrustCopyTimeoutRef.current) {
+        window.clearTimeout(gitTrustCopyTimeoutRef.current);
+      }
+      gitTrustCopyTimeoutRef.current = window.setTimeout(() => {
+        setGitTrustCopied(false);
+        gitTrustCopyTimeoutRef.current = null;
+      }, 1200);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -3783,62 +3815,100 @@ function App() {
               </button>
             </div>
             <div className="modalBody">
-              {gitTrustActionError ? <div className="error">{gitTrustActionError}</div> : null}
-
               <div style={{ display: "grid", gap: 12 }}>
                 <div style={{ opacity: 0.85 }}>
-                  Git prevents opening a repository owned by someone else than the current user. You can choose one of the following options:
+                  Git prevents opening a repository owned by someone else than the current user. You can choose one of the solutions below.
                 </div>
 
-                <div style={{ display: "grid", gap: 10 }}>
-                  <button type="button" onClick={() => void trustRepoGloballyAndOpen()} disabled={gitTrustBusy}>
-                    Trust this repository globally (recommended)
-                  </button>
-                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
-                    Probably you want to do that. Command:
-                    <span className="mono" style={{ marginLeft: 8 }}>
-                      git config --global --add safe.directory {normalizeGitPath(gitTrustRepoPath)}
-                    </span>
-                  </div>
+                {gitTrustActionError ? <div className="error">{gitTrustActionError}</div> : null}
 
-                  <button type="button" onClick={() => void trustRepoForSessionAndOpen()} disabled={gitTrustBusy}>
-                    Trust this repository for this session only
-                  </button>
-                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
-                    This is a Graphoria-only exception and will not modify your Git configuration.
-                  </div>
-
-                  <button type="button" onClick={() => void changeOwnershipAndOpen()} disabled={gitTrustBusy}>
-                    Change ownership to {currentUsername ? currentUsername : "current user"}
-                  </button>
-                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
-                    Warning: choose this only if you know what you are doing.
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <button type="button" onClick={() => void revealRepoInExplorerFromTrustDialog()} disabled={gitTrustBusy}>
-                      Reveal in Explorer
+                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
+                  <div>
+                    <div className="recoveryOptionTitle">Trust this repository globally (recommended)</div>
+                    <div className="recoveryOptionDesc">Adds this repository to Git's global safe.directory list.</div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "stretch", marginBottom: 10 }}>
+                      <pre
+                        className="mono"
+                        style={{
+                          margin: 0,
+                          padding: "10px 12px",
+                          borderRadius: 12,
+                          border: "1px solid var(--border)",
+                          background: "var(--panel-2)",
+                          opacity: 0.95,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-all",
+                          flex: "1 1 auto",
+                          minWidth: 0,
+                        }}
+                      >
+                        {gitTrustGlobalCommand}
+                      </pre>
+                      <button
+                        type="button"
+                        onClick={() => void copyGitTrustGlobalCommand()}
+                        disabled={gitTrustBusy || !gitTrustGlobalCommand || gitTrustCopied}
+                        title="Copy command to clipboard"
+                        style={
+                          gitTrustCopied
+                            ? { background: "rgba(0, 140, 0, 0.10)", borderColor: "rgba(0, 140, 0, 0.25)" }
+                            : undefined
+                        }
+                      >
+                        {gitTrustCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                    <button type="button" onClick={() => void trustRepoGloballyAndOpen()} disabled={gitTrustBusy}>
+                      Trust globally
                     </button>
-                    <button type="button" onClick={() => void openTerminalFromTrustDialog()} disabled={gitTrustBusy}>
-                      Open terminal (Git Bash)
-                    </button>
-                    <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
-                      Close (do not open)
+                  </div>
+                </div>
+
+                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
+                  <div>
+                    <div className="recoveryOptionTitle">Trust this repository for this session only</div>
+                    <div className="recoveryOptionDesc">
+                      Graphoria will allow Git operations for this repository during the current app session, without changing your Git configuration.
+                    </div>
+                    <button type="button" onClick={() => void trustRepoForSessionAndOpen()} disabled={gitTrustBusy}>
+                      Trust for session
                     </button>
                   </div>
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setGitTrustDetailsOpen((v) => !v)}
-                    disabled={gitTrustBusy || !gitTrustDetails}
-                    style={{ justifySelf: "start" }}
-                  >
-                    {gitTrustDetailsOpen ? "Hide details" : "Details"}
-                  </button>
+                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
+                  <div>
+                    <div className="recoveryOptionTitle">Change ownership to {currentUsername ? currentUsername : "current user"}</div>
+                    <div className="recoveryOptionDesc">Attempts to fix the underlying filesystem ownership/permissions issue.</div>
+                    <button type="button" onClick={() => void changeOwnershipAndOpen()} disabled={gitTrustBusy}>
+                      Change ownership
+                    </button>
+                  </div>
+                </div>
 
-                  {gitTrustDetailsOpen && gitTrustDetails ? (
-                    <pre style={{ whiteSpace: "pre-wrap", opacity: 0.85, marginTop: 0 }}>{gitTrustDetails}</pre>
-                  ) : null}
+                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
+                  <div>
+                    <div className="recoveryOptionTitle">Other actions</div>
+                    <div className="recoveryOptionDesc">Inspect the folder or run Git manually.</div>
+                    <div className="recoveryRow">
+                      <button type="button" onClick={() => void revealRepoInExplorerFromTrustDialog()} disabled={gitTrustBusy}>
+                        Reveal in Explorer
+                      </button>
+                      <button type="button" onClick={() => void openTerminalFromTrustDialog()} disabled={gitTrustBusy}>
+                        Open terminal (Git Bash)
+                      </button>
+                      <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
+                        Close
+                      </button>
+                      <button type="button" onClick={() => setGitTrustDetailsOpen((v) => !v)} disabled={gitTrustBusy || !gitTrustDetails}>
+                        {gitTrustDetailsOpen ? "Hide details" : "Details"}
+                      </button>
+                    </div>
+
+                    {gitTrustDetailsOpen && gitTrustDetails ? (
+                      <pre style={{ whiteSpace: "pre-wrap", opacity: 0.85, marginTop: 10 }}>{gitTrustDetails}</pre>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>
