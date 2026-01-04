@@ -420,8 +420,9 @@ function App() {
   }
 
   const detachedBranchOptions = useMemo(() => {
-    const src = detachedPointsAtBranches.length > 0 ? detachedPointsAtBranches : overview?.branches ?? [];
-    return normalizeBranchList(src);
+    const preferred = normalizeBranchList(detachedPointsAtBranches);
+    if (preferred.length > 0) return preferred;
+    return normalizeBranchList(overview?.branches ?? []);
   }, [detachedPointsAtBranches, overview?.branches]);
 
   function togglePreviewZoom(src: string) {
@@ -484,7 +485,9 @@ function App() {
         const next = Array.isArray(branches) ? branches : [];
         setDetachedPointsAtBranches(next);
 
-        const options = normalizeBranchList(next.length > 0 ? next : overview?.branches ?? []);
+        const preferred = normalizeBranchList(next);
+        const fallback = normalizeBranchList(overview?.branches ?? []);
+        const options = preferred.length > 0 ? preferred : fallback;
         setDetachedTargetBranch((prev) => {
           if (prev && options.includes(prev)) return prev;
           return pickPreferredBranch(options);
@@ -3115,11 +3118,6 @@ function App() {
                   </button>
                 </div>
               </div>
-            </div>
-            <div className="modalFooter">
-              <button type="button" onClick={() => setDetachedHelpOpen(false)} disabled={detachedBusy}>
-                Close
-              </button>
             </div>
           </div>
         </div>
