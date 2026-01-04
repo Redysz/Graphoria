@@ -3,13 +3,164 @@ use serde::Serialize;
 use tauri::Emitter;
 use std::io::Read;
 use std::fs;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+static SESSION_SAFE_DIRECTORIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn session_safe_directories() -> &'static Mutex<HashSet<String>> {
+    SESSION_SAFE_DIRECTORIES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn normalize_repo_path(p: &str) -> String {
+    p.trim().replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+fn is_repo_session_safe(repo_path: &str) -> bool {
+    let normalized = normalize_repo_path(repo_path);
+    let set = session_safe_directories();
+    if let Ok(guard) = set.lock() {
+        guard.contains(&normalized)
+    } else {
+        false
+    }
+}
+
+fn git_command_in_repo(repo_path: &str) -> Command {
+    let mut cmd = Command::new("git");
+    if is_repo_session_safe(repo_path) {
+        let safe = normalize_repo_path(repo_path);
+        cmd.arg("-c").arg(format!("safe.directory={safe}"));
+    }
+    cmd.args(["-C", repo_path]);
+    cmd
+}
+
+#[tauri::command]
+fn git_check_worktree(repo_path: String) -> Result<(), String> {
+    ensure_is_git_worktree(repo_path.trim())
+}
+
+#[tauri::command]
+fn git_trust_repo_global(repo_path: String) -> Result<(), String> {
+    let repo_path = repo_path.trim().to_string();
+    if repo_path.is_empty() {
+        return Err(String::from("repo_path is empty"));
+    }
+
+    let normalized = repo_path.replace('\\', "/").trim_end_matches('/').to_string();
+
+    let out = Command::new("git")
+        .args([
+            "config",
+            "--global",
+            "--add",
+            "safe.directory",
+            normalized.as_str(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        if !stderr.is_empty() {
+            return Err(format!("git config failed: {stderr}"));
+        }
+        return Err(String::from("git config failed."));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn git_trust_repo_session(repo_path: String) -> Result<(), String> {
+    let repo_path = repo_path.trim().to_string();
+    if repo_path.is_empty() {
+        return Err(String::from("repo_path is empty"));
+    }
+    let normalized = normalize_repo_path(repo_path.as_str());
+    let set = session_safe_directories();
+    let mut guard = set.lock().map_err(|_| String::from("Failed to lock session safe directories."))?;
+    guard.insert(normalized);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_current_username() -> Result<String, String> {
+    let u = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| String::from("current user"));
+    Ok(u)
+}
+
+#[tauri::command]
+fn change_repo_ownership_to_current_user(repo_path: String) -> Result<(), String> {
+    let repo_path = repo_path.trim().to_string();
+    if repo_path.is_empty() {
+        return Err(String::from("repo_path is empty"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        if user.trim().is_empty() {
+            return Err(String::from("Could not determine current username."));
+        }
+
+        let takeown = Command::new("cmd")
+            .args(["/C", "takeown", "/F", repo_path.as_str(), "/R", "/D", "Y"])
+            .output()
+            .map_err(|e| format!("Failed to run takeown: {e}"))?;
+
+        if !takeown.status.success() {
+            let stderr = String::from_utf8_lossy(&takeown.stderr).trim_end().to_string();
+            let stdout = String::from_utf8_lossy(&takeown.stdout).trim_end().to_string();
+            let msg = if !stderr.is_empty() { stderr } else { stdout };
+            if !msg.is_empty() {
+                return Err(format!("Failed to change ownership (takeown): {msg}"));
+            }
+            return Err(String::from("Failed to change ownership (takeown)."));
+        }
+
+        let icacls = Command::new("cmd")
+            .args([
+                "/C",
+                "icacls",
+                repo_path.as_str(),
+                "/setowner",
+                user.as_str(),
+                "/T",
+                "/C",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run icacls: {e}"))?;
+
+        if !icacls.status.success() {
+            let stderr = String::from_utf8_lossy(&icacls.stderr).trim_end().to_string();
+            let stdout = String::from_utf8_lossy(&icacls.stdout).trim_end().to_string();
+            let msg = if !stderr.is_empty() { stderr } else { stdout };
+            if !msg.is_empty() {
+                return Err(format!("Failed to change ownership (icacls): {msg}"));
+            }
+            return Err(String::from("Failed to change ownership (icacls)."));
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = repo_path;
+        return Err(String::from("Changing ownership is only implemented on Windows."));
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,8 +278,7 @@ fn parse_git_clone_progress_line(line: &str) -> Option<(String, u32, String)> {
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .args(["-C", repo_path])
+    let out = git_command_in_repo(repo_path)
         .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
@@ -142,8 +292,7 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn run_git_stdout_raw(repo_path: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .args(["-C", repo_path])
+    let out = git_command_in_repo(repo_path)
         .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
@@ -266,8 +415,7 @@ fn spawn_external_command(repo_path: &str, command: &str) -> Result<(), String> 
 }
 
 fn run_git_status(repo_path: &str, args: &[&str]) -> Result<(bool, String, String), String> {
-    let out = Command::new("git")
-        .args(["-C", repo_path])
+    let out = git_command_in_repo(repo_path)
         .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
@@ -278,16 +426,16 @@ fn run_git_status(repo_path: &str, args: &[&str]) -> Result<(bool, String, Strin
 }
 
 fn is_rebase_in_progress(repo_path: &str) -> bool {
-    Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "-q", "REBASE_HEAD"])
+    git_command_in_repo(repo_path)
+        .args(["rev-parse", "--verify", "-q", "REBASE_HEAD"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 fn is_merge_in_progress(repo_path: &str) -> bool {
-    Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    git_command_in_repo(repo_path)
+        .args(["rev-parse", "--verify", "-q", "MERGE_HEAD"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -321,15 +469,8 @@ fn parse_conflict_files(text: &str) -> Vec<String> {
 }
 
 fn infer_upstream(repo_path: &str, remote_name: &str, head_name: &str) -> Option<String> {
-    let upstream_out = Command::new("git")
-        .args([
-            "-C",
-            repo_path,
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{u}",
-        ])
+    let upstream_out = git_command_in_repo(repo_path)
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
         .output();
 
     if let Ok(o) = upstream_out {
@@ -342,15 +483,8 @@ fn infer_upstream(repo_path: &str, remote_name: &str, head_name: &str) -> Option
     }
 
     let verify_ref = format!("refs/remotes/{remote_name}/{head_name}");
-    let verify_out = Command::new("git")
-        .args([
-            "-C",
-            repo_path,
-            "show-ref",
-            "--verify",
-            "--quiet",
-            verify_ref.as_str(),
-        ])
+    let verify_out = git_command_in_repo(repo_path)
+        .args(["show-ref", "--verify", "--quiet", verify_ref.as_str()])
         .output();
 
     if let Ok(o) = verify_out {
@@ -410,13 +544,24 @@ fn predict_merge_conflicts(repo_path: &str, upstream: &str) -> Vec<String> {
     files
 }
 
+fn is_git_dubious_ownership_error(stderr_lower: &str) -> bool {
+    stderr_lower.contains("detected dubious ownership")
+        || stderr_lower.contains("dubious ownership")
+        || stderr_lower.contains("safe.directory")
+}
+
 fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
-    let check = Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--is-inside-work-tree"])
+    let check = git_command_in_repo(repo_path)
+        .args(["rev-parse", "--is-inside-work-tree"])
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
     if !check.status.success() {
+        let stderr = String::from_utf8_lossy(&check.stderr).trim_end().to_string();
+        let stderr_lower = stderr.to_lowercase();
+        if !stderr.is_empty() && is_git_dubious_ownership_error(stderr_lower.as_str()) {
+            return Err(format!("GIT_DUBIOUS_OWNERSHIP\n{stderr}"));
+        }
         return Err(String::from("Selected path is not a Git working tree."));
     }
 
@@ -473,8 +618,8 @@ fn ensure_clone_destination_valid(destination_path: &str) -> Result<(), String> 
 }
 
 fn ensure_is_not_git_worktree(repo_path: &str) -> Result<(), String> {
-    let check = Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--is-inside-work-tree"])
+    let check = git_command_in_repo(repo_path)
+        .args(["rev-parse", "--is-inside-work-tree"])
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
@@ -589,10 +734,8 @@ fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitComm
     let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
 
     let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
-    let output = Command::new("git")
+    let output = git_command_in_repo(&repo_path)
         .args([
-            "-C",
-            &repo_path,
             "--no-pager",
             "log",
             "--all",
@@ -954,8 +1097,7 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
         }
     }
 
-    let add_out = Command::new("git")
-        .args(["-C", &repo_path])
+    let add_out = git_command_in_repo(&repo_path)
         .args(&add_args)
         .output()
         .map_err(|e| format!("Failed to spawn git add: {e}"))?;
@@ -965,8 +1107,8 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
         return Err(format!("git add failed: {stderr}"));
     }
 
-    let commit_out = Command::new("git")
-        .args(["-C", &repo_path, "commit", "-m", &message])
+    let commit_out = git_command_in_repo(&repo_path)
+        .args(["commit", "-m", &message])
         .output()
         .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
 
@@ -1009,8 +1151,8 @@ fn git_ahead_behind(repo_path: String, remote_name: Option<String>) -> Result<Gi
         });
     }
 
-    let upstream_out = Command::new("git")
-        .args(["-C", &repo_path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    let upstream_out = git_command_in_repo(&repo_path)
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
         .output()
         .map_err(|e| format!("Failed to spawn git rev-parse: {e}"))?;
 
@@ -1025,8 +1167,8 @@ fn git_ahead_behind(repo_path: String, remote_name: Option<String>) -> Result<Gi
     if upstream.is_none() {
         let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
         let verify_ref = format!("refs/remotes/{remote_name}/{head_name}");
-        let verify_out = Command::new("git")
-            .args(["-C", &repo_path, "show-ref", "--verify", "--quiet", verify_ref.as_str()])
+        let verify_out = git_command_in_repo(&repo_path)
+            .args(["show-ref", "--verify", "--quiet", verify_ref.as_str()])
             .output()
             .map_err(|e| format!("Failed to spawn git show-ref: {e}"))?;
 
@@ -1070,8 +1212,8 @@ fn git_get_remote_url(repo_path: String, remote_name: Option<String>) -> Result<
 
     let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
 
-    let out = Command::new("git")
-        .args(["-C", &repo_path, "remote", "get-url", remote_name.as_str()])
+    let out = git_command_in_repo(&repo_path)
+        .args(["remote", "get-url", remote_name.as_str()])
         .output()
         .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
 
@@ -1097,8 +1239,8 @@ fn git_set_remote_url(repo_path: String, remote_name: Option<String>, url: Strin
         return Err(String::from("Remote URL is empty."));
     }
 
-    let exists_out = Command::new("git")
-        .args(["-C", &repo_path, "remote", "get-url", remote_name.as_str()])
+    let exists_out = git_command_in_repo(&repo_path)
+        .args(["remote", "get-url", remote_name.as_str()])
         .output()
         .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
 
@@ -1378,8 +1520,8 @@ fn git_commit_all(repo_path: String, message: String) -> Result<String, String> 
         return Err(String::from("Commit message is empty."));
     }
 
-    let out = Command::new("git")
-        .args(["-C", &repo_path, "commit", "-a", "-m", &message])
+    let out = git_command_in_repo(&repo_path)
+        .args(["commit", "-a", "-m", &message])
         .output()
         .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
 
@@ -1779,6 +1921,11 @@ pub fn run() {
             list_commits,
             init_repo,
             open_in_file_explorer,
+            git_check_worktree,
+            git_trust_repo_global,
+            git_trust_repo_session,
+            get_current_username,
+            change_repo_ownership_to_current_user,
             git_resolve_ref,
             git_ls_remote_heads,
             git_clone_repo,

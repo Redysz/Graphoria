@@ -86,6 +86,16 @@ function truncate(s: string, max: number) {
   return `${s.slice(0, max - 1)}…`;
 }
 
+function parseGitDubiousOwnershipError(raw: string): string | null {
+  const prefix = "GIT_DUBIOUS_OWNERSHIP\n";
+  if (!raw.startsWith(prefix)) return null;
+  return raw.slice(prefix.length).trim();
+}
+
+function normalizeGitPath(p: string) {
+  return p.replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+
 async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -114,6 +124,13 @@ function App() {
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [gitTrustOpen, setGitTrustOpen] = useState(false);
+  const [gitTrustRepoPath, setGitTrustRepoPath] = useState<string>("");
+  const [gitTrustDetails, setGitTrustDetails] = useState<string>("");
+  const [gitTrustDetailsOpen, setGitTrustDetailsOpen] = useState(false);
+  const [gitTrustBusy, setGitTrustBusy] = useState(false);
+  const [gitTrustActionError, setGitTrustActionError] = useState<string>("");
+  const [currentUsername, setCurrentUsername] = useState<string>("");
   const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
@@ -346,6 +363,18 @@ function App() {
       alive = false;
     };
   }, [commitContextMenu?.hash, activeRepoPath, isDetached]);
+
+  useEffect(() => {
+    if (!gitTrustOpen) return;
+    if (currentUsername) return;
+    void invoke<string>("get_current_username")
+      .then((u) => {
+        setCurrentUsername(typeof u === "string" ? u : "");
+      })
+      .catch(() => {
+        setCurrentUsername("");
+      });
+  }, [gitTrustOpen, currentUsername]);
 
   function normalizeBranchName(name: string) {
     let t = name.trim();
@@ -1873,8 +1902,24 @@ function App() {
     setError("");
     setSelectedHash("");
 
-    setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
+    try {
+      await invoke<void>("git_check_worktree", { repoPath: path });
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      const details = parseGitDubiousOwnershipError(msg);
+      if (details !== null) {
+        setGitTrustRepoPath(path);
+        setGitTrustDetails(details);
+        setGitTrustDetailsOpen(false);
+        setGitTrustActionError("");
+        setGitTrustOpen(true);
+        return;
+      }
+      setError(msg);
+      return;
+    }
 
+    setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
     setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
     setActiveRepoPath(path);
     await loadRepo(path);
@@ -1948,9 +1993,111 @@ function App() {
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
       setStatusSummaryByRepo((prev) => ({ ...prev, [path]: undefined }));
       setAheadBehindByRepo((prev) => ({ ...prev, [path]: undefined }));
-      setError(typeof e === "string" ? e : JSON.stringify(e));
+
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      const details = parseGitDubiousOwnershipError(msg);
+      if (details !== null) {
+        setGitTrustRepoPath(path);
+        setGitTrustDetails(details);
+        setGitTrustDetailsOpen(false);
+        setGitTrustActionError("");
+        setGitTrustOpen(true);
+        setError("");
+        return;
+      }
+
+      setError(msg);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function trustRepoGloballyAndOpen() {
+    if (!gitTrustRepoPath) return;
+    setGitTrustBusy(true);
+    setGitTrustActionError("");
+    try {
+      await invoke<void>("git_trust_repo_global", { repoPath: gitTrustRepoPath });
+      setGitTrustOpen(false);
+      await openRepository(gitTrustRepoPath);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setGitTrustBusy(false);
+    }
+  }
+
+  async function trustRepoForSessionAndOpen() {
+    if (!gitTrustRepoPath) return;
+    setGitTrustBusy(true);
+    setGitTrustActionError("");
+    try {
+      await invoke<void>("git_trust_repo_session", { repoPath: gitTrustRepoPath });
+      setGitTrustOpen(false);
+      await openRepository(gitTrustRepoPath);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setGitTrustBusy(false);
+    }
+  }
+
+  async function changeOwnershipAndOpen() {
+    if (!gitTrustRepoPath) return;
+    const who = currentUsername ? currentUsername : "current user";
+    const ok = window.confirm(
+      `This will attempt to change ownership of the repository folder to ${who}.\n\nUse this only if you know what you are doing. Continue?`,
+    );
+    if (!ok) return;
+
+    setGitTrustBusy(true);
+    setGitTrustActionError("");
+    try {
+      await invoke<void>("change_repo_ownership_to_current_user", { repoPath: gitTrustRepoPath });
+      setGitTrustOpen(false);
+      await openRepository(gitTrustRepoPath);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setGitTrustBusy(false);
+    }
+  }
+
+  async function revealRepoInExplorerFromTrustDialog() {
+    if (!gitTrustRepoPath) return;
+    setGitTrustBusy(true);
+    setGitTrustActionError("");
+    try {
+      await invoke<void>("open_in_file_explorer", { path: gitTrustRepoPath });
+      setGitTrustOpen(false);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setGitTrustBusy(false);
+    }
+  }
+
+  async function openTerminalFromTrustDialog() {
+    if (!gitTrustRepoPath) return;
+    setGitTrustBusy(true);
+    setGitTrustActionError("");
+    try {
+      await invoke<void>("open_terminal", { repoPath: gitTrustRepoPath });
+      setGitTrustOpen(false);
+    } catch (e) {
+      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setGitTrustBusy(false);
+    }
+  }
+
+  async function closeTrustDialogAndRepoIfOpen() {
+    const p = gitTrustRepoPath;
+    setGitTrustOpen(false);
+    setGitTrustActionError("");
+    if (!p) return;
+    if (repos.includes(p)) {
+      await closeRepository(p);
     }
   }
 
@@ -3626,12 +3773,80 @@ function App() {
         </div>
       ) : null}
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => {
-          setSettingsOpen(false);
-        }}
-      />
+      {gitTrustOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(76vh, 780px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Repository is not trusted by Git</div>
+              <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {gitTrustActionError ? <div className="error">{gitTrustActionError}</div> : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ opacity: 0.85 }}>
+                  Git prevents opening a repository owned by someone else than the current user. You can choose one of the following options:
+                </div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <button type="button" onClick={() => void trustRepoGloballyAndOpen()} disabled={gitTrustBusy}>
+                    Trust this repository globally (recommended)
+                  </button>
+                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
+                    Probably you want to do that. Command:
+                    <span className="mono" style={{ marginLeft: 8 }}>
+                      git config --global --add safe.directory {normalizeGitPath(gitTrustRepoPath)}
+                    </span>
+                  </div>
+
+                  <button type="button" onClick={() => void trustRepoForSessionAndOpen()} disabled={gitTrustBusy}>
+                    Trust this repository for this session only
+                  </button>
+                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
+                    This is a Graphoria-only exception and will not modify your Git configuration.
+                  </div>
+
+                  <button type="button" onClick={() => void changeOwnershipAndOpen()} disabled={gitTrustBusy}>
+                    Change ownership to {currentUsername ? currentUsername : "current user"}
+                  </button>
+                  <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
+                    Warning: choose this only if you know what you are doing.
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => void revealRepoInExplorerFromTrustDialog()} disabled={gitTrustBusy}>
+                      Reveal in Explorer
+                    </button>
+                    <button type="button" onClick={() => void openTerminalFromTrustDialog()} disabled={gitTrustBusy}>
+                      Open terminal (Git Bash)
+                    </button>
+                    <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
+                      Close (do not open)
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setGitTrustDetailsOpen((v) => !v)}
+                    disabled={gitTrustBusy || !gitTrustDetails}
+                    style={{ justifySelf: "start" }}
+                  >
+                    {gitTrustDetailsOpen ? "Hide details" : "Details"}
+                  </button>
+
+                  {gitTrustDetailsOpen && gitTrustDetails ? (
+                    <pre style={{ whiteSpace: "pre-wrap", opacity: 0.85, marginTop: 0 }}>{gitTrustDetails}</pre>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
