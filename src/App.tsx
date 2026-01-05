@@ -72,6 +72,21 @@ type GitCloneProgressEvent = {
   message: string;
 };
 
+type GitCommitSummary = {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
+  refs: string;
+};
+
+type GitBranchInfo = {
+  name: string;
+  kind: "local" | "remote" | string;
+  target: string;
+  committer_date: string;
+};
+
 type GitResetMode = "soft" | "mixed" | "hard";
 
 type ViewportState = {
@@ -282,6 +297,35 @@ function App() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<string>("");
 
+  const [createBranchOpen, setCreateBranchOpen] = useState(false);
+  const [createBranchName, setCreateBranchName] = useState<string>("");
+  const [createBranchAt, setCreateBranchAt] = useState<string>("");
+  const [createBranchCheckout, setCreateBranchCheckout] = useState<boolean>(true);
+  const [createBranchOrphan, setCreateBranchOrphan] = useState<boolean>(false);
+  const [createBranchClearWorkingTree, setCreateBranchClearWorkingTree] = useState<boolean>(false);
+  const [createBranchBusy, setCreateBranchBusy] = useState<boolean>(false);
+  const [createBranchError, setCreateBranchError] = useState<string>("");
+  const [createBranchCommitLoading, setCreateBranchCommitLoading] = useState<boolean>(false);
+  const [createBranchCommitError, setCreateBranchCommitError] = useState<string>("");
+  const [createBranchCommitSummary, setCreateBranchCommitSummary] = useState<GitCommitSummary | null>(null);
+
+  const [renameBranchOpen, setRenameBranchOpen] = useState(false);
+  const [renameBranchOld, setRenameBranchOld] = useState<string>("");
+  const [renameBranchNew, setRenameBranchNew] = useState<string>("");
+  const [renameBranchBusy, setRenameBranchBusy] = useState(false);
+  const [renameBranchError, setRenameBranchError] = useState<string>("");
+
+  const [switchBranchOpen, setSwitchBranchOpen] = useState(false);
+  const [switchBranchMode, setSwitchBranchMode] = useState<"local" | "remote">("local");
+  const [switchBranchName, setSwitchBranchName] = useState<string>("");
+  const [switchRemoteLocalMode, setSwitchRemoteLocalMode] = useState<"same" | "custom">("same");
+  const [switchRemoteLocalName, setSwitchRemoteLocalName] = useState<string>("");
+  const [switchBranchBusy, setSwitchBranchBusy] = useState(false);
+  const [switchBranchError, setSwitchBranchError] = useState<string>("");
+  const [switchBranchesLoading, setSwitchBranchesLoading] = useState(false);
+  const [switchBranchesError, setSwitchBranchesError] = useState<string>("");
+  const [switchBranches, setSwitchBranches] = useState<GitBranchInfo[]>([]);
+
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
   const [pullBusy, setPullBusy] = useState(false);
   const [pullError, setPullError] = useState("");
@@ -347,6 +391,12 @@ function App() {
     stashMessage: string;
   } | null>(null);
   const stashContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [branchContextMenu, setBranchContextMenu] = useState<{
+    x: number;
+    y: number;
+    branch: string;
+  } | null>(null);
+  const branchContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [tagContextMenu, setTagContextMenu] = useState<{
     x: number;
     y: number;
@@ -373,19 +423,22 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!commitContextMenu && !tagContextMenu && !stashContextMenu) return;
+    if (!commitContextMenu && !tagContextMenu && !stashContextMenu && !branchContextMenu) return;
 
     const onMouseDown = (e: MouseEvent) => {
       const commitEl = commitContextMenuRef.current;
       const stashEl = stashContextMenuRef.current;
+      const branchEl = branchContextMenuRef.current;
       const tagEl = tagContextMenuRef.current;
       if (e.target instanceof Node) {
         if (commitEl && commitEl.contains(e.target)) return;
         if (stashEl && stashEl.contains(e.target)) return;
+        if (branchEl && branchEl.contains(e.target)) return;
         if (tagEl && tagEl.contains(e.target)) return;
       }
       setCommitContextMenu(null);
       setStashContextMenu(null);
+      setBranchContextMenu(null);
       setTagContextMenu(null);
     };
 
@@ -393,6 +446,7 @@ function App() {
       if (e.key === "Escape") {
         setCommitContextMenu(null);
         setStashContextMenu(null);
+        setBranchContextMenu(null);
         setTagContextMenu(null);
       }
     };
@@ -403,7 +457,7 @@ function App() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [commitContextMenu, tagContextMenu, stashContextMenu]);
+  }, [commitContextMenu, tagContextMenu, stashContextMenu, branchContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -518,6 +572,7 @@ function App() {
   }, [commits, overview?.head]);
 
   const isDetached = overview?.head_name === "(detached)";
+  const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
 
   useEffect(() => {
     if (!commitContextMenu || !activeRepoPath || !isDetached) {
@@ -546,6 +601,48 @@ function App() {
       alive = false;
     };
   }, [commitContextMenu?.hash, activeRepoPath, isDetached]);
+
+  useEffect(() => {
+    if (!createBranchOpen || !activeRepoPath) {
+      setCreateBranchCommitSummary(null);
+      setCreateBranchCommitError("");
+      setCreateBranchCommitLoading(false);
+      return;
+    }
+
+    const at = createBranchAt.trim();
+    if (!at) {
+      setCreateBranchCommitSummary(null);
+      setCreateBranchCommitError("No commit selected.");
+      setCreateBranchCommitLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setCreateBranchCommitSummary(null);
+    setCreateBranchCommitError("");
+    setCreateBranchCommitLoading(true);
+
+    const timer = window.setTimeout(() => {
+      void invoke<GitCommitSummary>("git_commit_summary", { repoPath: activeRepoPath, commit: at })
+        .then((s) => {
+          if (!alive) return;
+          setCreateBranchCommitSummary(s);
+          setCreateBranchCommitLoading(false);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setCreateBranchCommitSummary(null);
+          setCreateBranchCommitError(typeof e === "string" ? e : JSON.stringify(e));
+          setCreateBranchCommitLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [createBranchOpen, activeRepoPath, createBranchAt]);
 
   useEffect(() => {
     if (!gitTrustOpen) return;
@@ -736,12 +833,38 @@ function App() {
     });
   }
 
+  function openBranchContextMenu(branch: string, x: number, y: number) {
+    const menuW = 260;
+    const menuH = 150;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setBranchContextMenu({
+      branch,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
   function openResetDialog() {
     setResetError("");
     setResetBusy(false);
     setResetMode("mixed");
     setResetTarget("HEAD~1");
     setResetModalOpen(true);
+  }
+
+  function openCreateBranchDialog(at: string) {
+    setCreateBranchError("");
+    setCreateBranchBusy(false);
+    setCreateBranchName("");
+    setCreateBranchAt(at.trim());
+    setCreateBranchCheckout(true);
+    setCreateBranchOrphan(false);
+    setCreateBranchClearWorkingTree(false);
+    setCreateBranchCommitLoading(false);
+    setCreateBranchCommitError("");
+    setCreateBranchCommitSummary(null);
+    setCreateBranchOpen(true);
   }
 
   async function runGitReset(mode: GitResetMode, target: string) {
@@ -774,6 +897,183 @@ function App() {
       setResetError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setResetBusy(false);
+    }
+  }
+
+  function openRenameBranchDialog(oldName: string) {
+    setRenameBranchError("");
+    setRenameBranchBusy(false);
+    setRenameBranchOld(oldName);
+    setRenameBranchNew(oldName);
+    setRenameBranchOpen(true);
+  }
+
+  async function openSwitchBranchDialog() {
+    if (!activeRepoPath) return;
+    setSwitchBranchError("");
+    setSwitchBranchBusy(false);
+    setSwitchBranchesError("");
+    setSwitchBranchesLoading(true);
+    setSwitchBranches([]);
+    setSwitchBranchMode("local");
+    setSwitchRemoteLocalMode("same");
+    setSwitchRemoteLocalName("");
+    setSwitchBranchName(activeBranchName.trim() ? activeBranchName.trim() : "");
+    setSwitchBranchOpen(true);
+
+    try {
+      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: true });
+      setSwitchBranches(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setSwitchBranches([]);
+      setSwitchBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setSwitchBranchesLoading(false);
+    }
+  }
+
+  async function fetchSwitchBranches() {
+    if (!activeRepoPath) return;
+    setSwitchBranchesError("");
+    setSwitchBranchesLoading(true);
+    try {
+      await invoke<string>("git_fetch", { repoPath: activeRepoPath, remoteName: "origin" });
+      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: true });
+      setSwitchBranches(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setSwitchBranches([]);
+      setSwitchBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setSwitchBranchesLoading(false);
+    }
+  }
+
+  function remoteRefToLocalName(remoteRef: string) {
+    const t = remoteRef.trim();
+    const idx = t.indexOf("/");
+    if (idx <= 0) return t;
+    return t.slice(idx + 1);
+  }
+
+  async function runSwitchBranch() {
+    if (!activeRepoPath) return;
+    const name = switchBranchName.trim();
+    if (!name) {
+      setSwitchBranchError("Branch name is empty.");
+      return;
+    }
+
+    setSwitchBranchBusy(true);
+    setSwitchBranchError("");
+    setError("");
+    try {
+      if (switchBranchMode === "local") {
+        await invoke<string>("git_switch", { repoPath: activeRepoPath, branch: name, create: false });
+      } else {
+        const remoteRef = name;
+        const localName =
+          switchRemoteLocalMode === "same" ? remoteRefToLocalName(remoteRef) : switchRemoteLocalName.trim();
+        if (!localName) {
+          setSwitchBranchError("Local branch name is empty.");
+          return;
+        }
+        await invoke<string>("git_switch", {
+          repoPath: activeRepoPath,
+          branch: localName,
+          create: true,
+          force: switchRemoteLocalMode === "same",
+          startPoint: remoteRef,
+          track: true,
+        });
+      }
+      setSwitchBranchOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setSwitchBranchError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setSwitchBranchBusy(false);
+    }
+  }
+
+  async function runRenameBranch() {
+    if (!activeRepoPath) return;
+    const oldName = renameBranchOld.trim();
+    const newName = renameBranchNew.trim();
+    if (!oldName) {
+      setRenameBranchError("Old branch name is empty.");
+      return;
+    }
+    if (!newName) {
+      setRenameBranchError("New branch name is empty.");
+      return;
+    }
+
+    setRenameBranchBusy(true);
+    setRenameBranchError("");
+    setError("");
+    try {
+      await invoke<string>("git_rename_branch", { repoPath: activeRepoPath, oldName, newName });
+      setRenameBranchOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setRenameBranchError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setRenameBranchBusy(false);
+    }
+  }
+
+  async function deleteBranch(branch: string) {
+    if (!activeRepoPath) return;
+    const b = branch.trim();
+    if (!b) return;
+
+    const ok = await confirmDialog({
+      title: "Delete branch",
+      message: `Delete branch ${b}?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: b, force: false });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runCreateBranch() {
+    if (!activeRepoPath) return;
+    const name = createBranchName.trim();
+    if (!name) {
+      setCreateBranchError("Branch name is empty.");
+      return;
+    }
+
+    const at = createBranchAt.trim();
+    setCreateBranchBusy(true);
+    setCreateBranchError("");
+    setError("");
+    try {
+      await invoke<string>("git_create_branch_advanced", {
+        repoPath: activeRepoPath,
+        branch: name,
+        at: at ? at : undefined,
+        checkout: createBranchCheckout,
+        orphan: createBranchOrphan,
+        clearWorkingTree: createBranchClearWorkingTree,
+      });
+      setCreateBranchOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setCreateBranchError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCreateBranchBusy(false);
     }
   }
 
@@ -2986,6 +3286,32 @@ function App() {
                   >
                     git reset…
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
+                      setCommandsMenuOpen(false);
+                      if (!at) return;
+                      openCreateBranchDialog(at);
+                    }}
+                    disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
+                    title={!activeRepoPath ? "No repository" : "Create a new branch"}
+                  >
+                    Create branch…
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      void openSwitchBranchDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                    title={!activeRepoPath ? "No repository" : "Switch branches (git switch)"}
+                  >
+                    Checkout (Switch) branch…
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -3219,8 +3545,54 @@ function App() {
             <div className="sidebarTitle">Branches</div>
             <div className="sidebarList">
               {(overview?.branches ?? []).slice(0, 30).map((b) => (
-                <div key={b} className="sidebarItem">
-                  {b}
+                <div key={b} className="sidebarItem branchRow" title={b}>
+                  <button
+                    type="button"
+                    className="branchMain"
+                    style={{ border: 0, background: "transparent", padding: 0, color: "inherit", textAlign: "left" }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openBranchContextMenu(b, e.clientX, e.clientY);
+                    }}
+                  >
+                    <span
+                      className="branchLabel"
+                      style={normalizeBranchName(b) === normalizeBranchName(activeBranchName) ? { fontWeight: 900 } : undefined}
+                    >
+                      {b}
+                    </span>
+                  </button>
+
+                  <span className="branchActions">
+                    <button
+                      type="button"
+                      className="branchActionBtn"
+                      onClick={() => void checkoutBranch(b)}
+                      title="Checkout (Switch) to this branch"
+                      disabled={!activeRepoPath || loading}
+                    >
+                      C
+                    </button>
+                    <button
+                      type="button"
+                      className="branchActionBtn"
+                      onClick={() => openRenameBranchDialog(b)}
+                      title="Rename branch"
+                      disabled={!activeRepoPath || loading}
+                    >
+                      R
+                    </button>
+                    <button
+                      type="button"
+                      className="branchActionBtn"
+                      onClick={() => void deleteBranch(b)}
+                      title="Delete branch"
+                      disabled={!activeRepoPath || loading}
+                    >
+                      D
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
@@ -3590,6 +3962,18 @@ function App() {
             onClick={() => {
               const hash = commitContextMenu.hash;
               setCommitContextMenu(null);
+              openCreateBranchDialog(hash);
+            }}
+          >
+            Create branch…
+          </button>
+
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
               void runCommitContextReset("soft", hash);
             }}
           >
@@ -3660,6 +4044,226 @@ function App() {
               </button>
             );
           })()}
+        </div>
+      ) : null}
+
+      {renameBranchOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(640px, 96vw)", maxHeight: "min(60vh, 520px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Rename branch</div>
+              <button type="button" onClick={() => setRenameBranchOpen(false)} disabled={renameBranchBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {renameBranchError ? <div className="error">{renameBranchError}</div> : null}
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Old name</div>
+                  <input value={renameBranchOld} className="modalInput" disabled />
+                </div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>New name</div>
+                  <input
+                    value={renameBranchNew}
+                    onChange={(e) => setRenameBranchNew(e.target.value)}
+                    className="modalInput"
+                    disabled={renameBranchBusy}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => setRenameBranchOpen(false)} disabled={renameBranchBusy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runRenameBranch()}
+                disabled={renameBranchBusy || !activeRepoPath || !renameBranchNew.trim() || renameBranchNew.trim() === renameBranchOld.trim()}
+              >
+                {renameBranchBusy ? "Renaming…" : "Rename"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {switchBranchOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 620px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Checkout (Switch) branch</div>
+              <button type="button" onClick={() => setSwitchBranchOpen(false)} disabled={switchBranchBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {switchBranchError ? <div className="error">{switchBranchError}</div> : null}
+              {switchBranchesError ? <div className="error">{switchBranchesError}</div> : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 800 }}>
+                      <input
+                        type="radio"
+                        name="switchMode"
+                        checked={switchBranchMode === "local"}
+                        onChange={() => {
+                          setSwitchBranchMode("local");
+                          setSwitchBranchError("");
+                        }}
+                        disabled={switchBranchBusy}
+                      />
+                      Local branch
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 800 }}>
+                      <input
+                        type="radio"
+                        name="switchMode"
+                        checked={switchBranchMode === "remote"}
+                        onChange={() => {
+                          setSwitchBranchMode("remote");
+                          setSwitchBranchError("");
+                        }}
+                        disabled={switchBranchBusy}
+                      />
+                      Remote branch
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void fetchSwitchBranches()}
+                    disabled={switchBranchBusy || switchBranchesLoading || !activeRepoPath}
+                    title="Fetch and refresh remote branches"
+                  >
+                    {switchBranchesLoading ? "Fetching…" : "Fetch"}
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>
+                    {switchBranchMode === "local" ? "Branch" : "Remote branch"}
+                  </div>
+                  <input
+                    value={switchBranchName}
+                    onChange={(e) => setSwitchBranchName(e.target.value)}
+                    className="modalInput"
+                    disabled={switchBranchBusy}
+                    list={switchBranchMode === "local" ? "switchLocalBranches" : "switchRemoteBranches"}
+                    placeholder={switchBranchMode === "local" ? "main" : "origin/main"}
+                  />
+                  <datalist id="switchLocalBranches">
+                    {switchBranches
+                      .filter((b) => b.kind === "local")
+                      .slice()
+                      .sort((a, b) => (b.committer_date || "").localeCompare(a.committer_date || ""))
+                      .map((b) => (
+                        <option key={`l-${b.name}`} value={b.name} />
+                      ))}
+                  </datalist>
+                  <datalist id="switchRemoteBranches">
+                    {switchBranches
+                      .filter((b) => b.kind === "remote")
+                      .slice()
+                      .sort((a, b) => (b.committer_date || "").localeCompare(a.committer_date || ""))
+                      .map((b) => (
+                        <option key={`r-${b.name}`} value={b.name} />
+                      ))}
+                  </datalist>
+                </div>
+
+                {switchBranchMode === "remote" ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Local branch</div>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <input
+                        type="radio"
+                        name="remoteLocalMode"
+                        checked={switchRemoteLocalMode === "same"}
+                        onChange={() => setSwitchRemoteLocalMode("same")}
+                        disabled={switchBranchBusy}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800 }}>Reset/Create local branch with the same name</div>
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>
+                          Uses <span className="mono">git switch --track -C</span>.
+                        </div>
+                      </div>
+                    </label>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <input
+                        type="radio"
+                        name="remoteLocalMode"
+                        checked={switchRemoteLocalMode === "custom"}
+                        onChange={() => setSwitchRemoteLocalMode("custom")}
+                        disabled={switchBranchBusy}
+                      />
+                      <div style={{ display: "grid", gap: 6, flex: 1 }}>
+                        <div style={{ fontWeight: 800 }}>Create local branch with name</div>
+                        <input
+                          value={switchRemoteLocalName}
+                          onChange={(e) => setSwitchRemoteLocalName(e.target.value)}
+                          className="modalInput"
+                          disabled={switchBranchBusy || switchRemoteLocalMode !== "custom"}
+                          placeholder="feature/my-local"
+                        />
+                      </div>
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => setSwitchBranchOpen(false)} disabled={switchBranchBusy}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => void runSwitchBranch()} disabled={switchBranchBusy || !activeRepoPath || !switchBranchName.trim()}>
+                {switchBranchBusy ? "Switching…" : "Switch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {branchContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={branchContextMenuRef}
+          style={{
+            position: "fixed",
+            left: branchContextMenu.x,
+            top: branchContextMenu.y,
+            zIndex: 200,
+            minWidth: 220,
+          }}
+        >
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              if (!activeRepoPath) return;
+              const branch = branchContextMenu.branch;
+              setBranchContextMenu(null);
+              void (async () => {
+                try {
+                  const hash = await invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference: branch });
+                  const at = (hash ?? "").trim();
+                  if (!at) {
+                    setError(`Could not resolve branch '${branch}' to a commit.`);
+                    return;
+                  }
+                  openCreateBranchDialog(at);
+                } catch (e) {
+                  setError(typeof e === "string" ? e : JSON.stringify(e));
+                }
+              })();
+            }}
+          >
+            Create branch…
+          </button>
         </div>
       ) : null}
 
@@ -3995,6 +4599,134 @@ function App() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {createBranchOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Create branch</div>
+              <button type="button" onClick={() => setCreateBranchOpen(false)} disabled={createBranchBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {createBranchError ? <div className="error">{createBranchError}</div> : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Branch name</div>
+                  <input
+                    value={createBranchName}
+                    onChange={(e) => setCreateBranchName(e.target.value)}
+                    className="modalInput"
+                    placeholder="feature/my-branch"
+                    disabled={createBranchBusy}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Create at commit</div>
+                  <input
+                    value={createBranchAt}
+                    onChange={(e) => setCreateBranchAt(e.target.value)}
+                    className="modalInput mono"
+                    placeholder="HEAD or a commit hash"
+                    disabled={createBranchBusy}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Commit</div>
+                  {createBranchCommitLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+                  {createBranchCommitError ? <div className="error">{createBranchCommitError}</div> : null}
+                  {!createBranchCommitLoading && !createBranchCommitError && createBranchCommitSummary ? (
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: 10,
+                        display: "grid",
+                        gap: 4,
+                        background: "rgba(0, 0, 0, 0.02)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 800 }}>{truncate(createBranchCommitSummary.subject, 120)}</div>
+                      <div style={{ opacity: 0.75, fontSize: 12 }}>
+                        {createBranchCommitSummary.author} — {createBranchCommitSummary.date}
+                      </div>
+                      <div className="mono" style={{ opacity: 0.85, fontSize: 12 }}>
+                        {createBranchCommitSummary.hash}
+                        {createBranchCommitSummary.refs ? ` — ${createBranchCommitSummary.refs}` : ""}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                    <input
+                      type="checkbox"
+                      checked={createBranchCheckout}
+                      onChange={(e) => setCreateBranchCheckout(e.target.checked)}
+                      disabled={createBranchBusy || createBranchOrphan}
+                    />
+                    Checkout after create
+                  </label>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={createBranchOrphan}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setCreateBranchOrphan(next);
+                          if (next) {
+                            setCreateBranchCheckout(true);
+                            setCreateBranchClearWorkingTree(true);
+                          } else {
+                            setCreateBranchClearWorkingTree(false);
+                          }
+                        }}
+                        disabled={createBranchBusy}
+                      />
+                      Orphan
+                    </label>
+                    <div style={{ opacity: 0.75, fontSize: 12 }}>
+                      Creates a new, disconnected history (separate tree) using <span className="mono">git switch --orphan</span>.
+                    </div>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={createBranchClearWorkingTree}
+                        onChange={(e) => setCreateBranchClearWorkingTree(e.target.checked)}
+                        disabled={createBranchBusy || !createBranchOrphan}
+                      />
+                      Clear working directory and index
+                    </label>
+                    <div style={{ opacity: 0.75, fontSize: 12 }}>
+                      Removes tracked files and cleans untracked files after creating the orphan branch.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => setCreateBranchOpen(false)} disabled={createBranchBusy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runCreateBranch()}
+                disabled={createBranchBusy || !activeRepoPath || !createBranchName.trim() || !createBranchAt.trim()}
+              >
+                {createBranchBusy ? "Creating…" : "Create"}
+              </button>
             </div>
           </div>
         </div>

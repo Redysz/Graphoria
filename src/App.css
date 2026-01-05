@@ -299,12 +299,29 @@ button:disabled {
   justify-content: space-between;
 }
 
+.branchRow {
+  justify-content: space-between;
+}
+
 .stashMain {
   flex: 1;
   min-width: 0;
 }
 
+.branchMain {
+  flex: 1;
+  min-width: 0;
+}
+
 .stashLabel {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branchLabel {
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
@@ -319,7 +336,19 @@ button:disabled {
   pointer-events: none;
 }
 
+.branchActions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .stashRow:hover .stashActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.branchRow:hover .branchActions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -333,7 +362,21 @@ button:disabled {
   height: 22px;
 }
 
+.branchActionBtn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 0 6px;
+  border-radius: 6px;
+  height: 22px;
+}
+
 .stashActionBtn:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(47, 111, 237, 0.12);
+}
+
+.branchActionBtn:hover {
   border-color: rgba(47, 111, 237, 0.35);
   background: rgba(47, 111, 237, 0.12);
 }
