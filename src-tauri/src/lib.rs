@@ -1859,6 +1859,61 @@ fn git_reset_hard(repo_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn git_reset(repo_path: String, mode: String, target: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let mode = mode.trim().to_lowercase();
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(String::from("target is empty"));
+    }
+
+    let flag = match mode.as_str() {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        _ => return Err(String::from("Invalid reset mode. Use: soft, mixed or hard.")),
+    };
+
+    run_git(&repo_path, &["reset", flag, target.as_str()])
+}
+
+#[tauri::command]
+fn git_is_ancestor(repo_path: String, ancestor: String, descendant: String) -> Result<bool, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let ancestor = ancestor.trim().to_string();
+    if ancestor.is_empty() {
+        return Err(String::from("ancestor is empty"));
+    }
+
+    let descendant = descendant.trim().to_string();
+    if descendant.is_empty() {
+        return Err(String::from("descendant is empty"));
+    }
+
+    let out = git_command_in_repo(&repo_path)
+        .args(["merge-base", "--is-ancestor", ancestor.as_str(), descendant.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git merge-base: {e}"))?;
+
+    if out.status.success() {
+        return Ok(true);
+    }
+
+    if out.status.code() == Some(1) {
+        return Ok(false);
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    Err(if !stderr.is_empty() {
+        format!("git merge-base failed: {stderr}")
+    } else {
+        String::from("git merge-base failed.")
+    })
+}
+
+#[tauri::command]
 fn git_commit_all(repo_path: String, message: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -2304,6 +2359,8 @@ pub fn run() {
             git_checkout_commit,
             git_checkout_branch,
             git_reset_hard,
+            git_reset,
+            git_is_ancestor,
             git_commit_all,
             git_create_branch,
             git_delete_branch,

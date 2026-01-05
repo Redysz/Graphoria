@@ -72,6 +72,8 @@ type GitCloneProgressEvent = {
   message: string;
 };
 
+type GitResetMode = "soft" | "mixed" | "hard";
+
 type ViewportState = {
   zoom: number;
   pan: { x: number; y: number };
@@ -273,6 +275,12 @@ function App() {
   const [pushError, setPushError] = useState("");
   const [pushLocalBranch, setPushLocalBranch] = useState("");
   const [pushRemoteBranch, setPushRemoteBranch] = useState("");
+
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetTarget, setResetTarget] = useState<string>("HEAD~1");
+  const [resetMode, setResetMode] = useState<GitResetMode>("mixed");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string>("");
 
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
   const [pullBusy, setPullBusy] = useState(false);
@@ -718,7 +726,7 @@ function App() {
 
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 190;
+    const menuH = 420;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setCommitContextMenu({
@@ -726,6 +734,101 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
+  }
+
+  function openResetDialog() {
+    setResetError("");
+    setResetBusy(false);
+    setResetMode("mixed");
+    setResetTarget("HEAD~1");
+    setResetModalOpen(true);
+  }
+
+  async function runGitReset(mode: GitResetMode, target: string) {
+    if (!activeRepoPath) return;
+    const t = target.trim();
+    if (!t) {
+      setResetError("Enter a target commit (e.g. HEAD~1 or a commit hash).");
+      return;
+    }
+
+    if (mode === "hard") {
+      const ok = await confirmDialog({
+        title: "Reset --hard",
+        message:
+          "This will discard commits after the target, as well as any uncommitted changes.\n\nRecovering committed changes can be hard (reflog). Uncommitted changes cannot be recovered.\n\nUse only if you know what you are doing. Continue?",
+        okLabel: "Reset",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+    }
+
+    setResetBusy(true);
+    setResetError("");
+    setError("");
+    try {
+      await invoke<string>("git_reset", { repoPath: activeRepoPath, mode, target: t });
+      setResetModalOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setResetError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
+  async function runCommitContextReset(mode: GitResetMode, hash: string) {
+    if (!activeRepoPath) return;
+    const h = hash.trim();
+    if (!h) return;
+
+    const head = headHash.trim();
+    let outsideBranch = false;
+    if (head) {
+      try {
+        const isAncestor = await invoke<boolean>("git_is_ancestor", {
+          repoPath: activeRepoPath,
+          ancestor: h,
+          descendant: head,
+        });
+        outsideBranch = !isAncestor;
+      } catch {
+        outsideBranch = false;
+      }
+    }
+
+    const warnOutside = outsideBranch
+      ? `\n\nNOTE: This commit is outside the currently checked out branch (${overview?.head_name || ""}).`
+      : "";
+
+    const baseMsgSoft = "Moves HEAD to this commit. Commits after it are removed from history, but their changes stay staged.";
+    const baseMsgMixed =
+      "Moves HEAD to this commit. Commits after it are removed from history, and their changes stay as unstaged (not selected in Commit).";
+    const baseMsgHard =
+      "Moves HEAD to this commit. Commits after it are discarded, as well as any uncommitted changes.\n\nRecovering committed changes can be hard (reflog). Uncommitted changes cannot be recovered.\n\nUse only if you know what you are doing.";
+
+    const modeTitle = mode === "soft" ? "Reset --soft" : mode === "mixed" ? "Reset --mixed" : "Reset --hard";
+    const modeMsg = mode === "soft" ? baseMsgSoft : mode === "mixed" ? baseMsgMixed : baseMsgHard;
+    const okLabel = mode === "hard" ? "Reset" : "Reset";
+
+    const ok = await confirmDialog({
+      title: modeTitle,
+      message: `Reset to ${shortHash(h)}?\n\n${modeMsg}${warnOutside}\n\nContinue?`,
+      okLabel,
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_reset", { repoPath: activeRepoPath, mode, target: h });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
   function openStashContextMenu(stashRef: string, stashMessage: string, x: number, y: number) {
@@ -2871,6 +2974,18 @@ function App() {
                       {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
                     </span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      openResetDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                    title={!activeRepoPath ? "No repository" : "git reset"}
+                  >
+                    git reset…
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -3467,6 +3582,40 @@ function App() {
             }}
           >
             Checkout this commit
+          </button>
+
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
+              void runCommitContextReset("soft", hash);
+            }}
+          >
+            git reset --soft here
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
+              void runCommitContextReset("mixed", hash);
+            }}
+          >
+            git reset --mixed here
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const hash = commitContextMenu.hash;
+              setCommitContextMenu(null);
+              void runCommitContextReset("hard", hash);
+            }}
+          >
+            git reset --hard here
           </button>
 
           {isDetached && commitContextBranchesLoading ? (
@@ -4337,6 +4486,97 @@ function App() {
               </button>
               <button type="button" onClick={() => resolveConfirm(true)}>
                 {confirmOkLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {resetModalOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 620px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>git reset</div>
+              <button type="button" onClick={() => setResetModalOpen(false)} disabled={resetBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {resetError ? <div className="error">{resetError}</div> : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Target</div>
+                  <input
+                    value={resetTarget}
+                    onChange={(e) => setResetTarget(e.target.value)}
+                    className="modalInput"
+                    placeholder="HEAD~1 or a commit hash"
+                    disabled={resetBusy}
+                  />
+                  <div style={{ opacity: 0.7, fontSize: 12 }}>
+                    Examples: <span className="mono">HEAD~1</span>, <span className="mono">HEAD~5</span>, <span className="mono">a1b2c3d4</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Mode</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <input
+                        type="radio"
+                        name="resetMode"
+                        checked={resetMode === "soft"}
+                        onChange={() => setResetMode("soft")}
+                        disabled={resetBusy}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800 }}>soft</div>
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>Undo commits; keep changes staged (selected in Commit).</div>
+                      </div>
+                    </label>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <input
+                        type="radio"
+                        name="resetMode"
+                        checked={resetMode === "mixed"}
+                        onChange={() => setResetMode("mixed")}
+                        disabled={resetBusy}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800 }}>mixed</div>
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>Undo commits; keep changes unstaged (not selected in Commit).</div>
+                      </div>
+                    </label>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <input
+                        type="radio"
+                        name="resetMode"
+                        checked={resetMode === "hard"}
+                        onChange={() => setResetMode("hard")}
+                        disabled={resetBusy}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800 }}>hard</div>
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>
+                          Discard commits after target and any uncommitted changes. Recovery is hard (reflog).
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => setResetModalOpen(false)} disabled={resetBusy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runGitReset(resetMode, resetTarget)}
+                disabled={resetBusy || !activeRepoPath || !resetTarget.trim()}
+              >
+                {resetBusy ? "Resetting…" : "Reset"}
               </button>
             </div>
           </div>
