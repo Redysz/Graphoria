@@ -36,6 +36,7 @@ export type GraphSettings = {
   nodeCornerRadius: number;
   edgeDirection: EdgeDirection;
   canvasBackground: string;
+  showStashesOnGraph: boolean;
 };
 
 export type AppSettingsState = {
@@ -82,6 +83,7 @@ export const defaultGraphSettings: GraphSettings = {
   nodeCornerRadius: 10,
   edgeDirection: "to_parent",
   canvasBackground: "",
+  showStashesOnGraph: false,
 };
 
 export const useAppSettings = create<AppSettingsState>()(
@@ -116,13 +118,18 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 2,
+      version: 3,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        if (!s.graph || typeof s.graph !== "object") {
+          s.graph = defaultGraphSettings;
+        } else if (typeof s.graph.showStashesOnGraph !== "boolean") {
+          s.graph.showStashesOnGraph = false;
         }
         return s;
       },

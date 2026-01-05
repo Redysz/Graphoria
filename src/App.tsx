@@ -34,6 +34,12 @@ type GitStatusEntry = {
   path: string;
 };
 
+type GitStashEntry = {
+  index: number;
+  reference: string;
+  message: string;
+};
+
 type GitStatusSummary = {
   changed: number;
 };
@@ -96,6 +102,41 @@ function normalizeGitPath(p: string) {
   return p.replace(/\\/g, "/").replace(/\/+$/g, "");
 }
 
+function normalizeLf(s: string) {
+  return s.replace(/\r\n/g, "\n");
+}
+
+function computeHunkRanges(diffText: string) {
+  const lines = normalizeLf(diffText).split("\n");
+  const starts: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("@@")) starts.push(i);
+  }
+
+  const ranges = starts.map((start, idx) => {
+    const end = (starts[idx + 1] ?? lines.length) - 1;
+    return { index: idx, header: lines[start], start, end };
+  });
+  const headerEnd = starts[0] ?? lines.length;
+  return { lines, ranges, headerEnd };
+}
+
+function buildPatchFromSelectedHunks(diffText: string, selected: Set<number>) {
+  const { lines, ranges, headerEnd } = computeHunkRanges(diffText);
+  if (ranges.length === 0) return "";
+  if (selected.size === 0) return "";
+
+  const out: string[] = [];
+  out.push(...lines.slice(0, headerEnd));
+  for (const r of ranges) {
+    if (!selected.has(r.index)) continue;
+    out.push(...lines.slice(r.start, r.end + 1));
+  }
+
+  const joined = out.join("\n");
+  return joined.endsWith("\n") ? joined : `${joined}\n`;
+}
+
 async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -136,6 +177,12 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("Confirm");
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmOkLabel, setConfirmOkLabel] = useState("OK");
+  const [confirmCancelLabel, setConfirmCancelLabel] = useState("Cancel");
+  const confirmResolveRef = useRef<((v: boolean) => void) | null>(null);
   const [autoCenterToken, setAutoCenterToken] = useState(0);
 
   const gitTrustCopyTimeoutRef = useRef<number | null>(null);
@@ -166,6 +213,34 @@ function App() {
   const [commitAlsoPush, setCommitAlsoPush] = useState(false);
   const [commitBusy, setCommitBusy] = useState(false);
   const [commitError, setCommitError] = useState("");
+
+  const [stashesByRepo, setStashesByRepo] = useState<Record<string, GitStashEntry[] | undefined>>({});
+
+  const [stashModalOpen, setStashModalOpen] = useState(false);
+  const [stashStatusEntries, setStashStatusEntries] = useState<GitStatusEntry[]>([]);
+  const [stashSelectedPaths, setStashSelectedPaths] = useState<Record<string, boolean>>({});
+  const [stashMessage, setStashMessage] = useState("");
+  const [stashBusy, setStashBusy] = useState(false);
+  const [stashError, setStashError] = useState("");
+
+  const [stashPreviewPath, setStashPreviewPath] = useState("");
+  const [stashPreviewStatus, setStashPreviewStatus] = useState("");
+  const [stashPreviewDiff, setStashPreviewDiff] = useState("");
+  const [stashPreviewContent, setStashPreviewContent] = useState("");
+  const [stashPreviewLoading, setStashPreviewLoading] = useState(false);
+  const [stashPreviewError, setStashPreviewError] = useState("");
+
+  const [stashAdvancedMode, setStashAdvancedMode] = useState(false);
+  const [stashHunksByPath, setStashHunksByPath] = useState<Record<string, number[]>>({});
+
+  const [stashViewOpen, setStashViewOpen] = useState(false);
+  const [stashViewRef, setStashViewRef] = useState<string>("");
+  const [stashViewMessage, setStashViewMessage] = useState<string>("");
+  const [stashViewPatch, setStashViewPatch] = useState<string>("");
+  const [stashViewLoading, setStashViewLoading] = useState(false);
+  const [stashViewError, setStashViewError] = useState<string>("");
+
+  const [stashBaseByRepo, setStashBaseByRepo] = useState<Record<string, Record<string, string>>>({});
 
   const [commitPreviewPath, setCommitPreviewPath] = useState("");
   const [commitPreviewStatus, setCommitPreviewStatus] = useState("");
@@ -327,11 +402,85 @@ function App() {
   }, [cloneModalOpen]);
 
   const commits = commitsByRepo[activeRepoPath] ?? [];
+
+  const confirmDialog = (opts: { title: string; message: string; okLabel?: string; cancelLabel?: string }) => {
+    const { title, message, okLabel, cancelLabel } = opts;
+    setConfirmTitle(title);
+    setConfirmMessage(message);
+    setConfirmOkLabel(okLabel ?? "OK");
+    setConfirmCancelLabel(cancelLabel ?? "Cancel");
+    setConfirmOpen(true);
+    return new Promise<boolean>((resolve) => {
+      confirmResolveRef.current = resolve;
+    });
+  };
+
+  const resolveConfirm = (v: boolean) => {
+    setConfirmOpen(false);
+    const r = confirmResolveRef.current;
+    confirmResolveRef.current = null;
+    if (r) r(v);
+  };
   const overview = overviewByRepo[activeRepoPath];
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
+  const stashes = stashesByRepo[activeRepoPath] ?? [];
+
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    if (!graphSettings.showStashesOnGraph) return;
+    if (!activeRepoPath) return;
+    if (stashes.length === 0) return;
+
+    let alive = true;
+    const repo = activeRepoPath;
+
+    void (async () => {
+      const current = stashBaseByRepo[repo] ?? {};
+      const missing = stashes.filter((s) => !current[s.reference]);
+      if (missing.length === 0) return;
+
+      const results = await Promise.all(
+        missing.map(async (s) => {
+          try {
+            const base = await invoke<string>("git_stash_base_commit", { repoPath: repo, stashRef: s.reference });
+            const t = (base ?? "").trim();
+            if (!t) return null;
+            return [s.reference, t] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      if (!alive) return;
+      const patch: Record<string, string> = {};
+      for (const r of results) {
+        if (!r) continue;
+        patch[r[0]] = r[1];
+      }
+      if (Object.keys(patch).length === 0) return;
+
+      setStashBaseByRepo((prev) => ({
+        ...prev,
+        [repo]: {
+          ...(prev[repo] ?? {}),
+          ...patch,
+        },
+      }));
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [activeRepoPath, graphSettings.showStashesOnGraph, stashes, stashBaseByRepo, viewMode]);
+
+  const stashHunkRanges = useMemo(() => {
+    if (!stashPreviewDiff) return [] as Array<{ index: number; header: string; start: number; end: number }>;
+    return computeHunkRanges(stashPreviewDiff).ranges;
+  }, [stashPreviewDiff]);
 
   const headHash = useMemo(() => {
     return overview?.head || commits.find((c) => c.is_head)?.hash || "";
@@ -585,6 +734,13 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    const cy = cyRef.current;
+    if (!cy) return;
+    applyRefBadges(cy);
+  }, [activeRepoPath, graphSettings.showStashesOnGraph, stashBaseByRepo, stashesByRepo, theme, viewMode]);
+
   async function checkoutBranch(branch: string) {
     if (!activeRepoPath) return;
     const b = branch.trim();
@@ -607,7 +763,12 @@ function App() {
     const b = branch.trim();
     if (!b) return;
 
-    const ok = window.confirm("This will discard your local changes (git reset --hard). Continue?");
+    const ok = await confirmDialog({
+      title: "Reset --hard",
+      message: "This will discard your local changes (git reset --hard). Continue?",
+      okLabel: "Reset",
+      cancelLabel: "Cancel",
+    });
     if (!ok) return;
 
     setLoading(true);
@@ -674,7 +835,12 @@ function App() {
       return;
     }
 
-    const ok = window.confirm("This will discard your local changes (git reset --hard). Continue?");
+    const ok = await confirmDialog({
+      title: "Reset --hard",
+      message: "This will discard your local changes (git reset --hard). Continue?",
+      okLabel: "Reset",
+      cancelLabel: "Cancel",
+    });
     if (!ok) return;
 
     setDetachedBusy(true);
@@ -1116,6 +1282,8 @@ function App() {
   function applyRefBadges(cy: Core) {
     cy.$("node.refBadge").remove();
     cy.$("edge.refEdge").remove();
+    cy.$("node.stashBadge").remove();
+    cy.$("edge.stashEdge").remove();
 
     const sideOffsetX = 240;
     const gapY = 30;
@@ -1170,6 +1338,74 @@ function App() {
 
       if (left.length > 0) placeSide(left, -1);
       if (right.length > 0) placeSide(right, 1);
+    }
+
+    if (!graphSettings.showStashesOnGraph || !activeRepoPath) return;
+    const baseMap = stashBaseByRepo[activeRepoPath] ?? {};
+    const list = stashesByRepo[activeRepoPath] ?? [];
+    if (list.length === 0) return;
+
+    const byBase = new Map<string, GitStashEntry[]>();
+    for (const s of list) {
+      const base = baseMap[s.reference];
+      if (!base) continue;
+      const arr = byBase.get(base) ?? [];
+      arr.push(s);
+      byBase.set(base, arr);
+    }
+
+    const stashLine = "rgba(184, 92, 255, 0.75)";
+    const stashBg = "rgba(184, 92, 255, 0.16)";
+    const stashText = theme === "dark" ? "#f2f4f8" : "#0f0f0f";
+
+    for (const [base, arr] of byBase.entries()) {
+      const baseNode = cy.$id(base);
+      if (baseNode.length === 0) continue;
+      const pos = baseNode.position();
+
+      const maxPerCol = 8;
+      const gapY = 28;
+      const colGapX = 210;
+      const baseX = pos.x - 360;
+      const baseY = pos.y + 140;
+
+      for (let i = 0; i < arr.length; i++) {
+        const s = arr[i];
+        const col = Math.floor(i / maxPerCol);
+        const row = i % maxPerCol;
+        const safeRef = s.reference.replace(/[^a-zA-Z0-9:_-]/g, "_");
+        const id = `stash:${base}:${safeRef}`;
+        if (cy.$id(id).length > 0) continue;
+
+        cy.add({
+          group: "nodes",
+          data: { id, label: s.reference, kind: "stash" },
+          position: {
+            x: baseX - col * colGapX,
+            y: baseY + row * gapY,
+          },
+          classes: "stashBadge",
+          locked: true,
+          grabbable: false,
+          selectable: false,
+        } as any);
+
+        cy.add({
+          group: "edges",
+          data: { id: `stashedge:${id}`, source: id, target: base, label: "stash edge" },
+          classes: "stashEdge",
+          selectable: false,
+        } as any);
+
+        const node = cy.$id(id);
+        if (node.length > 0) {
+          node.style({
+            "border-color": stashLine,
+            "background-color": stashBg,
+            color: stashText,
+          } as any);
+        }
+      }
     }
   }
 
@@ -1321,6 +1557,38 @@ function App() {
             "curve-style": "straight",
           },
         },
+        {
+          selector: "node.stashBadge",
+          style: {
+            shape: "round-rectangle",
+            width: "label",
+            height: "22px",
+            padding: "6px",
+            "border-width": "2px",
+            label: "data(label)",
+            "font-size": "12px",
+            "font-weight": "bold",
+            "text-valign": "center",
+            "text-halign": "center",
+            "text-wrap": "none",
+          },
+        },
+        {
+          selector: "edge.stashEdge",
+          style: {
+            width: "2px",
+            "line-style": "dotted",
+            "target-arrow-shape": "none",
+            "curve-style": "straight",
+            label: "data(label)",
+            "font-size": "11px",
+            "text-rotation": "autorotate",
+            "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.55)" : "rgba(255, 255, 255, 0.70)",
+            "text-background-opacity": 1,
+            "text-background-padding": "2px",
+            "text-background-shape": "roundrectangle",
+          },
+        },
       ],
     });
 
@@ -1329,11 +1597,13 @@ function App() {
 
     cy.on("tap", "node", (evt) => {
       if ((evt.target as any).hasClass?.("refBadge")) return;
+      if ((evt.target as any).hasClass?.("stashBadge")) return;
       setSelectedHash(evt.target.id());
     });
 
     cy.on("cxttap", "node", (evt) => {
       if ((evt.target as any).hasClass?.("refBadge")) return;
+      if ((evt.target as any).hasClass?.("stashBadge")) return;
       const hash = evt.target.id();
       const oe = (evt as any).originalEvent as MouseEvent | undefined;
       if (!oe) return;
@@ -1342,6 +1612,7 @@ function App() {
     });
 
     cy.on("tap", (evt) => {
+      if ((evt.target as any).hasClass?.("stashEdge")) return;
       if (evt.target === cy) setSelectedHash("");
     });
 
@@ -1773,6 +2044,248 @@ function App() {
     };
   }, [activeRepoPath, commitModalOpen, commitPreviewPath, commitPreviewStatus, diffTool.command, diffTool.difftool, diffTool.path]);
 
+  async function openStashDialog() {
+    if (!activeRepoPath) return;
+    setStashError("");
+    setStashMessage("");
+    setStashModalOpen(true);
+    setStashAdvancedMode(false);
+    setStashHunksByPath({});
+    setStashPreviewPath("");
+    setStashPreviewStatus("");
+    setStashPreviewDiff("");
+    setStashPreviewContent("");
+    setStashPreviewError("");
+
+    try {
+      const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+      setStashStatusEntries(entries);
+      const nextSelected: Record<string, boolean> = {};
+      for (const e of entries) nextSelected[e.path] = true;
+      setStashSelectedPaths(nextSelected);
+      const first = entries[0];
+      setStashPreviewPath(first?.path ?? "");
+      setStashPreviewStatus(first?.status ?? "");
+      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    } catch (e) {
+      setStashStatusEntries([]);
+      setStashSelectedPaths({});
+      setStashError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
+  useEffect(() => {
+    if (!stashModalOpen || !activeRepoPath || !stashPreviewPath) {
+      setStashPreviewDiff("");
+      setStashPreviewContent("");
+      setStashPreviewError("");
+      setStashPreviewLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setStashPreviewLoading(true);
+    setStashPreviewError("");
+    setStashPreviewDiff("");
+    setStashPreviewContent("");
+
+    const run = async () => {
+      try {
+        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
+        if (useExternal) {
+          await invoke<void>("git_launch_external_diff_working", {
+            repoPath: activeRepoPath,
+            path: stashPreviewPath,
+            toolPath: diffTool.path,
+            command: diffTool.command,
+          });
+          if (!alive) return;
+          setStashPreviewContent("Opened in external diff tool.");
+          return;
+        }
+
+        const st = stashPreviewStatus.trim();
+        if (st.startsWith("??")) {
+          const content = await invoke<string>("git_working_file_content", {
+            repoPath: activeRepoPath,
+            path: stashPreviewPath,
+          });
+          if (!alive) return;
+          setStashPreviewContent(content);
+          return;
+        }
+
+        const diff = await invoke<string>("git_working_file_diff_unified", {
+          repoPath: activeRepoPath,
+          path: stashPreviewPath,
+          unified: stashAdvancedMode ? 6 : 3,
+        });
+        if (!alive) return;
+        setStashPreviewDiff(diff);
+      } catch (e) {
+        if (!alive) return;
+        setStashPreviewError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        if (!alive) return;
+        setStashPreviewLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [activeRepoPath, stashModalOpen, stashPreviewPath, stashPreviewStatus, stashAdvancedMode, diffTool.command, diffTool.difftool, diffTool.path]);
+
+  async function runStash() {
+    if (!activeRepoPath) return;
+
+    setStashBusy(true);
+    setStashError("");
+    try {
+      if (!stashAdvancedMode) {
+        const paths = stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).map((e) => e.path);
+        if (paths.length === 0) {
+          setStashError("No files selected.");
+          return;
+        }
+
+        const includeUntracked = stashStatusEntries.some((e) => {
+          if (!stashSelectedPaths[e.path]) return false;
+          return e.status.trim().startsWith("??");
+        });
+
+        await invoke<string>("git_stash_push_paths", {
+          repoPath: activeRepoPath,
+          message: stashMessage,
+          paths,
+          includeUntracked,
+        });
+      } else {
+        if (!stashPreviewPath) {
+          setStashError("Select a file.");
+          return;
+        }
+
+        const selected = new Set(stashHunksByPath[stashPreviewPath] ?? []);
+        if (selected.size === 0) {
+          setStashError("No hunks selected.");
+          return;
+        }
+
+        if (!stashPreviewDiff.trim()) {
+          setStashError("No diff available for the selected file.");
+          return;
+        }
+
+        const patch = buildPatchFromSelectedHunks(stashPreviewDiff, selected);
+        if (!patch.trim()) {
+          setStashError("Selected hunks produced empty patch.");
+          return;
+        }
+
+        await invoke<string>("git_stash_push_patch", { repoPath: activeRepoPath, message: stashMessage, patch });
+      }
+
+      setStashModalOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setStashError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStashBusy(false);
+    }
+  }
+
+  async function openStashView(entry: GitStashEntry) {
+    if (!activeRepoPath) return;
+    setStashViewOpen(true);
+    setStashViewRef(entry.reference);
+    setStashViewMessage(entry.message);
+    setStashViewPatch("");
+    setStashViewError("");
+    setStashViewLoading(true);
+    try {
+      const patch = await invoke<string>("git_stash_show", { repoPath: activeRepoPath, stashRef: entry.reference });
+      setStashViewPatch(patch);
+    } catch (e) {
+      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStashViewLoading(false);
+    }
+  }
+
+  async function applyStashByRef(stashRef: string) {
+    if (!activeRepoPath || !stashRef.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_stash_apply", { repoPath: activeRepoPath, stashRef });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function applyStashFromView() {
+    if (!activeRepoPath || !stashViewRef) return;
+    setStashViewLoading(true);
+    setStashViewError("");
+    try {
+      await invoke<string>("git_stash_apply", { repoPath: activeRepoPath, stashRef: stashViewRef });
+      setStashViewOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStashViewLoading(false);
+    }
+  }
+
+  async function dropStashByRef(stashRef: string) {
+    if (!activeRepoPath || !stashRef.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_stash_drop", { repoPath: activeRepoPath, stashRef });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function dropStashFromView() {
+    if (!activeRepoPath || !stashViewRef) return;
+    setStashViewLoading(true);
+    setStashViewError("");
+    try {
+      await invoke<string>("git_stash_drop", { repoPath: activeRepoPath, stashRef: stashViewRef });
+      setStashViewOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStashViewLoading(false);
+    }
+  }
+
+  async function clearAllStashes() {
+    if (!activeRepoPath) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_stash_clear", { repoPath: activeRepoPath });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runCommit() {
     if (!activeRepoPath) return;
 
@@ -1886,9 +2399,12 @@ function App() {
     }
 
     if (pushForce) {
-      const ok = window.confirm(
-        "Force push will rewrite history on the remote branch. Continue?",
-      );
+      const ok = await confirmDialog({
+        title: "Force push",
+        message: "Force push will rewrite history on the remote branch. Continue?",
+        okLabel: "Force push",
+        cancelLabel: "Cancel",
+      });
       if (!ok) return;
     }
 
@@ -1970,6 +2486,12 @@ function App() {
       return next;
     });
 
+    setStashesByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+
     if (activeRepoPath === path) {
       const remaining = repos.filter((p) => p !== path);
       const nextActive = remaining[0] ?? "";
@@ -1985,12 +2507,13 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [ov, cs, remote, statusSummary, aheadBehind] = await Promise.all([
+      const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
         invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 }),
         invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
         invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
         invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
+        invoke<GitStashEntry[]>("git_stash_list", { repoPath: path }),
       ]);
 
       setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
@@ -1998,6 +2521,7 @@ function App() {
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
       setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
       setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
+      setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
 
       const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
       setSelectedHash(headHash || "");
@@ -2007,6 +2531,7 @@ function App() {
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
       setStatusSummaryByRepo((prev) => ({ ...prev, [path]: undefined }));
       setAheadBehindByRepo((prev) => ({ ...prev, [path]: undefined }));
+      setStashesByRepo((prev) => ({ ...prev, [path]: [] }));
 
       const msg = typeof e === "string" ? e : JSON.stringify(e);
       const details = parseGitDubiousOwnershipError(msg);
@@ -2059,9 +2584,12 @@ function App() {
   async function changeOwnershipAndOpen() {
     if (!gitTrustRepoPath) return;
     const who = currentUsername ? currentUsername : "current user";
-    const ok = window.confirm(
-      `This will attempt to change ownership of the repository folder to ${who}.\n\nUse this only if you know what you are doing. Continue?`,
-    );
+    const ok = await confirmDialog({
+      title: "Change ownership",
+      message: `This will attempt to change ownership of the repository folder to ${who}.\n\nUse this only if you know what you are doing. Continue?`,
+      okLabel: "Continue",
+      cancelLabel: "Cancel",
+    });
     if (!ok) return;
 
     setGitTrustBusy(true);
@@ -2255,6 +2783,19 @@ function App() {
                     type="button"
                     onClick={() => {
                       setCommandsMenuOpen(false);
+                      void openStashDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                      <span>Stash…</span>
+                      {stashes.length > 0 ? <span className="badge">{stashes.length}</span> : null}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
                       void openRemoteDialog();
                     }}
                     disabled={!activeRepoPath || loading}
@@ -2297,10 +2838,21 @@ function App() {
                     type="button"
                     onClick={() => {
                       setToolsMenuOpen(false);
-                      setSettingsOpen(true);
+                      void (async () => {
+                        const ok = await confirmDialog({
+                          title: "Clear all stashes",
+                          message: "This will delete all stashes in the current repository. Continue?",
+                          okLabel: "Clear",
+                          cancelLabel: "Cancel",
+                        });
+                        if (!ok) return;
+                        await clearAllStashes();
+                      })();
                     }}
+                    disabled={!activeRepoPath || loading || stashes.length === 0}
+                    title={!activeRepoPath ? "No repository" : stashes.length === 0 ? "No stashes" : undefined}
                   >
-                    Settings…
+                    Clear all stashes
                   </button>
                 </div>
               ) : null}
@@ -2318,7 +2870,7 @@ function App() {
             </select>
 
             <button type="button" onClick={() => setSettingsOpen(true)} title="Settings">
-              Settings
+              ⚙️Settings
             </button>
           </div>
         </div>
@@ -2558,7 +3110,62 @@ function App() {
             <div className="sidebarTitle">Other</div>
             <div className="sidebarList">
               <div className="sidebarItem">Submodules</div>
-              <div className="sidebarItem">Stashes</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div className="sidebarTitle" style={{ marginBottom: 0 }}>
+                  Stashes
+                </div>
+                {stashes.length === 0 ? (
+                  <div style={{ opacity: 0.7, fontSize: 12, padding: "0 8px" }}>No stashes.</div>
+                ) : (
+                  <div className="sidebarList" style={{ gap: 4 }}>
+                    {stashes.map((s) => (
+                      <div key={s.reference} className="sidebarItem stashRow" title={s.message || s.reference}>
+                        <button
+                          type="button"
+                          className="stashMain"
+                          onClick={() => void openStashView(s)}
+                          style={{ border: 0, background: "transparent", padding: 0, color: "inherit", textAlign: "left" }}
+                        >
+                          <span className="stashLabel">{truncate(s.message || s.reference, 38)}</span>
+                        </button>
+
+                        <span className="stashActions">
+                          <button type="button" className="stashActionBtn" onClick={() => void openStashView(s)} title="View">
+                            👁
+                          </button>
+                          <button
+                            type="button"
+                            className="stashActionBtn"
+                            onClick={() => void applyStashByRef(s.reference)}
+                            title="Apply"
+                          >
+                            Apply
+                          </button>
+                          <button
+                            type="button"
+                            className="stashActionBtn"
+                            onClick={() => {
+                              void (async () => {
+                                const ok = await confirmDialog({
+                                  title: "Delete stash",
+                                  message: `Delete ${s.reference}?`,
+                                  okLabel: "Delete",
+                                  cancelLabel: "Cancel",
+                                });
+                                if (!ok) return;
+                                await dropStashByRef(s.reference);
+                              })();
+                            }}
+                            title="Delete"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </aside>
@@ -3339,6 +3946,280 @@ function App() {
                   Abort
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {stashModalOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Stash</div>
+              <button type="button" onClick={() => setStashModalOpen(false)} disabled={stashBusy}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {stashError ? <div className="error">{stashError}</div> : null}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
+                    <textarea
+                      value={stashMessage}
+                      onChange={(e) => setStashMessage(e.target.value)}
+                      rows={3}
+                      className="modalTextarea"
+                      placeholder="Stash message (optional)"
+                      disabled={stashBusy}
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                        <input
+                          type="checkbox"
+                          checked={stashAdvancedMode}
+                          onChange={async (e) => {
+                            const next = e.target.checked;
+                            if (next && diffTool.difftool !== "Graphoria builtin diff") {
+                              setStashError("Advanced mode requires Graphoria builtin diff.");
+                              return;
+                            }
+
+                            if (next && activeRepoPath) {
+                              try {
+                                const has = await invoke<boolean>("git_has_staged_changes", { repoPath: activeRepoPath });
+                                if (has) {
+                                  setStashError("Index has staged changes. Unstage/commit them before using advanced mode.");
+                                  return;
+                                }
+                              } catch (err) {
+                                setStashError(typeof err === "string" ? err : JSON.stringify(err));
+                                return;
+                              }
+                            }
+
+                            setStashError("");
+                            setStashAdvancedMode(next);
+                          }}
+                          disabled={stashBusy}
+                        />
+                        Advanced
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next: Record<string, boolean> = {};
+                          for (const e of stashStatusEntries) next[e.path] = true;
+                          setStashSelectedPaths(next);
+                        }}
+                        disabled={stashBusy || stashStatusEntries.length === 0}
+                      >
+                        Select all
+                      </button>
+                    </div>
+                  </div>
+
+                  {stashStatusEntries.length === 0 ? (
+                    <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to stash.</div>
+                  ) : (
+                    <div className="statusList">
+                      {stashStatusEntries.map((e) => (
+                        <div
+                          key={e.path}
+                          className="statusRow"
+                          onClick={() => {
+                            setStashPreviewPath(e.path);
+                            setStashPreviewStatus(e.status);
+                          }}
+                          style={
+                            e.path === stashPreviewPath
+                              ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
+                              : undefined
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!stashSelectedPaths[e.path]}
+                            onClick={(ev) => ev.stopPropagation()}
+                            onChange={(ev) => setStashSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                            disabled={stashBusy}
+                          />
+                          <span className="statusCode">{e.status}</span>
+                          <span className="statusPath">{e.path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
+                  {stashAdvancedMode ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div style={{ opacity: 0.75, fontSize: 12 }}>
+                        Select hunks for the currently selected file, then stash selected hunks.
+                      </div>
+                      {stashHunkRanges.length > 0 ? (
+                        <div className="statusList" style={{ maxHeight: 160, overflow: "auto" }}>
+                          {stashHunkRanges.map((r) => {
+                            const sel = new Set(stashHunksByPath[stashPreviewPath] ?? []);
+                            const checked = sel.has(r.index);
+                            return (
+                              <label key={r.index} className="statusRow hunkRow" style={{ cursor: "pointer" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(ev) => {
+                                    const next = ev.target.checked;
+                                    setStashHunksByPath((prev) => {
+                                      const cur = new Set(prev[stashPreviewPath] ?? []);
+                                      if (next) cur.add(r.index);
+                                      else cur.delete(r.index);
+                                      return { ...prev, [stashPreviewPath]: Array.from(cur.values()).sort((a, b) => a - b) };
+                                    });
+                                  }}
+                                  disabled={stashBusy || !stashPreviewPath}
+                                />
+                                <span className="hunkHeader">{r.header}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>No hunks detected for this file.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ opacity: 0.75, fontSize: 12 }}>Green: added, red: removed. Yellow/blue: detected moved lines.</div>
+                  )}
+
+                  {stashPreviewError ? <div className="error">{stashPreviewError}</div> : null}
+                  {stashPreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+
+                  {!stashPreviewLoading && !stashPreviewError ? (
+                    diffTool.difftool !== "Graphoria builtin diff" ? (
+                      <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                    ) : stashPreviewDiff ? (
+                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                        {parseUnifiedDiff(stashPreviewDiff).map((l, i) => (
+                          <div key={i} className={`diffLine diffLine-${l.kind}`}>
+                            {l.text}
+                          </div>
+                        ))}
+                      </pre>
+                    ) : stashPreviewContent ? (
+                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                        {stashPreviewContent.replace(/\r\n/g, "\n")}
+                      </pre>
+                    ) : (
+                      <div style={{ opacity: 0.75 }}>Select a file.</div>
+                    )
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button
+                type="button"
+                onClick={() => void runStash()}
+                disabled={
+                  stashBusy ||
+                  (stashAdvancedMode
+                    ? !stashPreviewPath || (stashHunksByPath[stashPreviewPath]?.length ?? 0) === 0
+                    : stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).length === 0)
+                }
+              >
+                {stashBusy ? "Stashing…" : "Stash"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {stashViewOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(84vh, 900px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Stash</div>
+              <button type="button" onClick={() => setStashViewOpen(false)} disabled={stashViewLoading}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              {stashViewError ? <div className="error">{stashViewError}</div> : null}
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ opacity: 0.8, fontSize: 12 }}>
+                  <span className="mono">{stashViewRef}</span>
+                  {stashViewMessage ? <span style={{ marginLeft: 10 }}>{stashViewMessage}</span> : null}
+                </div>
+                {stashViewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+                {!stashViewLoading ? (
+                  stashViewPatch ? (
+                    <pre className="diffCode" style={{ maxHeight: 520, border: "1px solid var(--border)", borderRadius: 12 }}>
+                      {parseUnifiedDiff(stashViewPatch).map((l, i) => (
+                        <div key={i} className={`diffLine diffLine-${l.kind}`}>
+                          {l.text}
+                        </div>
+                      ))}
+                    </pre>
+                  ) : (
+                    <div style={{ opacity: 0.75 }}>No patch output.</div>
+                  )
+                ) : null}
+              </div>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    const ok = await confirmDialog({
+                      title: "Delete stash",
+                      message: `Delete ${stashViewRef}?`,
+                      okLabel: "Delete",
+                      cancelLabel: "Cancel",
+                    });
+                    if (!ok) return;
+                    await dropStashFromView();
+                  })();
+                }}
+                disabled={stashViewLoading || !stashViewRef}
+              >
+                Delete
+              </button>
+              <button type="button" onClick={() => void applyStashFromView()} disabled={stashViewLoading || !stashViewRef}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(540px, 96vw)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>{confirmTitle}</div>
+              <button type="button" onClick={() => resolveConfirm(false)}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", opacity: 0.85 }}>{confirmMessage}</pre>
+            </div>
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => resolveConfirm(false)}>
+                {confirmCancelLabel}
+              </button>
+              <button type="button" onClick={() => resolveConfirm(true)}>
+                {confirmOkLabel}
+              </button>
             </div>
           </div>
         </div>

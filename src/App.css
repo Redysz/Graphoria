@@ -295,6 +295,49 @@ button:disabled {
   background: rgba(47, 111, 237, 0.06);
 }
 
+.stashRow {
+  justify-content: space-between;
+}
+
+.stashMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.stashLabel {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stashActions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stashRow:hover .stashActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.stashActionBtn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 0 6px;
+  border-radius: 6px;
+  height: 22px;
+}
+
+.stashActionBtn:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(47, 111, 237, 0.12);
+}
+
 .main {
   min-height: 0;
   display: grid;
@@ -616,6 +659,10 @@ button:disabled {
   background: var(--panel);
 }
 
+.statusRow.hunkRow {
+  grid-template-columns: 20px 1fr;
+}
+
 .statusRow:hover {
   border-color: rgba(47, 111, 237, 0.35);
 }
@@ -633,6 +680,16 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hunkHeader {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
 }
 
  .settingsLayout {

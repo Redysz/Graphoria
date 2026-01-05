@@ -1,7 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
 use tauri::Emitter;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::fs;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -190,6 +190,13 @@ struct GitStatusEntry {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct GitStashEntry {
+    index: u32,
+    reference: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct GitChangeEntry {
     status: String,
     path: String,
@@ -282,6 +289,33 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
         .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+fn run_git_with_stdin(repo_path: &str, args: &[&str], stdin_data: &str) -> Result<String, String> {
+    let mut child = git_command_in_repo(repo_path)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(stdin_data.as_bytes())
+            .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+    }
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for git: {e}"))?;
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -423,6 +457,28 @@ fn run_git_status(repo_path: &str, args: &[&str]) -> Result<(bool, String, Strin
     let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
     Ok((out.status.success(), stdout, stderr))
+}
+
+fn has_staged_changes(repo_path: &str) -> Result<bool, String> {
+    let out = git_command_in_repo(repo_path)
+        .args(["diff", "--cached", "--quiet"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git diff --cached: {e}"))?;
+
+    if out.status.success() {
+        return Ok(false);
+    }
+
+    if out.status.code() == Some(1) {
+        return Ok(true);
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    Err(if !stderr.is_empty() {
+        format!("git diff --cached failed: {stderr}")
+    } else {
+        String::from("git diff --cached failed.")
+    })
 }
 
 fn is_rebase_in_progress(repo_path: &str) -> bool {
@@ -734,16 +790,20 @@ fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitComm
     let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
 
     let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
+    let pretty = format!("--pretty=format:{format}");
+    let max_arg = max_count.to_string();
+
     let output = git_command_in_repo(&repo_path)
         .args([
             "--no-pager",
             "log",
             "--all",
             "--topo-order",
+            "--exclude=refs/stash",
             "--date=iso-strict",
-            &format!("--pretty=format:{format}"),
+            pretty.as_str(),
             "-n",
-            &max_count.to_string(),
+            max_arg.as_str(),
         ])
         .output()
         .map_err(|e| format!("Failed to spawn git log: {e}"))?;
@@ -860,6 +920,212 @@ fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, String> {
 }
 
 #[tauri::command]
+fn git_has_staged_changes(repo_path: String) -> Result<bool, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    has_staged_changes(&repo_path)
+}
+
+#[tauri::command]
+fn git_stash_list(repo_path: String) -> Result<Vec<GitStashEntry>, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let raw = run_git(&repo_path, &["stash", "list"]).unwrap_or_default();
+    let mut out: Vec<GitStashEntry> = Vec::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut parts = line.splitn(2, ':');
+        let reference = parts.next().unwrap_or_default().trim().to_string();
+        let message = parts.next().unwrap_or_default().trim().to_string();
+
+        let mut index: u32 = 0;
+        if reference.starts_with("stash@{") && reference.ends_with('}') && reference.len() >= 8 {
+            let inner = &reference[7..reference.len() - 1];
+            if let Ok(n) = inner.parse::<u32>() {
+                index = n;
+            }
+        }
+
+        if reference.is_empty() {
+            continue;
+        }
+
+        out.push(GitStashEntry {
+            index,
+            reference,
+            message,
+        });
+    }
+
+    Ok(out)
+}
+
+#[tauri::command]
+fn git_stash_show(repo_path: String, stash_ref: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let stash_ref = stash_ref.trim().to_string();
+    if stash_ref.is_empty() {
+        return Err(String::from("stash_ref is empty"));
+    }
+
+    run_git_stdout_raw(
+        &repo_path,
+        &["stash", "show", "--no-color", "-p", stash_ref.as_str()],
+    )
+}
+
+#[tauri::command]
+fn git_stash_base_commit(repo_path: String, stash_ref: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let stash_ref = stash_ref.trim().to_string();
+    if stash_ref.is_empty() {
+        return Err(String::from("stash_ref is empty"));
+    }
+
+    let spec = format!("{stash_ref}^1");
+    run_git(&repo_path, &["rev-parse", spec.as_str()])
+}
+
+#[tauri::command]
+fn git_stash_apply(repo_path: String, stash_ref: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let stash_ref = stash_ref.trim().to_string();
+    if stash_ref.is_empty() {
+        return Err(String::from("stash_ref is empty"));
+    }
+
+    run_git(&repo_path, &["stash", "apply", stash_ref.as_str()])
+}
+
+#[tauri::command]
+fn git_stash_drop(repo_path: String, stash_ref: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let stash_ref = stash_ref.trim().to_string();
+    if stash_ref.is_empty() {
+        return Err(String::from("stash_ref is empty"));
+    }
+
+    run_git(&repo_path, &["stash", "drop", stash_ref.as_str()])
+}
+
+#[tauri::command]
+fn git_stash_clear(repo_path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+    run_git(&repo_path, &["stash", "clear"])
+}
+
+#[tauri::command]
+fn git_stash_push_paths(
+    repo_path: String,
+    message: String,
+    paths: Vec<String>,
+    include_untracked: Option<bool>,
+) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    if paths.is_empty() {
+        return Err(String::from("No files selected to stash."));
+    }
+
+    let message = if message.trim().is_empty() {
+        String::from("WIP")
+    } else {
+        message.trim().to_string()
+    };
+
+    let include_untracked = include_untracked.unwrap_or(false);
+
+    let mut args: Vec<&str> = Vec::new();
+    args.push("stash");
+    args.push("push");
+    if include_untracked {
+        args.push("-u");
+    }
+    args.push("-m");
+    args.push(message.as_str());
+    args.push("--");
+    for p in &paths {
+        if !p.trim().is_empty() {
+            args.push(p);
+        }
+    }
+
+    let out = git_command_in_repo(&repo_path)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git stash push: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git stash push failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+#[tauri::command]
+fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    if patch.trim().is_empty() {
+        return Err(String::from("Patch is empty."));
+    }
+
+    if has_staged_changes(&repo_path)? {
+        return Err(String::from(
+            "Index has staged changes. Unstage/commit them before using partial stash.",
+        ));
+    }
+
+    run_git_with_stdin(
+        &repo_path,
+        &["apply", "--cached", "--whitespace=nowarn", "--unidiff-zero"],
+        patch.as_str(),
+    )?;
+
+    if let Err(e) = run_git_with_stdin(
+        &repo_path,
+        &["apply", "--whitespace=nowarn", "--unidiff-zero", "-R"],
+        patch.as_str(),
+    ) {
+        let _ = run_git(&repo_path, &["reset", "-q"]);
+        return Err(e);
+    }
+
+    let message = if message.trim().is_empty() {
+        String::from("WIP")
+    } else {
+        message.trim().to_string()
+    };
+
+    let stash_out = git_command_in_repo(&repo_path)
+        .args(["stash", "push", "--staged", "-m", message.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git stash push --staged: {e}"))?;
+
+    if !stash_out.status.success() {
+        let _ = run_git_with_stdin(
+            &repo_path,
+            &["apply", "--whitespace=nowarn", "--unidiff-zero"],
+            patch.as_str(),
+        );
+        let _ = run_git(&repo_path, &["reset", "-q"]);
+        let stderr = String::from_utf8_lossy(&stash_out.stderr);
+        return Err(format!("git stash push --staged failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&stash_out.stdout).trim_end().to_string())
+}
+
+#[tauri::command]
 fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChangeEntry>, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -921,17 +1187,18 @@ fn git_commit_file_diff(repo_path: String, commit: String, path: String) -> Resu
     if commit.is_empty() {
         return Err(String::from("commit is empty"));
     }
+
     if path.is_empty() {
         return Err(String::from("path is empty"));
     }
 
-    run_git(
+    run_git_stdout_raw(
         &repo_path,
         &[
             "show",
             "--no-color",
-            "--format=",
-            "--unified=3",
+            "--pretty=format:",
+            "--patch",
             commit.as_str(),
             "--",
             path.as_str(),
@@ -968,6 +1235,23 @@ fn git_working_file_diff(repo_path: String, path: String) -> Result<String, Stri
     run_git(
         &repo_path,
         &["diff", "--no-color", "--unified=3", "HEAD", "--", path.as_str()],
+    )
+}
+
+#[tauri::command]
+fn git_working_file_diff_unified(repo_path: String, path: String, unified: u32) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    run_git(
+        &repo_path,
+        &["diff", "--no-color", unified_arg.as_str(), "HEAD", "--", path.as_str()],
     )
 }
 
@@ -1930,10 +2214,20 @@ pub fn run() {
             git_ls_remote_heads,
             git_clone_repo,
             git_status,
+            git_has_staged_changes,
+            git_stash_list,
+            git_stash_show,
+            git_stash_base_commit,
+            git_stash_apply,
+            git_stash_drop,
+            git_stash_clear,
+            git_stash_push_paths,
+            git_stash_push_patch,
             git_commit_changes,
             git_commit_file_diff,
             git_commit_file_content,
             git_working_file_diff,
+            git_working_file_diff_unified,
             git_working_file_content,
             git_launch_external_diff_working,
             git_launch_external_diff_commit,
