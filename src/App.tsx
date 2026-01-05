@@ -391,6 +391,13 @@ function App() {
     stashMessage: string;
   } | null>(null);
   const stashContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [refBadgeContextMenu, setRefBadgeContextMenu] = useState<{
+    x: number;
+    y: number;
+    kind: "branch" | "remote";
+    label: string;
+  } | null>(null);
+  const refBadgeContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [branchContextMenu, setBranchContextMenu] = useState<{
     x: number;
     y: number;
@@ -423,23 +430,26 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!commitContextMenu && !tagContextMenu && !stashContextMenu && !branchContextMenu) return;
+    if (!commitContextMenu && !tagContextMenu && !stashContextMenu && !branchContextMenu && !refBadgeContextMenu) return;
 
     const onMouseDown = (e: MouseEvent) => {
       const commitEl = commitContextMenuRef.current;
       const stashEl = stashContextMenuRef.current;
       const branchEl = branchContextMenuRef.current;
       const tagEl = tagContextMenuRef.current;
+      const refBadgeEl = refBadgeContextMenuRef.current;
       if (e.target instanceof Node) {
         if (commitEl && commitEl.contains(e.target)) return;
         if (stashEl && stashEl.contains(e.target)) return;
         if (branchEl && branchEl.contains(e.target)) return;
         if (tagEl && tagEl.contains(e.target)) return;
+        if (refBadgeEl && refBadgeEl.contains(e.target)) return;
       }
       setCommitContextMenu(null);
       setStashContextMenu(null);
       setBranchContextMenu(null);
       setTagContextMenu(null);
+      setRefBadgeContextMenu(null);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -448,6 +458,7 @@ function App() {
         setStashContextMenu(null);
         setBranchContextMenu(null);
         setTagContextMenu(null);
+        setRefBadgeContextMenu(null);
       }
     };
 
@@ -457,7 +468,7 @@ function App() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [commitContextMenu, tagContextMenu, stashContextMenu, branchContextMenu]);
+  }, [commitContextMenu, tagContextMenu, stashContextMenu, branchContextMenu, refBadgeContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -833,6 +844,19 @@ function App() {
     });
   }
 
+  function openRefBadgeContextMenu(kind: "branch" | "remote", label: string, x: number, y: number) {
+    const menuW = 260;
+    const menuH = 110;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setRefBadgeContextMenu({
+      kind,
+      label,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
   function openBranchContextMenu(branch: string, x: number, y: number) {
     const menuW = 260;
     const menuH = 150;
@@ -897,6 +921,47 @@ function App() {
       setResetError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setResetBusy(false);
+    }
+  }
+
+  async function checkoutRefBadgeLocalBranch(branch: string) {
+    if (!activeRepoPath) return;
+    const b = branch.trim();
+    if (!b) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_switch", { repoPath: activeRepoPath, branch: b, create: false });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function checkoutRefBadgeRemoteBranch(remoteRef: string) {
+    if (!activeRepoPath) return;
+    const r = remoteRef.trim();
+    if (!r) return;
+    const localName = remoteRefToLocalName(r);
+    if (!localName.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      await invoke<string>("git_switch", {
+        repoPath: activeRepoPath,
+        branch: localName,
+        create: true,
+        force: true,
+        startPoint: r,
+        track: true,
+      });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1178,7 +1243,16 @@ function App() {
     const cy = cyRef.current;
     if (!cy) return;
     applyRefBadges(cy);
-  }, [activeRepoPath, graphSettings.showStashesOnGraph, stashBaseByRepo, stashesByRepo, theme, viewMode]);
+  }, [
+    activeRepoPath,
+    graphSettings.showStashesOnGraph,
+    graphSettings.showRemoteBranchesOnGraph,
+    stashBaseByRepo,
+    stashesByRepo,
+    theme,
+    viewMode,
+    overview?.remotes,
+  ]);
 
   async function checkoutBranch(branch: string) {
     if (!activeRepoPath) return;
@@ -1675,13 +1749,27 @@ function App() {
     };
   }, [commits, graphSettings.edgeDirection]);
 
-  function parseRefs(refs: string): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
+  function parseRefs(
+    refs: string,
+    remoteNames: string[],
+  ): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
     const parts = refs
       .split(",")
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
 
     const out: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> = [];
+
+    const remotePrefixes = (remoteNames ?? [])
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    if (remotePrefixes.length === 0) remotePrefixes.push("origin");
+
+    const isRemoteRef = (label: string) => {
+      const t = label.trim();
+      if (!t) return false;
+      return remotePrefixes.some((r) => t.startsWith(`${r}/`));
+    };
 
     for (const part of parts) {
       if (part.startsWith("tag: ")) {
@@ -1699,10 +1787,10 @@ function App() {
         } else if (left.endsWith("/HEAD")) {
           out.push({ kind: "remote", label: left });
         } else if (left) {
-          out.push({ kind: left.includes("/") ? "remote" : "branch", label: left });
+          out.push({ kind: isRemoteRef(left) ? "remote" : "branch", label: left });
         }
         if (right) {
-          out.push({ kind: right.includes("/") ? "remote" : "branch", label: right });
+          out.push({ kind: isRemoteRef(right) ? "remote" : "branch", label: right });
         }
         continue;
       }
@@ -1712,7 +1800,7 @@ function App() {
         continue;
       }
 
-      out.push({ kind: part.includes("/") ? "remote" : "branch", label: part });
+      out.push({ kind: isRemoteRef(part) ? "remote" : "branch", label: part });
     }
 
     return out;
@@ -1734,13 +1822,16 @@ function App() {
       const refs = (n.data("refs") as string) || "";
       if (!refs.trim()) continue;
 
-      const parsed = parseRefs(refs);
+      const parsed = parseRefs(refs, overview?.remotes ?? []);
       if (parsed.length === 0) continue;
+
+      const filtered = graphSettings.showRemoteBranchesOnGraph ? parsed : parsed.filter((r) => r.kind !== "remote");
+      if (filtered.length === 0) continue;
 
       const pos = n.position();
 
-      const left = parsed.filter((_, i) => i % 2 === 0);
-      const right = parsed.filter((_, i) => i % 2 === 1);
+      const left = filtered.filter((_, i) => i % 2 === 0);
+      const right = filtered.filter((_, i) => i % 2 === 1);
 
       const placeSide = (items: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>, side: -1 | 1) => {
         const visibleCount = Math.min(items.length, maxPerCol);
@@ -1990,6 +2081,7 @@ function App() {
             "background-color": palette.refRemoteBg,
             "border-color": palette.refRemoteBorder,
             color: palette.refRemoteText,
+            opacity: 0.2,
           },
         },
         {
@@ -2047,7 +2139,24 @@ function App() {
     });
 
     cy.on("cxttap", "node", (evt) => {
-      if ((evt.target as any).hasClass?.("refBadge")) return;
+      if ((evt.target as any).hasClass?.("refBadge")) {
+        const oe = (evt as any).originalEvent as MouseEvent | undefined;
+        if (!oe) return;
+        const kind = (((evt.target as any).data?.("kind") as string) || "").toLowerCase();
+        const label = (((evt.target as any).data?.("label") as string) || "").trim();
+        if (!label) return;
+
+        setCommitContextMenu(null);
+        setStashContextMenu(null);
+        setBranchContextMenu(null);
+        setTagContextMenu(null);
+
+        if (kind === "remote" || kind === "branch") {
+          setRefBadgeContextMenu(null);
+          openRefBadgeContextMenu(kind as "remote" | "branch", label, oe.clientX, oe.clientY);
+        }
+        return;
+      }
       if ((evt.target as any).hasClass?.("stashBadge")) {
         const oe = (evt as any).originalEvent as MouseEvent | undefined;
         if (!oe) return;
@@ -2075,6 +2184,9 @@ function App() {
       if (evt.target === cy) {
         setCommitContextMenu(null);
         setStashContextMenu(null);
+        setBranchContextMenu(null);
+        setTagContextMenu(null);
+        setRefBadgeContextMenu(null);
       }
     });
 
@@ -3189,6 +3301,17 @@ function App() {
                     type="button"
                     onClick={() => {
                       setRepositoryMenuOpen(false);
+                      void openRemoteDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                    title={!activeRepoPath ? "No repository" : undefined}
+                  >
+                    Remote…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepositoryMenuOpen(false);
                       void loadRepo(activeRepoPath);
                     }}
                     disabled={!activeRepoPath || loading}
@@ -3241,29 +3364,6 @@ function App() {
                     type="button"
                     onClick={() => {
                       setCommandsMenuOpen(false);
-                      void openStashDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                      <span>Stash…</span>
-                      {stashes.length > 0 ? <span className="badge">{stashes.length}</span> : null}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      void openRemoteDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                  >
-                    Remote…
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
                       void openPushDialog();
                     }}
                     disabled={!activeRepoPath || loading || !remoteUrl}
@@ -3279,12 +3379,14 @@ function App() {
                     type="button"
                     onClick={() => {
                       setCommandsMenuOpen(false);
-                      openResetDialog();
+                      void openStashDialog();
                     }}
                     disabled={!activeRepoPath || loading}
-                    title={!activeRepoPath ? "No repository" : "git reset"}
                   >
-                    git reset…
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                      <span>Stash…</span>
+                      {stashes.length > 0 ? <span className="badge">{stashes.length}</span> : null}
+                    </span>
                   </button>
 
                   <button
@@ -3310,7 +3412,19 @@ function App() {
                     disabled={!activeRepoPath || loading}
                     title={!activeRepoPath ? "No repository" : "Switch branches (git switch)"}
                   >
-                    Checkout (Switch) branch…
+                    Checkout branch…
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommandsMenuOpen(false);
+                      openResetDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                    title={!activeRepoPath ? "No repository" : "Reset (soft/hard)"}
+                  >
+                    Reset (soft/hard)…
                   </button>
                 </div>
               ) : null}
@@ -4044,6 +4158,46 @@ function App() {
               </button>
             );
           })()}
+        </div>
+      ) : null}
+
+      {refBadgeContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={refBadgeContextMenuRef}
+          style={{
+            position: "fixed",
+            left: refBadgeContextMenu.x,
+            top: refBadgeContextMenu.y,
+            zIndex: 200,
+            minWidth: 220,
+          }}
+        >
+          {refBadgeContextMenu.kind === "branch" ? (
+            <button
+              type="button"
+              disabled={!activeRepoPath || loading}
+              onClick={() => {
+                const b = refBadgeContextMenu.label;
+                setRefBadgeContextMenu(null);
+                void checkoutRefBadgeLocalBranch(b);
+              }}
+            >
+              Checkout branch
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!activeRepoPath || loading}
+              onClick={() => {
+                const r = refBadgeContextMenu.label;
+                setRefBadgeContextMenu(null);
+                void checkoutRefBadgeRemoteBranch(r);
+              }}
+            >
+              Checkout remote branch
+            </button>
+          )}
         </div>
       ) : null}
 

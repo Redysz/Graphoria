@@ -168,6 +168,19 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                   )}
 
                   {field(
+                    "Show remote branches on graph",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={graph.showRemoteBranchesOnGraph}
+                        onChange={(e) => setGraph({ showRemoteBranchesOnGraph: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "When disabled, remote branch badges like origin/* are hidden.",
+                  )}
+
+                  {field(
                     "Layout direction",
                     <select value={graph.rankDir} onChange={(e) => setGraph({ rankDir: e.target.value as RankDir })}>
                       <option value="TB">Top {"→"} Bottom</option>
