@@ -1076,11 +1076,17 @@ fn git_stash_push_paths(
 }
 
 #[tauri::command]
-fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Result<String, String> {
+fn git_stash_push_patch(repo_path: String, message: String, path: String, keep_patch: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    if patch.trim().is_empty() {
-        return Err(String::from("Patch is empty."));
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let mut keep_patch = keep_patch.replace("\r\n", "\n");
+    if !keep_patch.is_empty() && !keep_patch.ends_with('\n') {
+        keep_patch.push('\n');
     }
 
     if has_staged_changes(&repo_path)? {
@@ -1089,65 +1095,37 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
         ));
     }
 
-    if let Err(e) = run_git_with_stdin(
-        &repo_path,
-        &[
-            "apply",
-            "--cached",
-            "--whitespace=nowarn",
-            "--unidiff-zero",
-            "--ignore-space-change",
-        ],
-        patch.as_str(),
-    ) {
-        run_git_with_stdin(
-            &repo_path,
-            &[
-                "apply",
-                "--cached",
-                "--whitespace=nowarn",
-                "--unidiff-zero",
-                "--ignore-space-change",
-                "-C",
-                "0",
-                "--3way",
-                "--recount",
-            ],
-            patch.as_str(),
-        )
-        .map_err(|_e2| e)?;
-    }
-
-    if let Err(e) = run_git_with_stdin(
-        &repo_path,
-        &[
-            "apply",
-            "--whitespace=nowarn",
-            "--unidiff-zero",
-            "--ignore-space-change",
-            "-R",
-        ],
-        patch.as_str(),
-    ) {
-        let fallback = run_git_with_stdin(
+    let mut keep_patch_reversed = false;
+    if !keep_patch.is_empty() {
+        if let Err(e) = run_git_with_stdin(
             &repo_path,
             &[
                 "apply",
                 "--whitespace=nowarn",
                 "--unidiff-zero",
                 "--ignore-space-change",
-                "-C",
-                "0",
-                "--3way",
-                "--recount",
                 "-R",
             ],
-            patch.as_str(),
-        );
-        if fallback.is_err() {
-            let _ = run_git(&repo_path, &["reset", "-q"]);
-            return Err(e);
+            keep_patch.as_str(),
+        ) {
+            run_git_with_stdin(
+                &repo_path,
+                &[
+                    "apply",
+                    "--whitespace=nowarn",
+                    "--unidiff-zero",
+                    "--ignore-space-change",
+                    "-C",
+                    "0",
+                    "--3way",
+                    "--recount",
+                    "-R",
+                ],
+                keep_patch.as_str(),
+            )
+            .map_err(|_e2| e)?;
         }
+        keep_patch_reversed = true;
     }
 
     let message = if message.trim().is_empty() {
@@ -1157,12 +1135,29 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
     };
 
     let stash_out = git_command_in_repo(&repo_path)
-        .args(["stash", "push", "--staged", "-m", message.as_str()])
+        .args(["stash", "push", "-m", message.as_str(), "--", path.as_str()])
         .output()
-        .map_err(|e| format!("Failed to spawn git stash push --staged: {e}"))?;
+        .map_err(|e| format!("Failed to spawn git stash push: {e}"))?;
 
     if !stash_out.status.success() {
-        if run_git_with_stdin(
+        if keep_patch_reversed {
+            let _ = run_git_with_stdin(
+                &repo_path,
+                &[
+                    "apply",
+                    "--whitespace=nowarn",
+                    "--unidiff-zero",
+                    "--ignore-space-change",
+                ],
+                keep_patch.as_str(),
+            );
+        }
+        let stderr = String::from_utf8_lossy(&stash_out.stderr);
+        return Err(format!("git stash push failed: {stderr}"));
+    }
+
+    if keep_patch_reversed {
+        if let Err(e) = run_git_with_stdin(
             &repo_path,
             &[
                 "apply",
@@ -1170,11 +1165,9 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
                 "--unidiff-zero",
                 "--ignore-space-change",
             ],
-            patch.as_str(),
-        )
-        .is_err()
-        {
-            let _ = run_git_with_stdin(
+            keep_patch.as_str(),
+        ) {
+            run_git_with_stdin(
                 &repo_path,
                 &[
                     "apply",
@@ -1186,12 +1179,10 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
                     "--3way",
                     "--recount",
                 ],
-                patch.as_str(),
-            );
+                keep_patch.as_str(),
+            )
+            .map_err(|_e2| e)?;
         }
-        let _ = run_git(&repo_path, &["reset", "-q"]);
-        let stderr = String::from_utf8_lossy(&stash_out.stderr);
-        return Err(format!("git stash push --staged failed: {stderr}"));
     }
 
     Ok(String::from_utf8_lossy(&stash_out.stdout).trim_end().to_string())

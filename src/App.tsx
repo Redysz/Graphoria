@@ -108,6 +108,7 @@ function normalizeLf(s: string) {
 
 function computeHunkRanges(diffText: string) {
   const lines = normalizeLf(diffText).split("\n");
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   const starts: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].startsWith("@@")) starts.push(i);
@@ -135,6 +136,17 @@ function buildPatchFromSelectedHunks(diffText: string, selected: Set<number>) {
 
   const joined = out.join("\n");
   return joined.endsWith("\n") ? joined : `${joined}\n`;
+}
+
+function buildPatchFromUnselectedHunks(diffText: string, selected: Set<number>) {
+  const { ranges } = computeHunkRanges(diffText);
+  if (ranges.length === 0) return "";
+
+  const keep = new Set<number>();
+  for (const r of ranges) {
+    if (!selected.has(r.index)) keep.add(r.index);
+  }
+  return buildPatchFromSelectedHunks(diffText, keep);
 }
 
 async function copyText(text: string) {
@@ -320,6 +332,13 @@ function App() {
   const [commitContextBranches, setCommitContextBranches] = useState<string[]>([]);
   const [commitContextBranchesLoading, setCommitContextBranchesLoading] = useState<boolean>(false);
   const commitContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [stashContextMenu, setStashContextMenu] = useState<{
+    x: number;
+    y: number;
+    stashRef: string;
+    stashMessage: string;
+  } | null>(null);
+  const stashContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [tagContextMenu, setTagContextMenu] = useState<{
     x: number;
     y: number;
@@ -346,22 +365,26 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!commitContextMenu && !tagContextMenu) return;
+    if (!commitContextMenu && !tagContextMenu && !stashContextMenu) return;
 
     const onMouseDown = (e: MouseEvent) => {
       const commitEl = commitContextMenuRef.current;
+      const stashEl = stashContextMenuRef.current;
       const tagEl = tagContextMenuRef.current;
       if (e.target instanceof Node) {
         if (commitEl && commitEl.contains(e.target)) return;
+        if (stashEl && stashEl.contains(e.target)) return;
         if (tagEl && tagEl.contains(e.target)) return;
       }
       setCommitContextMenu(null);
+      setStashContextMenu(null);
       setTagContextMenu(null);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setCommitContextMenu(null);
+        setStashContextMenu(null);
         setTagContextMenu(null);
       }
     };
@@ -372,7 +395,7 @@ function App() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [commitContextMenu, tagContextMenu]);
+  }, [commitContextMenu, tagContextMenu, stashContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -700,6 +723,19 @@ function App() {
     const maxY = Math.max(0, window.innerHeight - menuH);
     setCommitContextMenu({
       hash,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
+  function openStashContextMenu(stashRef: string, stashMessage: string, x: number, y: number) {
+    const menuW = 260;
+    const menuH = 150;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setStashContextMenu({
+      stashRef,
+      stashMessage,
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
@@ -1379,7 +1415,13 @@ function App() {
 
         cy.add({
           group: "nodes",
-          data: { id, label: s.reference, kind: "stash" },
+          data: {
+            id,
+            label: s.message?.trim() ? s.message.trim() : s.reference,
+            kind: "stash",
+            stashRef: s.reference,
+            stashMessage: s.message,
+          },
           position: {
             x: baseX - col * colGapX,
             y: baseY + row * gapY,
@@ -1603,7 +1645,17 @@ function App() {
 
     cy.on("cxttap", "node", (evt) => {
       if ((evt.target as any).hasClass?.("refBadge")) return;
-      if ((evt.target as any).hasClass?.("stashBadge")) return;
+      if ((evt.target as any).hasClass?.("stashBadge")) {
+        const oe = (evt as any).originalEvent as MouseEvent | undefined;
+        if (!oe) return;
+        const stashRef = ((evt.target as any).data?.("stashRef") as string) || "";
+        const stashMessage = ((evt.target as any).data?.("stashMessage") as string) || "";
+        if (!stashRef.trim()) return;
+        setCommitContextMenu(null);
+        setTagContextMenu(null);
+        openStashContextMenu(stashRef, stashMessage, oe.clientX, oe.clientY);
+        return;
+      }
       const hash = evt.target.id();
       const oe = (evt as any).originalEvent as MouseEvent | undefined;
       if (!oe) return;
@@ -1617,7 +1669,10 @@ function App() {
     });
 
     cy.on("cxttap", (evt) => {
-      if (evt.target === cy) setCommitContextMenu(null);
+      if (evt.target === cy) {
+        setCommitContextMenu(null);
+        setStashContextMenu(null);
+      }
     });
 
     const scheduleViewportUpdate = () => {
@@ -2178,13 +2233,13 @@ function App() {
           return;
         }
 
-        const patch = buildPatchFromSelectedHunks(stashPreviewDiff, selected);
-        if (!patch.trim()) {
-          setStashError("Selected hunks produced empty patch.");
-          return;
-        }
-
-        await invoke<string>("git_stash_push_patch", { repoPath: activeRepoPath, message: stashMessage, patch });
+        const keepPatch = buildPatchFromUnselectedHunks(stashPreviewDiff, selected);
+        await invoke<string>("git_stash_push_patch", {
+          repoPath: activeRepoPath,
+          message: stashMessage,
+          path: stashPreviewPath,
+          keepPatch,
+        });
       }
 
       setStashModalOpen(false);
@@ -3456,6 +3511,72 @@ function App() {
               </button>
             );
           })()}
+        </div>
+      ) : null}
+
+      {stashContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={stashContextMenuRef}
+          style={{
+            position: "fixed",
+            left: stashContextMenu.x,
+            top: stashContextMenu.y,
+            zIndex: 200,
+            minWidth: 220,
+          }}
+        >
+          <button
+            type="button"
+            disabled={!activeRepoPath}
+            onClick={() => {
+              if (!activeRepoPath) return;
+              const ref = stashContextMenu.stashRef;
+              setStashContextMenu(null);
+              const list = stashesByRepo[activeRepoPath] ?? [];
+              const entry = list.find((s) => s.reference === ref);
+              if (!entry) {
+                setError(`Stash not found: ${ref}`);
+                return;
+              }
+              void openStashView(entry);
+            }}
+          >
+            View stash
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              const ref = stashContextMenu.stashRef;
+              setStashContextMenu(null);
+              void applyStashByRef(ref);
+            }}
+          >
+            Apply stash
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || loading}
+            onClick={() => {
+              if (!activeRepoPath) return;
+              const ref = stashContextMenu.stashRef;
+              const name = stashContextMenu.stashMessage?.trim() ? stashContextMenu.stashMessage.trim() : ref;
+              setStashContextMenu(null);
+              void (async () => {
+                const ok = await confirmDialog({
+                  title: "Delete stash",
+                  message: `Delete stash ${name}?`,
+                  okLabel: "Delete",
+                  cancelLabel: "Cancel",
+                });
+                if (!ok) return;
+                await dropStashByRef(ref);
+              })();
+            }}
+          >
+            Delete stash
+          </button>
         </div>
       ) : null}
 
