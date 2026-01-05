@@ -1763,7 +1763,6 @@ function App() {
     const remotePrefixes = (remoteNames ?? [])
       .map((r) => r.trim())
       .filter((r) => r.length > 0);
-    if (remotePrefixes.length === 0) remotePrefixes.push("origin");
 
     const isRemoteRef = (label: string) => {
       const t = label.trim();
@@ -2081,7 +2080,7 @@ function App() {
             "background-color": palette.refRemoteBg,
             "border-color": palette.refRemoteBorder,
             color: palette.refRemoteText,
-            opacity: 0.2,
+            opacity: 0.4,
           },
         },
         {
