@@ -155,6 +155,19 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
               {section === "graph" ? (
                 <div className="settingsContentBody">
                   {field(
+                    "Show stashes on graph",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={graph.showStashesOnGraph}
+                        onChange={(e) => setGraph({ showStashesOnGraph: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "When enabled, stashes are shown as separate badges in the graph (not as normal commits).",
+                  )}
+
+                  {field(
                     "Layout direction",
                     <select value={graph.rankDir} onChange={(e) => setGraph({ rankDir: e.target.value as RankDir })}>
                       <option value="TB">Top {"→"} Bottom</option>
