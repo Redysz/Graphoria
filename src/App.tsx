@@ -2118,7 +2118,7 @@ function App() {
         const diff = await invoke<string>("git_working_file_diff_unified", {
           repoPath: activeRepoPath,
           path: stashPreviewPath,
-          unified: stashAdvancedMode ? 6 : 3,
+          unified: stashAdvancedMode ? 20 : 3,
         });
         if (!alive) return;
         setStashPreviewDiff(diff);
@@ -3148,7 +3148,7 @@ function App() {
                               void (async () => {
                                 const ok = await confirmDialog({
                                   title: "Delete stash",
-                                  message: `Delete ${s.reference}?`,
+                                  message: `Delete stash ${s.message?.trim() ? s.message.trim() : s.reference}?`,
                                   okLabel: "Delete",
                                   cancelLabel: "Cancel",
                                 });
@@ -4181,7 +4181,7 @@ function App() {
                   void (async () => {
                     const ok = await confirmDialog({
                       title: "Delete stash",
-                      message: `Delete ${stashViewRef}?`,
+                      message: `Delete stash ${stashViewMessage?.trim() ? stashViewMessage.trim() : stashViewRef}?`,
                       okLabel: "Delete",
                       cancelLabel: "Cancel",
                     });
@@ -4206,9 +4206,6 @@ function App() {
           <div className="modal" style={{ width: "min(540px, 96vw)" }}>
             <div className="modalHeader">
               <div style={{ fontWeight: 900 }}>{confirmTitle}</div>
-              <button type="button" onClick={() => resolveConfirm(false)}>
-                Close
-              </button>
             </div>
             <div className="modalBody">
               <pre style={{ margin: 0, whiteSpace: "pre-wrap", opacity: 0.85 }}>{confirmMessage}</pre>

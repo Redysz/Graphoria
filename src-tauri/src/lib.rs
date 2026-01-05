@@ -793,18 +793,22 @@ fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitComm
     let pretty = format!("--pretty=format:{format}");
     let max_arg = max_count.to_string();
 
+    let args: Vec<&str> = vec![
+        "--no-pager",
+        "log",
+        "--branches",
+        "--tags",
+        "--remotes",
+        "--topo-order",
+        "--date=iso-strict",
+        pretty.as_str(),
+        "-n",
+        max_arg.as_str(),
+        "HEAD",
+    ];
+
     let output = git_command_in_repo(&repo_path)
-        .args([
-            "--no-pager",
-            "log",
-            "--all",
-            "--topo-order",
-            "--exclude=refs/stash",
-            "--date=iso-strict",
-            pretty.as_str(),
-            "-n",
-            max_arg.as_str(),
-        ])
+        .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git log: {e}"))?;
 
@@ -1085,19 +1089,65 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
         ));
     }
 
-    run_git_with_stdin(
+    if let Err(e) = run_git_with_stdin(
         &repo_path,
-        &["apply", "--cached", "--whitespace=nowarn", "--unidiff-zero"],
+        &[
+            "apply",
+            "--cached",
+            "--whitespace=nowarn",
+            "--unidiff-zero",
+            "--ignore-space-change",
+        ],
         patch.as_str(),
-    )?;
+    ) {
+        run_git_with_stdin(
+            &repo_path,
+            &[
+                "apply",
+                "--cached",
+                "--whitespace=nowarn",
+                "--unidiff-zero",
+                "--ignore-space-change",
+                "-C",
+                "0",
+                "--3way",
+                "--recount",
+            ],
+            patch.as_str(),
+        )
+        .map_err(|_e2| e)?;
+    }
 
     if let Err(e) = run_git_with_stdin(
         &repo_path,
-        &["apply", "--whitespace=nowarn", "--unidiff-zero", "-R"],
+        &[
+            "apply",
+            "--whitespace=nowarn",
+            "--unidiff-zero",
+            "--ignore-space-change",
+            "-R",
+        ],
         patch.as_str(),
     ) {
-        let _ = run_git(&repo_path, &["reset", "-q"]);
-        return Err(e);
+        let fallback = run_git_with_stdin(
+            &repo_path,
+            &[
+                "apply",
+                "--whitespace=nowarn",
+                "--unidiff-zero",
+                "--ignore-space-change",
+                "-C",
+                "0",
+                "--3way",
+                "--recount",
+                "-R",
+            ],
+            patch.as_str(),
+        );
+        if fallback.is_err() {
+            let _ = run_git(&repo_path, &["reset", "-q"]);
+            return Err(e);
+        }
     }
 
     let message = if message.trim().is_empty() {
@@ -1112,11 +1162,33 @@ fn git_stash_push_patch(repo_path: String, message: String, patch: String) -> Re
         .map_err(|e| format!("Failed to spawn git stash push --staged: {e}"))?;
 
     if !stash_out.status.success() {
-        let _ = run_git_with_stdin(
+        if run_git_with_stdin(
             &repo_path,
-            &["apply", "--whitespace=nowarn", "--unidiff-zero"],
+            &[
+                "apply",
+                "--whitespace=nowarn",
+                "--unidiff-zero",
+                "--ignore-space-change",
+            ],
             patch.as_str(),
-        );
+        )
+        .is_err()
+        {
+            let _ = run_git_with_stdin(
+                &repo_path,
+                &[
+                    "apply",
+                    "--whitespace=nowarn",
+                    "--unidiff-zero",
+                    "--ignore-space-change",
+                    "-C",
+                    "0",
+                    "--3way",
+                    "--recount",
+                ],
+                patch.as_str(),
+            );
+        }
         let _ = run_git(&repo_path, &["reset", "-q"]);
         let stderr = String::from_utf8_lossy(&stash_out.stderr);
         return Err(format!("git stash push --staged failed: {stderr}"));
