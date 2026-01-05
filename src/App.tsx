@@ -2077,10 +2077,10 @@ function App() {
         {
           selector: "node.refBadge.ref-remote",
           style: {
-            "background-color": palette.refRemoteBg,
+            "background-color": theme === "dark" ? "rgba(235, 246, 255, 0.98)" : palette.refRemoteBg,
             "border-color": palette.refRemoteBorder,
             color: palette.refRemoteText,
-            opacity: 0.4,
+            opacity: theme === "dark" ? 0.6 : 0.4,
           },
         },
         {
@@ -2119,7 +2119,8 @@ function App() {
             label: "data(label)",
             "font-size": "11px",
             "text-rotation": "autorotate",
-            "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.55)" : "rgba(255, 255, 255, 0.70)",
+            color: theme === "dark" ? "rgba(242, 244, 248, 0.85)" : undefined,
+            "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.80)" : "rgba(255, 255, 255, 0.70)",
             "text-background-opacity": 1,
             "text-background-padding": "2px",
             "text-background-shape": "roundrectangle",
