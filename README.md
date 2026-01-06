@@ -64,7 +64,7 @@ Built with modern web technologies, Graphoria combines the best of both worlds:
 
 ### Running locally (development)
 
-1. Install Node.js (npm).
+1. Install Node.js (npm) and rust.
 2. Clone/Download this repository.
 3. Go to the project directory.
 4. Install dependencies:
