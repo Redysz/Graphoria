@@ -128,6 +128,17 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                   )}
 
                   {field(
+                    "Modal close button",
+                    <select
+                      value={appearance.modalClosePosition}
+                      onChange={(e) => setAppearance({ modalClosePosition: e.target.value as "left" | "right" })}
+                    >
+                      <option value="right">Right</option>
+                      <option value="left">Left</option>
+                    </select>,
+                  )}
+
+                  {field(
                     "Font family",
                     <input
                       className="modalInput"

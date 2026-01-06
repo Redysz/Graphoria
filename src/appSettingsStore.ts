@@ -26,6 +26,7 @@ export type AppearanceSettings = {
   theme: ThemeName;
   fontFamily: string;
   fontSizePx: number;
+  modalClosePosition: "left" | "right";
 };
 
 export type GraphSettings = {
@@ -64,6 +65,7 @@ export const defaultAppearanceSettings: AppearanceSettings = {
   theme: "light",
   fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
   fontSizePx: 14,
+  modalClosePosition: "right",
 };
 
 export const defaultGitSettings: GitSettings = {
@@ -120,10 +122,15 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 4,
+      version: 5,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
+        if (!s.appearance || typeof s.appearance !== "object") {
+          s.appearance = defaultAppearanceSettings;
+        } else if (s.appearance.modalClosePosition !== "left" && s.appearance.modalClosePosition !== "right") {
+          s.appearance.modalClosePosition = defaultAppearanceSettings.modalClosePosition;
+        }
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;

@@ -369,6 +369,7 @@ function App() {
   const setTheme = useAppSettings((s) => s.setTheme);
   const fontFamily = useAppSettings((s) => s.appearance.fontFamily);
   const fontSizePx = useAppSettings((s) => s.appearance.fontSizePx);
+  const modalClosePosition = useAppSettings((s) => s.appearance.modalClosePosition);
   const graphSettings = useAppSettings((s) => s.graph);
   const diffTool = useAppSettings((s) => s.git.diffTool);
 
@@ -421,9 +422,10 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.modalClose = modalClosePosition;
     document.documentElement.style.setProperty("--app-font-family", fontFamily);
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
-  }, [theme, fontFamily, fontSizePx]);
+  }, [theme, modalClosePosition, fontFamily, fontSizePx]);
 
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
@@ -4356,11 +4358,6 @@ function App() {
                   <div style={{ opacity: 0.75 }}>No preview.</div>
                 )
               ) : null}
-            </div>
-            <div className="modalFooter">
-              <button type="button" onClick={() => setFilePreviewOpen(false)} disabled={filePreviewLoading}>
-                Close
-              </button>
             </div>
           </div>
         </div>

@@ -624,6 +624,10 @@ button:disabled {
   border-bottom: 1px solid rgba(15, 15, 15, 0.08);
 }
 
+:root[data-modal-close="left"] .modalHeader {
+  flex-direction: row-reverse;
+}
+
 .modalBody {
   padding: 12px;
   overflow: auto;
