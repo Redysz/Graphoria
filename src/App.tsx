@@ -341,6 +341,13 @@ function App() {
   const [pullPredictRebase, setPullPredictRebase] = useState(false);
   const [pullPredictResult, setPullPredictResult] = useState<PullPredictResult | null>(null);
 
+  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
+  const [filePreviewPath, setFilePreviewPath] = useState("");
+  const [filePreviewDiff, setFilePreviewDiff] = useState("");
+  const [filePreviewContent, setFilePreviewContent] = useState("");
+  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [filePreviewError, setFilePreviewError] = useState("");
+
   const [detachedHelpOpen, setDetachedHelpOpen] = useState(false);
   const [detachedBusy, setDetachedBusy] = useState(false);
   const [detachedError, setDetachedError] = useState("");
@@ -1566,7 +1573,8 @@ function App() {
       });
 
       if (res.status === "conflicts") {
-        setPullConflictOperation(op);
+        const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+        setPullConflictOperation(nextOp);
         setPullConflictFiles(res.conflict_files || []);
         setPullConflictMessage(res.message || "");
         setPullConflictOpen(true);
@@ -1580,6 +1588,74 @@ function App() {
       setPullBusy(false);
     }
   }
+
+  function openFilePreview(path: string) {
+    const p = path.trim();
+    if (!p) return;
+    setFilePreviewOpen(true);
+    setFilePreviewPath(p);
+  }
+
+  useEffect(() => {
+    if (!filePreviewOpen || !activeRepoPath || !filePreviewPath) {
+      setFilePreviewDiff("");
+      setFilePreviewContent("");
+      setFilePreviewError("");
+      setFilePreviewLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setFilePreviewLoading(true);
+    setFilePreviewError("");
+    setFilePreviewDiff("");
+    setFilePreviewContent("");
+
+    const run = async () => {
+      try {
+        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
+        if (useExternal) {
+          await invoke<void>("git_launch_external_diff_working", {
+            repoPath: activeRepoPath,
+            path: filePreviewPath,
+            toolPath: diffTool.path,
+            command: diffTool.command,
+          });
+          if (!alive) return;
+          setFilePreviewContent("Opened in external diff tool.");
+          return;
+        }
+
+        const diff = await invoke<string>("git_working_file_diff", {
+          repoPath: activeRepoPath,
+          path: filePreviewPath,
+        });
+        if (!alive) return;
+        if (diff.trim()) {
+          setFilePreviewDiff(diff);
+          return;
+        }
+
+        const content = await invoke<string>("git_working_file_content", {
+          repoPath: activeRepoPath,
+          path: filePreviewPath,
+        });
+        if (!alive) return;
+        setFilePreviewContent(content);
+      } catch (e) {
+        if (!alive) return;
+        setFilePreviewError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        if (!alive) return;
+        setFilePreviewLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [activeRepoPath, diffTool.command, diffTool.difftool, diffTool.path, filePreviewOpen, filePreviewPath]);
 
   async function predictPull(rebase: boolean) {
     if (!activeRepoPath) return;
@@ -3550,9 +3626,9 @@ function App() {
                     void startPull("merge");
                   }}
                   disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
-                  title="git pull (merge)"
+                  title="git pull --merge"
                 >
-                  Git pull
+                  Pull --merge
                 </button>
                 <button
                   type="button"
@@ -3563,7 +3639,7 @@ function App() {
                   disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
                   title="git pull --rebase"
                 >
-                  Git pull --rebase
+                  Pull --rebase
                 </button>
                 <button
                   type="button"
@@ -3574,7 +3650,7 @@ function App() {
                   disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
                   title="Predict if git pull will create merge commit and whether there may be conflicts"
                 >
-                  Pull predict
+                  Pull --merge predict
                 </button>
                 <button
                   type="button"
@@ -4238,6 +4314,52 @@ function App() {
                 disabled={renameBranchBusy || !activeRepoPath || !renameBranchNew.trim() || renameBranchNew.trim() === renameBranchOld.trim()}
               >
                 {renameBranchBusy ? "Renaming…" : "Rename"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {filePreviewOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 320 }}>
+          <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(80vh, 900px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>File preview</div>
+              <button type="button" onClick={() => setFilePreviewOpen(false)} disabled={filePreviewLoading}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody">
+              <div className="mono" style={{ opacity: 0.85, wordBreak: "break-all", marginBottom: 10 }}>
+                {filePreviewPath}
+              </div>
+
+              {filePreviewError ? <div className="error">{filePreviewError}</div> : null}
+              {filePreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+
+              {!filePreviewLoading && !filePreviewError ? (
+                diffTool.difftool !== "Graphoria builtin diff" ? (
+                  <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                ) : filePreviewDiff ? (
+                  <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
+                    {parseUnifiedDiff(filePreviewDiff).map((l, i) => (
+                      <div key={i} className={`diffLine diffLine-${l.kind}`}>
+                        {l.text}
+                      </div>
+                    ))}
+                  </pre>
+                ) : filePreviewContent ? (
+                  <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
+                    {filePreviewContent.replace(/\r\n/g, "\n")}
+                  </pre>
+                ) : (
+                  <div style={{ opacity: 0.75 }}>No preview.</div>
+                )
+              ) : null}
+            </div>
+            <div className="modalFooter">
+              <button type="button" onClick={() => setFilePreviewOpen(false)} disabled={filePreviewLoading}>
+                Close
               </button>
             </div>
           </div>
@@ -5024,7 +5146,7 @@ function App() {
                     {pullPredictResult.conflict_files?.length ? (
                       <div className="statusList">
                         {pullPredictResult.conflict_files.map((p) => (
-                          <div key={p} className="statusRow">
+                          <div key={p} className="statusRow statusRowSingleCol" onClick={() => openFilePreview(p)} title={p}>
                             <span className="statusPath">{p}</span>
                           </div>
                         ))}
@@ -5080,7 +5202,7 @@ function App() {
                 {pullConflictFiles.length ? (
                   <div className="statusList">
                     {pullConflictFiles.map((p) => (
-                      <div key={p} className="statusRow">
+                      <div key={p} className="statusRow statusRowSingleCol" onClick={() => openFilePreview(p)} title={p}>
                         <span className="statusPath">{p}</span>
                       </div>
                     ))}

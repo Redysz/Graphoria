@@ -702,6 +702,18 @@ button:disabled {
   background: var(--panel);
 }
 
+.statusRowSingleCol {
+  grid-template-columns: 1fr;
+  cursor: pointer;
+}
+
+.statusRowSingleCol .statusPath {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+}
+
 .statusRow.hunkRow {
   grid-template-columns: 20px 1fr;
 }
