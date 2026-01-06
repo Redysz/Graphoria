@@ -387,6 +387,23 @@ fn parse_for_each_ref(raw: &str, kind: &str) -> Vec<GitBranchInfo> {
     out
 }
 
+fn list_unmerged_files(repo_path: &str) -> Vec<String> {
+    let raw = match run_git(repo_path, &["diff", "--name-only", "--diff-filter=U"]) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut files: Vec<String> = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn safe_repo_join(repo_path: &str, rel_path: &str) -> Result<PathBuf, String> {
     let rel_path = rel_path.trim();
     if rel_path.is_empty() {
@@ -1721,17 +1738,32 @@ fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult
         });
     }
 
-    if is_merge_in_progress(&repo_path) {
-        let message = if !stderr.is_empty() {
-            stderr.clone()
+    let message = if !stderr.is_empty() {
+        stderr.clone()
+    } else {
+        stdout.clone()
+    };
+
+    let merge_in_progress = is_merge_in_progress(&repo_path);
+    let rebase_in_progress = is_rebase_in_progress(&repo_path);
+    let mut conflict_files = list_unmerged_files(&repo_path);
+    if conflict_files.is_empty() {
+        conflict_files = parse_conflict_files(message.as_str());
+    }
+
+    if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+        let op = if merge_in_progress {
+            "merge"
+        } else if rebase_in_progress {
+            "rebase"
         } else {
-            stdout.clone()
+            "merge"
         };
         return Ok(PullResult {
             status: String::from("conflicts"),
-            operation: String::from("merge"),
+            operation: op.to_string(),
             message,
-            conflict_files: parse_conflict_files(&stderr),
+            conflict_files,
         });
     }
 
@@ -1761,17 +1793,32 @@ fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<Pul
         });
     }
 
-    if is_rebase_in_progress(&repo_path) {
-        let message = if !stderr.is_empty() {
-            stderr.clone()
+    let message = if !stderr.is_empty() {
+        stderr.clone()
+    } else {
+        stdout.clone()
+    };
+
+    let merge_in_progress = is_merge_in_progress(&repo_path);
+    let rebase_in_progress = is_rebase_in_progress(&repo_path);
+    let mut conflict_files = list_unmerged_files(&repo_path);
+    if conflict_files.is_empty() {
+        conflict_files = parse_conflict_files(message.as_str());
+    }
+
+    if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+        let op = if rebase_in_progress {
+            "rebase"
+        } else if merge_in_progress {
+            "merge"
         } else {
-            stdout.clone()
+            "rebase"
         };
         return Ok(PullResult {
             status: String::from("conflicts"),
-            operation: String::from("rebase"),
+            operation: op.to_string(),
             message,
-            conflict_files: parse_conflict_files(&stderr),
+            conflict_files,
         });
     }
 

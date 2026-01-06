@@ -624,6 +624,10 @@ button:disabled {
   border-bottom: 1px solid rgba(15, 15, 15, 0.08);
 }
 
+:root[data-modal-close="left"] .modalHeader {
+  flex-direction: row-reverse;
+}
+
 .modalBody {
   padding: 12px;
   overflow: auto;
@@ -700,6 +704,18 @@ button:disabled {
   border-radius: 10px;
   border: 1px solid rgba(15, 15, 15, 0.10);
   background: var(--panel);
+}
+
+.statusRowSingleCol {
+  grid-template-columns: 1fr;
+  cursor: pointer;
+}
+
+.statusRowSingleCol .statusPath {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
 }
 
 .statusRow.hunkRow {
