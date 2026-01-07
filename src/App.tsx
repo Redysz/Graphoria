@@ -3,13 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
-import dagre from "cytoscape-dagre";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings, type ThemeName } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import "./App.css";
-
-let dagreRegistered = false;
 
 type GitCommit = {
   hash: string;
@@ -189,6 +186,8 @@ function App() {
   const [tagsExpandedByRepo, setTagsExpandedByRepo] = useState<Record<string, boolean>>({});
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
+  const [commitsFullByRepo, setCommitsFullByRepo] = useState<Record<string, boolean>>({});
+  const [commitsFullLoadingByRepo, setCommitsFullLoadingByRepo] = useState<Record<string, boolean>>({});
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [statusSummaryByRepo, setStatusSummaryByRepo] = useState<Record<string, GitStatusSummary | undefined>>({});
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
@@ -506,7 +505,7 @@ function App() {
     };
   }, [cloneModalOpen]);
 
-  const commits = commitsByRepo[activeRepoPath] ?? [];
+  const commitsAll = commitsByRepo[activeRepoPath] ?? [];
 
   const confirmDialog = (opts: { title: string; message: string; okLabel?: string; cancelLabel?: string }) => {
     const { title, message, okLabel, cancelLabel } = opts;
@@ -588,8 +587,8 @@ function App() {
   }, [stashPreviewDiff]);
 
   const headHash = useMemo(() => {
-    return overview?.head || commits.find((c) => c.is_head)?.hash || "";
-  }, [commits, overview?.head]);
+    return overview?.head || commitsAll.find((c) => c.is_head)?.hash || "";
+  }, [commitsAll, overview?.head]);
 
   const isDetached = overview?.head_name === "(detached)";
   const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
@@ -836,8 +835,8 @@ function App() {
 
   const selectedCommit = useMemo(() => {
     if (!selectedHash) return undefined;
-    return commits.find((c) => c.hash === selectedHash);
-  }, [commits, selectedHash]);
+    return commitsAll.find((c) => c.hash === selectedHash);
+  }, [commitsAll, selectedHash]);
 
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
 
@@ -1749,12 +1748,12 @@ function App() {
 
   function focusOnNewest() {
     if (!activeRepoPath) return;
-    if (commits.length === 0) return;
+    if (commitsAll.length === 0) return;
 
     let newestHash = "";
     let newestTs = -Infinity;
 
-    for (const c of commits) {
+    for (const c of commitsAll) {
       const ts = Date.parse(c.date);
       if (!Number.isFinite(ts)) continue;
       if (ts > newestTs) {
@@ -1765,6 +1764,23 @@ function App() {
 
     if (!newestHash) return;
     focusOnHash(newestHash, 1, 0.22);
+  }
+
+  async function loadFullHistory() {
+    if (!activeRepoPath) return;
+    if (commitsFullByRepo[activeRepoPath]) return;
+    if (commitsFullLoadingByRepo[activeRepoPath]) return;
+
+    setCommitsFullLoadingByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
+    setError("");
+    try {
+      const ok = await loadRepo(activeRepoPath, true);
+      if (ok) {
+        setCommitsFullByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
+      }
+    } finally {
+      setCommitsFullLoadingByRepo((prev) => ({ ...prev, [activeRepoPath]: false }));
+    }
   }
 
   function zoomBy(factor: number) {
@@ -1780,10 +1796,72 @@ function App() {
   }
 
   const elements = useMemo(() => {
-    const nodes = new Map<string, { data: { id: string; label: string; refs: string }; classes?: string }>();
+    const nodes = new Map<
+      string,
+      { data: { id: string; label: string; refs: string }; position?: { x: number; y: number }; classes?: string }
+    >();
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
+    const commits = commitsAll;
+    const commitCount = commits.length;
+
+    const openLanes: Array<string | null> = [];
+    const laneByHash = new Map<string, number>();
+
+    const allocFreeLane = () => {
+      const idx = openLanes.indexOf(null);
+      if (idx >= 0) return idx;
+      openLanes.push(null);
+      return openLanes.length - 1;
+    };
+
     for (const c of commits) {
+      let lane = laneByHash.get(c.hash);
+      if (typeof lane !== "number") {
+        lane = openLanes.indexOf(c.hash);
+        if (lane < 0) lane = allocFreeLane();
+      }
+
+      laneByHash.set(c.hash, lane);
+      openLanes[lane] = c.parents[0] ?? null;
+
+      for (let i = 1; i < c.parents.length; i++) {
+        const p = c.parents[i];
+        if (!p) continue;
+        if (typeof laneByHash.get(p) === "number") continue;
+        let pLane = openLanes.indexOf(p);
+        if (pLane < 0) pLane = allocFreeLane();
+        laneByHash.set(p, pLane);
+        openLanes[pLane] = p;
+      }
+    }
+
+    const laneStep = Math.max(300, graphSettings.nodeSep);
+    const rowStep = Math.max(90, graphSettings.rankSep);
+    const dir = graphSettings.rankDir;
+
+    const rowForCommitIndex = (idx: number) => {
+      return idx;
+    };
+
+    const placeholderRowByHash = new Map<string, number>();
+    let placeholderCount = 0;
+
+    const rowForPlaceholder = (placeholderIdx: number) => {
+      return commitCount + placeholderIdx;
+    };
+
+    const posFor = (lane: number, row: number) => {
+      if (dir === "LR") {
+        return { x: row * rowStep, y: lane * laneStep };
+      }
+      return { x: lane * laneStep, y: row * rowStep };
+    };
+
+    for (let idx = 0; idx < commits.length; idx++) {
+      const c = commits[idx];
+      const lane = laneByHash.get(c.hash) ?? 0;
+      const row = rowForCommitIndex(idx);
       const label = `${shortHash(c.hash)}\n${truncate(c.subject, 100)}`;
       nodes.set(c.hash, {
         data: {
@@ -1791,6 +1869,7 @@ function App() {
           label,
           refs: c.refs,
         },
+        position: posFor(lane, row),
         classes: c.is_head ? "head" : undefined,
       });
     }
@@ -1798,12 +1877,22 @@ function App() {
     for (const c of commits) {
       for (const p of c.parents) {
         if (!nodes.has(p)) {
+          let placeholderIdx = placeholderRowByHash.get(p);
+          if (typeof placeholderIdx !== "number") {
+            placeholderIdx = placeholderCount;
+            placeholderRowByHash.set(p, placeholderCount);
+            placeholderCount += 1;
+          }
+
+          const lane = laneByHash.get(p) ?? 0;
+          const row = rowForPlaceholder(placeholderIdx);
           nodes.set(p, {
             data: {
               id: p,
               label: `${shortHash(p)}\n(older)`,
               refs: "",
             },
+            position: posFor(lane, row),
             classes: "placeholder",
           });
         }
@@ -1825,7 +1914,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commits, graphSettings.edgeDirection]);
+  }, [commitsAll, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
 
   function parseRefs(
     refs: string,
@@ -2038,11 +2127,6 @@ function App() {
     }
 
     if (!graphRef.current) return;
-
-    if (!dagreRegistered) {
-      cytoscape.use(dagre);
-      dagreRegistered = true;
-    }
 
     cyRef.current?.destroy();
 
@@ -2285,40 +2369,26 @@ function App() {
     cy.on("zoom pan", scheduleViewportUpdate);
     setZoomPct(Math.round(cy.zoom() * 100));
 
-    const layout = (cy as any).layout({
-      name: "dagre",
-      rankDir: graphSettings.rankDir,
-      nodeSep: graphSettings.nodeSep,
-      rankSep: graphSettings.rankSep,
-      padding: graphSettings.padding,
-      fit: false,
-      animate: false,
-    });
-
-    (layout as any).one("layoutstop", () => {
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          cy.resize();
-          const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
-          if (saved) {
-            cy.zoom(saved.zoom);
-            cy.pan(saved.pan);
-            setZoomPct(Math.round(cy.zoom() * 100));
-            applyRefBadges(cy);
-          } else {
-            focusOnHead();
-            scheduleViewportUpdate();
-            applyRefBadges(cy);
-            if (activeRepoPath) {
-              pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
-              setAutoCenterToken((t) => t + 1);
-            }
+        cy.resize();
+        const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
+        if (saved) {
+          cy.zoom(saved.zoom);
+          cy.pan(saved.pan);
+          setZoomPct(Math.round(cy.zoom() * 100));
+          applyRefBadges(cy);
+        } else {
+          focusOnHead();
+          scheduleViewportUpdate();
+          applyRefBadges(cy);
+          if (activeRepoPath) {
+            pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
+            setAutoCenterToken((t) => t + 1);
           }
-        });
+        }
       });
     });
-
-    (layout as any).run();
 
     return () => {
       if (viewportRafRef.current) {
@@ -2333,10 +2403,7 @@ function App() {
     elements.edges,
     elements.nodes,
     graphSettings.nodeCornerRadius,
-    graphSettings.nodeSep,
     graphSettings.padding,
-    graphSettings.rankDir,
-    graphSettings.rankSep,
     headHash,
     theme,
     viewMode,
@@ -3118,6 +3185,16 @@ function App() {
       delete next[path];
       return next;
     });
+    setCommitsFullByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    setCommitsFullLoadingByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
     setRemoteUrlByRepo((prev) => {
       const next = { ...prev };
       delete next[path];
@@ -3148,16 +3225,23 @@ function App() {
     }
   }
 
-  async function loadRepo(nextRepoPath?: string) {
+  async function loadRepo(nextRepoPath?: string, forceFullHistory?: boolean): Promise<boolean> {
     const path = nextRepoPath ?? activeRepoPath;
-    if (!path) return;
+    if (!path) return false;
+
+    const fullHistory =
+      typeof forceFullHistory === "boolean" ? forceFullHistory : Boolean(commitsFullByRepo[path]);
 
     setLoading(true);
     setError("");
     try {
+      const commitsPromise = fullHistory
+        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path })
+        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 });
+
       const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
-        invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 }),
+        commitsPromise,
         invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
         invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
         invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
@@ -3173,6 +3257,7 @@ function App() {
 
       const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
       setSelectedHash(headHash || "");
+      return true;
     } catch (e) {
       setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
       setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
@@ -3190,10 +3275,11 @@ function App() {
         setGitTrustActionError("");
         setGitTrustOpen(true);
         setError("");
-        return;
+        return false;
       }
 
       setError(msg);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -3986,19 +4072,29 @@ function App() {
                     <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
                       Focus on HEAD
                     </button>
-                    <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commits.length === 0}>
+                    <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commitsAll.length === 0}>
                       Focus on newest
                     </button>
+                    {!activeRepoPath || commitsFullByRepo[activeRepoPath] ? null : (
+                      <button
+                        type="button"
+                        onClick={() => void loadFullHistory()}
+                        disabled={loading || commitsFullLoadingByRepo[activeRepoPath]}
+                        title="Load the full git history (may take a while for large repositories)."
+                      >
+                        {commitsFullLoadingByRepo[activeRepoPath] ? "Loading full history…" : "Get full history"}
+                      </button>
+                    )}
                   </div>
                 </div>
               </>
             ) : (
               <div className="graphCanvas" key={`commits-${activeRepoPath}`} style={{ padding: 12, overflow: "auto" }}>
-                {commits.length === 0 ? (
+                {commitsAll.length === 0 ? (
                   <div style={{ opacity: 0.7 }}>No commits loaded.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {commits.map((c) => (
+                    {commitsAll.map((c) => (
                       <button
                         key={c.hash}
                         data-commit-hash={c.hash}
