@@ -454,6 +454,120 @@ button:disabled {
   display: block;
 }
 
+ .commitsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+ }
+
+ .commitRow {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid rgba(15, 15, 15, 0.08);
+  border-radius: 12px;
+  transition: border-color 0.15s, background-color 0.15s;
+ }
+
+ :root[data-theme="dark"] .commitRow {
+  border-color: rgba(255, 255, 255, 0.10);
+ }
+
+ .commitRow:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+ }
+
+ .commitRowSelected {
+  background: rgba(47, 111, 237, 0.10);
+  border-color: rgba(47, 111, 237, 0.35);
+ }
+
+ .commitRowGrid {
+  display: grid;
+  grid-template-columns: auto 34px 1fr;
+  gap: 10px;
+  align-items: center;
+ }
+
+ .commitGraphCell {
+  height: 44px;
+  display: grid;
+  align-items: center;
+ }
+
+ .commitAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(145deg, var(--avatar-c1), var(--avatar-c2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 6px 18px rgba(0, 0, 0, 0.10);
+ }
+
+ :root[data-theme="dark"] .commitAvatar {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+ }
+
+ .commitAvatarText {
+  font-weight: 1000;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  user-select: none;
+ }
+
+ .commitRowMain {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+ }
+
+ .commitRowTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+ }
+
+ .commitHash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 850;
+  opacity: 0.88;
+  flex: 0 0 auto;
+ }
+
+ .commitSubject {
+  font-weight: 850;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
+ .commitHead {
+  opacity: 0.7;
+  font-weight: 800;
+ }
+
+ .commitMeta {
+  opacity: 0.75;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
 .cyCanvas {
   position: absolute;
   inset: 0;

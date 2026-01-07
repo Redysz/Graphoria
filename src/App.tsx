@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -16,6 +16,14 @@ type GitCommit = {
   subject: string;
   refs: string;
   is_head: boolean;
+};
+
+type CommitLaneRow = {
+  hash: string;
+  lane: number;
+  activeTop: number[];
+  activeBottom: number[];
+  parentLanes: number[];
 };
 
 type RepoOverview = {
@@ -104,6 +112,171 @@ function repoNameFromPath(p: string) {
 function truncate(s: string, max: number) {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
+}
+
+function fnv1a32(input: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function authorInitials(author: string) {
+  const parts = author
+    .trim()
+    .split(/\s+/g)
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+}
+
+function laneStrokeColor(lane: number, theme: ThemeName) {
+  const hue = (lane * 47) % 360;
+  const sat = theme === "dark" ? 72 : 66;
+  const light = theme === "dark" ? 62 : 44;
+  return `hsl(${hue} ${sat}% ${light}%)`;
+}
+
+function computeCommitLaneRows(commits: GitCommit[]): { rows: CommitLaneRow[]; maxLanes: number } {
+  const openLanes: Array<string | null> = [];
+  const laneByHash = new Map<string, number>();
+  const rows: CommitLaneRow[] = [];
+
+  const allocFreeLane = () => {
+    const idx = openLanes.indexOf(null);
+    if (idx >= 0) return idx;
+    openLanes.push(null);
+    return openLanes.length - 1;
+  };
+
+  const activeLaneIndices = () => {
+    const out: number[] = [];
+    for (let i = 0; i < openLanes.length; i++) {
+      if (openLanes[i] !== null) out.push(i);
+    }
+    return out;
+  };
+
+  const resolveLane = (hash: string) => {
+    const l = laneByHash.get(hash);
+    if (typeof l === "number") return l;
+    const idx = openLanes.indexOf(hash);
+    if (idx >= 0) return idx;
+    return null;
+  };
+
+  let maxLanes = 0;
+
+  for (const c of commits) {
+    const activeTop = activeLaneIndices();
+
+    let lane = laneByHash.get(c.hash);
+    if (typeof lane !== "number") {
+      lane = openLanes.indexOf(c.hash);
+      if (lane < 0) lane = allocFreeLane();
+    }
+    laneByHash.set(c.hash, lane);
+
+    openLanes[lane] = c.parents[0] ?? null;
+
+    for (let i = 1; i < c.parents.length; i++) {
+      const p = c.parents[i];
+      if (!p) continue;
+      if (typeof laneByHash.get(p) === "number") continue;
+      let pLane = openLanes.indexOf(p);
+      if (pLane < 0) pLane = allocFreeLane();
+      laneByHash.set(p, pLane);
+      openLanes[pLane] = p;
+    }
+
+    while (openLanes.length > 0 && openLanes[openLanes.length - 1] === null) {
+      openLanes.pop();
+    }
+
+    const activeBottom = activeLaneIndices();
+
+    const parentLanes = c.parents
+      .map((p) => (p ? resolveLane(p) : null))
+      .filter((x): x is number => typeof x === "number");
+
+    maxLanes = Math.max(maxLanes, openLanes.length);
+    rows.push({
+      hash: c.hash,
+      lane,
+      activeTop,
+      activeBottom,
+      parentLanes,
+    });
+  }
+
+  return { rows, maxLanes };
+}
+
+function CommitLaneSvg(props: {
+  row: CommitLaneRow;
+  maxLanes: number;
+  theme: ThemeName;
+  selected: boolean;
+  isHead: boolean;
+  nodeBg: string;
+}) {
+  const { row, maxLanes, theme, selected, isHead, nodeBg } = props;
+
+  const laneStep = 12;
+  const lanePad = 10;
+  const h = 44;
+  const yMid = h / 2;
+  const yTop = 0;
+  const yBottom = h;
+
+  const w = Math.max(28, lanePad * 2 + Math.max(1, maxLanes) * laneStep);
+
+  const xForLane = (lane: number) => lanePad + lane * laneStep;
+
+  const strokeWidth = selected ? 2.25 : 2;
+
+  const paths: Array<{ d: string; color: string }> = [];
+
+  for (const lane of row.parentLanes) {
+    if (lane === row.lane) continue;
+    const x0 = xForLane(row.lane);
+    const x1 = xForLane(lane);
+    const c0y = yMid + 10;
+    const d = `M ${x0} ${yMid} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yBottom}`;
+    paths.push({ d, color: laneStrokeColor(row.lane, theme) });
+  }
+
+  const nodeX = xForLane(row.lane);
+  const nodeColor = laneStrokeColor(row.lane, theme);
+
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ display: "block" }}
+      aria-hidden="true"
+      focusable={false}
+    >
+      {row.activeTop.map((lane) => {
+        const x = xForLane(lane);
+        const color = laneStrokeColor(lane, theme);
+        return <line key={`t-${lane}`} x1={x} y1={yTop} x2={x} y2={yMid} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
+      })}
+      {row.activeBottom.map((lane) => {
+        const x = xForLane(lane);
+        const color = laneStrokeColor(lane, theme);
+        return <line key={`b-${lane}`} x1={x} y1={yMid} x2={x} y2={yBottom} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
+      })}
+      {paths.map((p, idx) => (
+        <path key={`p-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      ))}
+      <circle cx={nodeX} cy={yMid} r={selected ? 6 : 5.4} fill={nodeBg} stroke={nodeColor} strokeWidth={selected ? 2.6 : isHead ? 2.3 : 2} />
+    </svg>
+  );
 }
 
 function parseGitDubiousOwnershipError(raw: string): string | null {
@@ -506,6 +679,20 @@ function App() {
   }, [cloneModalOpen]);
 
   const commitsAll = commitsByRepo[activeRepoPath] ?? [];
+
+  const commitLaneLayout = useMemo(() => {
+    if (viewMode !== "commits") return { rows: [] as CommitLaneRow[], maxLanes: 0 };
+    if (commitsAll.length === 0) return { rows: [] as CommitLaneRow[], maxLanes: 0 };
+    return computeCommitLaneRows(commitsAll);
+  }, [commitsAll, viewMode]);
+
+  const commitLaneRowByHash = useMemo(() => {
+    const m = new Map<string, CommitLaneRow>();
+    for (const r of commitLaneLayout.rows) m.set(r.hash, r);
+    return m;
+  }, [commitLaneLayout.rows]);
+
+  const commitLaneNodeBg = useMemo(() => getCyPalette(theme).nodeBg, [theme]);
 
   const confirmDialog = (opts: { title: string; message: string; okLabel?: string; cancelLabel?: string }) => {
     const { title, message, okLabel, cancelLabel } = opts;
@@ -4093,7 +4280,7 @@ function App() {
                 {commitsAll.length === 0 ? (
                   <div style={{ opacity: 0.7 }}>No commits loaded.</div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div className="commitsList">
                     {commitsAll.map((c) => (
                       <button
                         key={c.hash}
@@ -4106,27 +4293,59 @@ function App() {
                           setSelectedHash(c.hash);
                           openCommitContextMenu(c.hash, e.clientX, e.clientY);
                         }}
-                        style={{
-                          textAlign: "left",
-                          padding: 10,
-                          background: c.hash === selectedHash ? "rgba(47, 111, 237, 0.12)" : "#ffffff",
-                        }}
+                        className={
+                          c.hash === selectedHash ? "commitRow commitRowSelected" : "commitRow"
+                        }
                       >
-                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                          <span
+                        <div className="commitRowGrid">
+                          <div
+                            className="commitGraphCell"
                             style={{
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                              opacity: 0.9,
+                              width:
+                                commitLaneLayout.maxLanes > 0
+                                  ? Math.max(28, 20 + commitLaneLayout.maxLanes * 12)
+                                  : 28,
                             }}
                           >
-                            {shortHash(c.hash)}
-                          </span>
-                          <span style={{ fontWeight: 800 }}>{truncate(c.subject, 100)}</span>
-                          {c.is_head ? <span style={{ opacity: 0.7 }}>(HEAD)</span> : null}
-                        </div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>
-                          {c.author} — {c.date}
+                            {commitLaneLayout.rows.length ? (
+                              <CommitLaneSvg
+                                row={commitLaneRowByHash.get(c.hash) ?? {
+                                  hash: c.hash,
+                                  lane: 0,
+                                  activeTop: [],
+                                  activeBottom: [],
+                                  parentLanes: [],
+                                }}
+                                maxLanes={commitLaneLayout.maxLanes}
+                                theme={theme}
+                                selected={c.hash === selectedHash}
+                                isHead={c.is_head}
+                                nodeBg={commitLaneNodeBg}
+                              />
+                            ) : null}
+                          </div>
+                          <div
+                            className="commitAvatar"
+                            style={
+                              {
+                                ["--avatar-c1" as any]: `hsl(${fnv1a32(c.author) % 360} 72% ${theme === "dark" ? 58 : 46}%)`,
+                                ["--avatar-c2" as any]: `hsl(${(fnv1a32(c.author + "::2") + 28) % 360} 72% ${theme === "dark" ? 48 : 38}%)`,
+                              } as CSSProperties
+                            }
+                            title={c.author}
+                          >
+                            <span className="commitAvatarText">{authorInitials(c.author)}</span>
+                          </div>
+                          <div className="commitRowMain">
+                            <div className="commitRowTop">
+                              <span className="commitHash">{shortHash(c.hash)}</span>
+                              <span className="commitSubject">{truncate(c.subject, 100)}</span>
+                              {c.is_head ? <span className="commitHead">(HEAD)</span> : null}
+                            </div>
+                            <div className="commitMeta">
+                              {c.author} — {c.date}
+                            </div>
+                          </div>
                         </div>
                       </button>
                     ))}
