@@ -644,6 +644,7 @@ function App() {
   const modalClosePosition = useAppSettings((s) => s.appearance.modalClosePosition);
   const graphSettings = useAppSettings((s) => s.graph);
   const diffTool = useAppSettings((s) => s.git.diffTool);
+  const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -698,6 +699,11 @@ function App() {
     document.documentElement.style.setProperty("--app-font-family", fontFamily);
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, modalClosePosition, fontFamily, fontSizePx]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    void loadRepo(activeRepoPath);
+  }, [commitsOnlyHead]);
 
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
@@ -3524,8 +3530,8 @@ function App() {
     setError("");
     try {
       const commitsPromise = fullHistory
-        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path })
-        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 });
+        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead })
+        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead });
 
       const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),

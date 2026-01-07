@@ -13,6 +13,7 @@ export type GeneralSettings = {
 export type GitSettings = {
   userName: string;
   userEmail: string;
+  commitsOnlyHead: boolean;
   diffTool: DiffToolSettings;
 };
 
@@ -71,6 +72,7 @@ export const defaultAppearanceSettings: AppearanceSettings = {
 export const defaultGitSettings: GitSettings = {
   userName: "",
   userEmail: "",
+  commitsOnlyHead: false,
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
@@ -122,7 +124,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 5,
+      version: 6,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -134,6 +136,9 @@ export const useAppSettings = create<AppSettingsState>()(
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        if (typeof s.git.commitsOnlyHead !== "boolean") {
+          s.git.commitsOnlyHead = defaultGitSettings.commitsOnlyHead;
         }
         if (!s.graph || typeof s.graph !== "object") {
           s.graph = defaultGraphSettings;

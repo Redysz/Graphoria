@@ -271,6 +271,19 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
               {section === "git" ? (
                 <div className="settingsContentBody">
                   {field(
+                    "History scope",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.commitsOnlyHead}
+                        onChange={(e) => setGit({ commitsOnlyHead: e.target.checked })}
+                      />
+                      Show only commits reachable from HEAD
+                    </label>,
+                    "When disabled, history includes commits from all branches/tags/remotes (more lanes but more context). Affects Graph and Commits views.",
+                  )}
+
+                  {field(
                     "User name",
                     <input
                       className="modalInput"
