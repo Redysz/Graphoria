@@ -846,33 +846,33 @@ fn open_in_file_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
-    let max_count = max_count.unwrap_or(200).min(2000);
+fn list_commits_impl(repo_path: &str, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    ensure_is_git_worktree(repo_path)?;
 
-    ensure_is_git_worktree(&repo_path)?;
-
-    let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
 
     let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
     let pretty = format!("--pretty=format:{format}");
-    let max_arg = max_count.to_string();
 
-    let args: Vec<&str> = vec![
-        "--no-pager",
-        "log",
-        "--branches",
-        "--tags",
-        "--remotes",
-        "--topo-order",
-        "--date=iso-strict",
-        pretty.as_str(),
-        "-n",
-        max_arg.as_str(),
-        "HEAD",
+    let mut args: Vec<String> = vec![
+        String::from("--no-pager"),
+        String::from("log"),
+        String::from("--branches"),
+        String::from("--tags"),
+        String::from("--remotes"),
+        String::from("--topo-order"),
+        String::from("--date=iso-strict"),
+        pretty,
     ];
 
-    let output = git_command_in_repo(&repo_path)
+    if let Some(n) = max_count {
+        args.push(String::from("-n"));
+        args.push(n.to_string());
+    }
+
+    args.push(String::from("HEAD"));
+
+    let output = git_command_in_repo(repo_path)
         .args(args)
         .output()
         .map_err(|e| format!("Failed to spawn git log: {e}"))?;
@@ -931,6 +931,17 @@ fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitComm
     }
 
     Ok(commits)
+}
+
+#[tauri::command]
+fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    let max_count = max_count.unwrap_or(200).min(2000);
+    list_commits_impl(&repo_path, Some(max_count))
+}
+
+#[tauri::command]
+fn list_commits_full(repo_path: String) -> Result<Vec<GitCommit>, String> {
+    list_commits_impl(&repo_path, None)
 }
 
 #[tauri::command]
@@ -2585,6 +2596,7 @@ pub fn run() {
             greet,
             repo_overview,
             list_commits,
+            list_commits_full,
             init_repo,
             open_in_file_explorer,
             git_check_worktree,
