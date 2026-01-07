@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
-import { getCyPalette, useAppSettings, type ThemeName } from "./appSettingsStore";
+import { getCyPalette, useAppSettings, type CyPalette, type ThemeName } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import "./App.css";
 
@@ -24,6 +24,7 @@ type CommitLaneRow = {
   activeTop: number[];
   activeBottom: number[];
   parentLanes: number[];
+  joinLanes: number[];
 };
 
 type RepoOverview = {
@@ -141,74 +142,83 @@ function laneStrokeColor(lane: number, theme: ThemeName) {
 }
 
 function computeCommitLaneRows(commits: GitCommit[]): { rows: CommitLaneRow[]; maxLanes: number } {
-  const openLanes: Array<string | null> = [];
-  const laneByHash = new Map<string, number>();
+  const cols: Array<string | null> = [];
   const rows: CommitLaneRow[] = [];
-
-  const allocFreeLane = () => {
-    const idx = openLanes.indexOf(null);
-    if (idx >= 0) return idx;
-    openLanes.push(null);
-    return openLanes.length - 1;
-  };
+  let maxLanes = 0;
 
   const activeLaneIndices = () => {
     const out: number[] = [];
-    for (let i = 0; i < openLanes.length; i++) {
-      if (openLanes[i] !== null) out.push(i);
+    for (let i = 0; i < cols.length; i++) {
+      if (cols[i] !== null) out.push(i);
     }
     return out;
   };
 
-  const resolveLane = (hash: string) => {
-    const l = laneByHash.get(hash);
-    if (typeof l === "number") return l;
-    const idx = openLanes.indexOf(hash);
-    if (idx >= 0) return idx;
-    return null;
+  const ensureLaneForCommit = (hash: string) => {
+    let lane = cols.indexOf(hash);
+    if (lane >= 0) return lane;
+    lane = cols.indexOf(null);
+    if (lane >= 0) {
+      cols[lane] = hash;
+      return lane;
+    }
+    cols.push(hash);
+    return cols.length - 1;
   };
 
-  let maxLanes = 0;
+  const allocLaneAfter = (afterLane: number) => {
+    for (let i = afterLane + 1; i < cols.length; i++) {
+      if (cols[i] === null) return i;
+    }
+    cols.push(null);
+    return cols.length - 1;
+  };
 
   for (const c of commits) {
     const activeTop = activeLaneIndices();
 
-    let lane = laneByHash.get(c.hash);
-    if (typeof lane !== "number") {
-      lane = openLanes.indexOf(c.hash);
-      if (lane < 0) lane = allocFreeLane();
+    const lane = ensureLaneForCommit(c.hash);
+
+    const joinLanes: number[] = [];
+    for (let i = 0; i < cols.length; i++) {
+      if (i === lane) continue;
+      if (cols[i] === c.hash) {
+        joinLanes.push(i);
+        cols[i] = null;
+      }
     }
-    laneByHash.set(c.hash, lane);
 
-    openLanes[lane] = c.parents[0] ?? null;
+    const p0 = c.parents[0] ?? null;
+    cols[lane] = p0;
 
+    const parentLanes: number[] = [];
     for (let i = 1; i < c.parents.length; i++) {
       const p = c.parents[i];
       if (!p) continue;
-      if (typeof laneByHash.get(p) === "number") continue;
-      let pLane = openLanes.indexOf(p);
-      if (pLane < 0) pLane = allocFreeLane();
-      laneByHash.set(p, pLane);
-      openLanes[pLane] = p;
+      const existing = cols.indexOf(p);
+      if (existing >= 0) {
+        parentLanes.push(existing);
+        continue;
+      }
+      const pLane = allocLaneAfter(lane);
+      cols[pLane] = p;
+      parentLanes.push(pLane);
     }
 
-    while (openLanes.length > 0 && openLanes[openLanes.length - 1] === null) {
-      openLanes.pop();
+    while (cols.length > 0 && cols[cols.length - 1] === null) {
+      cols.pop();
     }
 
+    maxLanes = Math.max(maxLanes, cols.length);
     const activeBottom = activeLaneIndices();
 
-    const parentLanes = c.parents
-      .map((p) => (p ? resolveLane(p) : null))
-      .filter((x): x is number => typeof x === "number");
-
-    maxLanes = Math.max(maxLanes, openLanes.length);
     rows.push({
       hash: c.hash,
       lane,
       activeTop,
       activeBottom,
       parentLanes,
+      joinLanes,
     });
   }
 
@@ -222,35 +232,53 @@ function CommitLaneSvg(props: {
   selected: boolean;
   isHead: boolean;
   nodeBg: string;
+  palette: CyPalette;
+  refMarkers: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>;
 }) {
-  const { row, maxLanes, theme, selected, isHead, nodeBg } = props;
+  const { row, maxLanes, theme, selected, isHead, nodeBg, palette, refMarkers } = props;
 
   const laneStep = 12;
   const lanePad = 10;
-  const h = 44;
+  const h = 64;
   const yMid = h / 2;
   const yTop = 0;
   const yBottom = h;
 
-  const w = Math.max(28, lanePad * 2 + Math.max(1, maxLanes) * laneStep);
+  const extraW = 56;
+  const w = Math.max(28, lanePad * 2 + Math.max(1, maxLanes) * laneStep + extraW);
 
   const xForLane = (lane: number) => lanePad + lane * laneStep;
 
   const strokeWidth = selected ? 2.25 : 2;
 
   const paths: Array<{ d: string; color: string }> = [];
+  const joinPaths: Array<{ d: string; color: string }> = [];
 
   for (const lane of row.parentLanes) {
-    if (lane === row.lane) continue;
     const x0 = xForLane(row.lane);
     const x1 = xForLane(lane);
     const c0y = yMid + 10;
     const d = `M ${x0} ${yMid} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yBottom}`;
-    paths.push({ d, color: laneStrokeColor(row.lane, theme) });
+    paths.push({ d, color: laneStrokeColor(lane, theme) });
+  }
+
+  for (const lane of row.joinLanes) {
+    const x0 = xForLane(lane);
+    const x1 = xForLane(row.lane);
+    const c0y = yMid - 10;
+    const d = `M ${x0} ${yMid} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yMid}`;
+    joinPaths.push({ d, color: laneStrokeColor(lane, theme) });
   }
 
   const nodeX = xForLane(row.lane);
   const nodeColor = laneStrokeColor(row.lane, theme);
+
+  const markerSize = 10;
+  const markerGap = 4;
+  const maxMarkers = 3;
+  const markersShown = refMarkers.slice(0, maxMarkers);
+  const markersX0 = nodeX + 12;
+  const markersY0 = yMid - markerSize / 2;
 
   return (
     <svg
@@ -274,7 +302,79 @@ function CommitLaneSvg(props: {
       {paths.map((p, idx) => (
         <path key={`p-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
       ))}
+      {joinPaths.map((p, idx) => (
+        <path key={`j-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      ))}
       <circle cx={nodeX} cy={yMid} r={selected ? 6 : 5.4} fill={nodeBg} stroke={nodeColor} strokeWidth={selected ? 2.6 : isHead ? 2.3 : 2} />
+      {markersShown.map((m, idx) => {
+        const x = markersX0 + idx * (markerSize + markerGap);
+        const y = markersY0;
+        const fill =
+          m.kind === "head"
+            ? palette.refHeadBg
+            : m.kind === "tag"
+              ? palette.refTagBg
+              : m.kind === "remote"
+                ? palette.refRemoteBg
+                : palette.refBranchBg;
+        const stroke =
+          m.kind === "head"
+            ? palette.refHeadBorder
+            : m.kind === "tag"
+              ? palette.refTagBorder
+              : m.kind === "remote"
+                ? palette.refRemoteBorder
+                : palette.refBranchBorder;
+
+        if (m.kind === "remote") {
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <circle cx={x + markerSize / 2} cy={y + markerSize / 2} r={markerSize / 2} fill={fill} stroke={stroke} strokeWidth={1} />
+              <circle cx={x + markerSize / 2} cy={y + markerSize / 2} r={2} fill={palette.refRemoteText} opacity={0.7} />
+            </g>
+          );
+        }
+
+        if (m.kind === "tag") {
+          const p1 = `${x + markerSize / 2} ${y}`;
+          const p2 = `${x + markerSize} ${y + markerSize}`;
+          const p3 = `${x} ${y + markerSize}`;
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <polygon points={`${p1}, ${p2}, ${p3}`} fill={fill} stroke={stroke} strokeWidth={1} />
+            </g>
+          );
+        }
+
+        if (m.kind === "head") {
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
+              <path d={`M ${x + 5} ${y + 2} L ${x + 7} ${y + 6} L ${x + 11} ${y + 6} L ${x + 8} ${y + 8} L ${x + 9} ${y + 12} L ${x + 5} ${y + 10} L ${x + 1} ${y + 12} L ${x + 2} ${y + 8} L ${x - 1} ${y + 6} L ${x + 3} ${y + 6} Z`} fill={stroke} opacity={0.55} />
+            </g>
+          );
+        }
+
+        return (
+          <g key={`m-${idx}`}>
+            <title>{m.label}</title>
+            <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
+          </g>
+        );
+      })}
+      {refMarkers.length > maxMarkers ? (
+        <text
+          x={markersX0 + maxMarkers * (markerSize + markerGap)}
+          y={yMid + 4}
+          fontSize={10}
+          fill={theme === "dark" ? "rgba(242, 244, 248, 0.75)" : "rgba(15, 15, 15, 0.65)"}
+        >
+          +{refMarkers.length - maxMarkers}
+        </text>
+      ) : null}
     </svg>
   );
 }
@@ -692,7 +792,8 @@ function App() {
     return m;
   }, [commitLaneLayout.rows]);
 
-  const commitLaneNodeBg = useMemo(() => getCyPalette(theme).nodeBg, [theme]);
+  const commitLanePalette = useMemo(() => getCyPalette(theme), [theme]);
+  const commitLaneNodeBg = commitLanePalette.nodeBg;
 
   const confirmDialog = (opts: { title: string; message: string; okLabel?: string; cancelLabel?: string }) => {
     const { title, message, okLabel, cancelLabel } = opts;
@@ -4303,7 +4404,7 @@ function App() {
                             style={{
                               width:
                                 commitLaneLayout.maxLanes > 0
-                                  ? Math.max(28, 20 + commitLaneLayout.maxLanes * 12)
+                                  ? Math.max(28, 20 + commitLaneLayout.maxLanes * 12 + 56)
                                   : 28,
                             }}
                           >
@@ -4315,12 +4416,15 @@ function App() {
                                   activeTop: [],
                                   activeBottom: [],
                                   parentLanes: [],
+                                  joinLanes: [],
                                 }}
                                 maxLanes={commitLaneLayout.maxLanes}
                                 theme={theme}
                                 selected={c.hash === selectedHash}
                                 isHead={c.is_head}
                                 nodeBg={commitLaneNodeBg}
+                                palette={commitLanePalette}
+                                refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}
                               />
                             ) : null}
                           </div>

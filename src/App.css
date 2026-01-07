@@ -457,30 +457,32 @@ button:disabled {
  .commitsList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border: 1px solid rgba(15, 15, 15, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+ }
+
+ :root[data-theme="dark"] .commitsList {
+  border-color: rgba(255, 255, 255, 0.10);
  }
 
  .commitRow {
   width: 100%;
   text-align: left;
-  padding: 10px;
-  background: var(--panel);
-  border: 1px solid rgba(15, 15, 15, 0.08);
-  border-radius: 12px;
-  transition: border-color 0.15s, background-color 0.15s;
- }
-
- :root[data-theme="dark"] .commitRow {
-  border-color: rgba(255, 255, 255, 0.10);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  transition: background-color 0.15s;
  }
 
  .commitRow:hover {
-  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(47, 111, 237, 0.06);
  }
 
  .commitRowSelected {
   background: rgba(47, 111, 237, 0.10);
-  border-color: rgba(47, 111, 237, 0.35);
  }
 
  .commitRowGrid {
@@ -488,10 +490,12 @@ button:disabled {
   grid-template-columns: auto 34px 1fr;
   gap: 10px;
   align-items: center;
+  height: 64px;
+  padding: 0 10px;
  }
 
  .commitGraphCell {
-  height: 44px;
+  height: 64px;
   display: grid;
   align-items: center;
  }
