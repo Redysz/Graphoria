@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
-import { getCyPalette, useAppSettings, type CyPalette, type ThemeName } from "./appSettingsStore";
+import { getCyPalette, useAppSettings, type CyPalette, type ThemeName, type GitHistoryOrder } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import "./App.css";
 
@@ -141,10 +141,12 @@ function laneStrokeColor(lane: number, theme: ThemeName) {
   return `hsl(${hue} ${sat}% ${light}%)`;
 }
 
-function computeCommitLaneRows(commits: GitCommit[]): { rows: CommitLaneRow[]; maxLanes: number } {
+function computeCommitLaneRows(commits: GitCommit[], historyOrder: GitHistoryOrder): { rows: CommitLaneRow[]; maxLanes: number } {
   const cols: Array<string | null> = [];
   const rows: CommitLaneRow[] = [];
   let maxLanes = 0;
+
+  const present = new Set(commits.map((c) => c.hash));
 
   const activeLaneIndices = () => {
     const out: number[] = [];
@@ -189,12 +191,14 @@ function computeCommitLaneRows(commits: GitCommit[]): { rows: CommitLaneRow[]; m
     }
 
     const p0 = c.parents[0] ?? null;
-    cols[lane] = p0;
+    cols[lane] = p0 && present.has(p0) ? p0 : null;
 
     const parentLanes: number[] = [];
-    for (let i = 1; i < c.parents.length; i++) {
-      const p = c.parents[i];
+    const parents = historyOrder === "first_parent" ? [] : c.parents;
+    for (let i = 1; i < parents.length; i++) {
+      const p = parents[i];
       if (!p) continue;
+      if (!present.has(p)) continue;
       const existing = cols.indexOf(p);
       if (existing >= 0) {
         parentLanes.push(existing);
@@ -231,11 +235,13 @@ function CommitLaneSvg(props: {
   theme: ThemeName;
   selected: boolean;
   isHead: boolean;
+  showMergeStub: boolean;
+  mergeParentCount: number;
   nodeBg: string;
   palette: CyPalette;
   refMarkers: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>;
 }) {
-  const { row, maxLanes, theme, selected, isHead, nodeBg, palette, refMarkers } = props;
+  const { row, maxLanes, theme, selected, isHead, showMergeStub, mergeParentCount, nodeBg, palette, refMarkers } = props;
 
   const laneStep = 12;
   const lanePad = 10;
@@ -306,6 +312,20 @@ function CommitLaneSvg(props: {
         <path key={`j-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
       ))}
       <circle cx={nodeX} cy={yMid} r={selected ? 6 : 5.4} fill={nodeBg} stroke={nodeColor} strokeWidth={selected ? 2.6 : isHead ? 2.3 : 2} />
+      {showMergeStub ? (
+        <g>
+          <title>{`Merge commit (${mergeParentCount} parents)`}</title>
+          <path
+            d={`M ${nodeX + 10} ${yMid - 7} L ${nodeX + 5} ${yMid} L ${nodeX + 10} ${yMid + 7}`}
+            fill="none"
+            stroke={nodeColor}
+            strokeWidth={selected ? 2.2 : 2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+        </g>
+      ) : null}
       {markersShown.map((m, idx) => {
         const x = markersX0 + idx * (markerSize + markerGap);
         const y = markersY0;
@@ -645,6 +665,7 @@ function App() {
   const graphSettings = useAppSettings((s) => s.graph);
   const diffTool = useAppSettings((s) => s.git.diffTool);
   const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
+  const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -703,7 +724,7 @@ function App() {
   useEffect(() => {
     if (!activeRepoPath) return;
     void loadRepo(activeRepoPath);
-  }, [commitsOnlyHead]);
+  }, [commitsOnlyHead, commitsHistoryOrder]);
 
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
@@ -789,8 +810,8 @@ function App() {
   const commitLaneLayout = useMemo(() => {
     if (viewMode !== "commits") return { rows: [] as CommitLaneRow[], maxLanes: 0 };
     if (commitsAll.length === 0) return { rows: [] as CommitLaneRow[], maxLanes: 0 };
-    return computeCommitLaneRows(commitsAll);
-  }, [commitsAll, viewMode]);
+    return computeCommitLaneRows(commitsAll, commitsHistoryOrder);
+  }, [commitsAll, commitsHistoryOrder, viewMode]);
 
   const commitLaneRowByHash = useMemo(() => {
     const m = new Map<string, CommitLaneRow>();
@@ -2097,7 +2118,7 @@ function App() {
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
     const commits = commitsAll;
-    const commitCount = commits.length;
+    const present = new Set(commits.map((c) => c.hash));
 
     const openLanes: Array<string | null> = [];
     const laneByHash = new Map<string, number>();
@@ -2117,11 +2138,14 @@ function App() {
       }
 
       laneByHash.set(c.hash, lane);
-      openLanes[lane] = c.parents[0] ?? null;
+      const p0 = c.parents[0] ?? null;
+      openLanes[lane] = p0 && present.has(p0) ? p0 : null;
 
-      for (let i = 1; i < c.parents.length; i++) {
-        const p = c.parents[i];
+      const parents = commitsHistoryOrder === "first_parent" ? [] : c.parents;
+      for (let i = 1; i < parents.length; i++) {
+        const p = parents[i];
         if (!p) continue;
+        if (!present.has(p)) continue;
         if (typeof laneByHash.get(p) === "number") continue;
         let pLane = openLanes.indexOf(p);
         if (pLane < 0) pLane = allocFreeLane();
@@ -2136,13 +2160,6 @@ function App() {
 
     const rowForCommitIndex = (idx: number) => {
       return idx;
-    };
-
-    const placeholderRowByHash = new Map<string, number>();
-    let placeholderCount = 0;
-
-    const rowForPlaceholder = (placeholderIdx: number) => {
-      return commitCount + placeholderIdx;
     };
 
     const posFor = (lane: number, row: number) => {
@@ -2169,27 +2186,10 @@ function App() {
     }
 
     for (const c of commits) {
-      for (const p of c.parents) {
-        if (!nodes.has(p)) {
-          let placeholderIdx = placeholderRowByHash.get(p);
-          if (typeof placeholderIdx !== "number") {
-            placeholderIdx = placeholderCount;
-            placeholderRowByHash.set(p, placeholderCount);
-            placeholderCount += 1;
-          }
-
-          const lane = laneByHash.get(p) ?? 0;
-          const row = rowForPlaceholder(placeholderIdx);
-          nodes.set(p, {
-            data: {
-              id: p,
-              label: `${shortHash(p)}\n(older)`,
-              refs: "",
-            },
-            position: posFor(lane, row),
-            classes: "placeholder",
-          });
-        }
+      const parents = commitsHistoryOrder === "first_parent" ? (c.parents[0] ? [c.parents[0]] : []) : c.parents;
+      for (const p of parents) {
+        if (!p) continue;
+        if (!present.has(p)) continue;
 
         const source = graphSettings.edgeDirection === "to_parent" ? c.hash : p;
         const target = graphSettings.edgeDirection === "to_parent" ? p : c.hash;
@@ -2208,7 +2208,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
 
   function parseRefs(
     refs: string,
@@ -3530,8 +3530,8 @@ function App() {
     setError("");
     try {
       const commitsPromise = fullHistory
-        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead })
-        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead });
+        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
+        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
       const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
@@ -4428,6 +4428,8 @@ function App() {
                                 theme={theme}
                                 selected={c.hash === selectedHash}
                                 isHead={c.is_head}
+                                showMergeStub={commitsHistoryOrder === "first_parent" && c.parents.length > 1}
+                                mergeParentCount={c.parents.length}
                                 nodeBg={commitLaneNodeBg}
                                 palette={commitLanePalette}
                                 refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}

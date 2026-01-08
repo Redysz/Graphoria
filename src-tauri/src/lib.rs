@@ -846,7 +846,27 @@ fn open_in_file_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-fn list_commits_impl(repo_path: &str, max_count: Option<u32>, only_head: bool) -> Result<Vec<GitCommit>, String> {
+fn push_history_order_args(args: &mut Vec<String>, history_order: &str) {
+    match history_order {
+        "date" => {
+            args.push(String::from("--date-order"));
+        }
+        "first_parent" => {
+            args.push(String::from("--first-parent"));
+            args.push(String::from("--topo-order"));
+        }
+        _ => {
+            args.push(String::from("--topo-order"));
+        }
+    }
+}
+
+fn list_commits_impl_v2(
+    repo_path: &str,
+    max_count: Option<u32>,
+    only_head: bool,
+    history_order: &str,
+) -> Result<Vec<GitCommit>, String> {
     ensure_is_git_worktree(repo_path)?;
 
     let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
@@ -865,7 +885,7 @@ fn list_commits_impl(repo_path: &str, max_count: Option<u32>, only_head: bool) -
         args.push(String::from("--remotes"));
     }
 
-    args.push(String::from("--topo-order"));
+    push_history_order_args(&mut args, history_order);
     args.push(String::from("--date=iso-strict"));
     args.push(pretty);
 
@@ -938,14 +958,21 @@ fn list_commits_impl(repo_path: &str, max_count: Option<u32>, only_head: bool) -
 }
 
 #[tauri::command]
-fn list_commits(repo_path: String, max_count: Option<u32>, only_head: Option<bool>) -> Result<Vec<GitCommit>, String> {
+fn list_commits(
+    repo_path: String,
+    max_count: Option<u32>,
+    only_head: Option<bool>,
+    history_order: Option<String>,
+) -> Result<Vec<GitCommit>, String> {
     let max_count = max_count.unwrap_or(200).min(2000);
-    list_commits_impl(&repo_path, Some(max_count), only_head.unwrap_or(false))
+    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
+    list_commits_impl_v2(&repo_path, Some(max_count), only_head.unwrap_or(false), &history_order)
 }
 
 #[tauri::command]
-fn list_commits_full(repo_path: String, only_head: Option<bool>) -> Result<Vec<GitCommit>, String> {
-    list_commits_impl(&repo_path, None, only_head.unwrap_or(false))
+fn list_commits_full(repo_path: String, only_head: Option<bool>, history_order: Option<String>) -> Result<Vec<GitCommit>, String> {
+    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
+    list_commits_impl_v2(&repo_path, None, only_head.unwrap_or(false), &history_order)
 }
 
 #[tauri::command]

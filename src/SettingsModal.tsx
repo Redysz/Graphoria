@@ -1,5 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useAppSettings, type ThemeName, type ViewMode, type RankDir, type EdgeDirection } from "./appSettingsStore";
+import {
+  useAppSettings,
+  type ThemeName,
+  type ViewMode,
+  type RankDir,
+  type EdgeDirection,
+  type GitHistoryOrder,
+} from "./appSettingsStore";
 
 type SettingsSection = "general" | "appearance" | "graph" | "git";
 
@@ -281,6 +288,19 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                       Show only commits reachable from HEAD
                     </label>,
                     "When disabled, history includes commits from all branches/tags/remotes (more lanes but more context). Affects Graph and Commits views.",
+                  )}
+
+                  {field(
+                    "History order",
+                    <select
+                      value={git.commitsHistoryOrder}
+                      onChange={(e) => setGit({ commitsHistoryOrder: e.target.value as GitHistoryOrder })}
+                    >
+                      <option value="topo">Topological (current)</option>
+                      <option value="date">Date order (compact)</option>
+                      <option value="first_parent">First parent (very compact)</option>
+                    </select>,
+                    "Affects the commit list order and the compactness of the graph (Graph and Commits views).",
                   )}
 
                   {field(
