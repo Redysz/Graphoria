@@ -17,6 +17,7 @@ export type GitSettings = {
   userEmail: string;
   commitsOnlyHead: boolean;
   commitsHistoryOrder: GitHistoryOrder;
+  showOnlineAvatars: boolean;
   diffTool: DiffToolSettings;
 };
 
@@ -77,6 +78,7 @@ export const defaultGitSettings: GitSettings = {
   userEmail: "",
   commitsOnlyHead: false,
   commitsHistoryOrder: "topo",
+  showOnlineAvatars: false,
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
@@ -128,7 +130,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 7,
+      version: 8,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -146,6 +148,9 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (s.git.commitsHistoryOrder !== "topo" && s.git.commitsHistoryOrder !== "date" && s.git.commitsHistoryOrder !== "first_parent") {
           s.git.commitsHistoryOrder = defaultGitSettings.commitsHistoryOrder;
+        }
+        if (typeof s.git.showOnlineAvatars !== "boolean") {
+          s.git.showOnlineAvatars = defaultGitSettings.showOnlineAvatars;
         }
         if (!s.graph || typeof s.graph !== "object") {
           s.graph = defaultGraphSettings;

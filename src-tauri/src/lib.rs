@@ -168,6 +168,7 @@ struct GitCommit {
     hash: String,
     parents: Vec<String>,
     author: String,
+    author_email: String,
     date: String,
     subject: String,
     refs: String,
@@ -871,7 +872,7 @@ fn list_commits_impl_v2(
 
     let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
 
-    let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
+    let format = "%H\x1f%P\x1f%an\x1f%ae\x1f%ad\x1f%s\x1f%D\x1e";
     let pretty = format!("--pretty=format:{format}");
 
     let mut args: Vec<String> = vec![
@@ -927,6 +928,7 @@ fn list_commits_impl_v2(
         let hash = parts.next().unwrap_or_default().to_string();
         let parents_raw = parts.next().unwrap_or_default();
         let author = parts.next().unwrap_or_default().to_string();
+        let author_email = parts.next().unwrap_or_default().to_string();
         let date = parts.next().unwrap_or_default().to_string();
         let subject = parts.next().unwrap_or_default().to_string();
         let refs = parts.next().unwrap_or_default().to_string();
@@ -947,6 +949,7 @@ fn list_commits_impl_v2(
             hash,
             parents,
             author,
+            author_email,
             date,
             subject,
             refs,

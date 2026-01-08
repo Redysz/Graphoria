@@ -304,6 +304,19 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                   )}
 
                   {field(
+                    "Author avatars",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.showOnlineAvatars}
+                        onChange={(e) => setGit({ showOnlineAvatars: e.target.checked })}
+                      />
+                      Show online avatars (Gravatar)
+                    </label>,
+                    "When enabled, Graphoria will try to load author avatars from Gravatar using the commit author email and fall back to initials if unavailable.",
+                  )}
+
+                  {field(
                     "User name",
                     <input
                       className="modalInput"

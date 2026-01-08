@@ -504,15 +504,31 @@ button:disabled {
   width: 34px;
   height: 34px;
   border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.45);
   background:
     radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 60%),
     linear-gradient(145deg, var(--avatar-c1), var(--avatar-c2));
+  background-clip: padding-box;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
     0 6px 18px rgba(0, 0, 0, 0.10);
+ }
+
+ .commitAvatar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 28% 20%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 6;
  }
 
  :root[data-theme="dark"] .commitAvatar {
@@ -523,12 +539,24 @@ button:disabled {
  }
 
  .commitAvatarText {
+  position: relative;
+  z-index: 2;
   font-weight: 1000;
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
   user-select: none;
+ }
+
+ .commitAvatarImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 4;
  }
 
  .commitRowMain {
