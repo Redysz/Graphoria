@@ -318,6 +318,56 @@ function computeCommitLaneRows(commits: GitCommit[], historyOrder: GitHistoryOrd
   return { rows, maxLanes };
 }
 
+function computeCompactLaneByHashForGraph(commits: GitCommit[], historyOrder: GitHistoryOrder): Map<string, number> {
+  const present = new Set(commits.map((c) => c.hash));
+  const cols: string[] = [];
+  const laneByHash = new Map<string, number>();
+
+  const removeDuplicatesKeep = (hash: string, keepIdx: number) => {
+    for (let i = cols.length - 1; i >= 0; i--) {
+      if (i === keepIdx) continue;
+      if (cols[i] !== hash) continue;
+      cols.splice(i, 1);
+      if (i < keepIdx) keepIdx--;
+    }
+    return keepIdx;
+  };
+
+  for (const c of commits) {
+    let lane = cols.indexOf(c.hash);
+    if (lane < 0) {
+      lane = cols.length;
+      cols.push(c.hash);
+    }
+    lane = removeDuplicatesKeep(c.hash, lane);
+    laneByHash.set(c.hash, lane);
+
+    const p0 = c.parents[0] ?? null;
+    const primary = p0 && present.has(p0) ? p0 : null;
+
+    if (primary) {
+      cols[lane] = primary;
+    } else {
+      cols.splice(lane, 1);
+    }
+
+    const insertBase = primary ? lane + 1 : lane;
+    let insertAt = Math.min(insertBase, cols.length);
+
+    const parents = historyOrder === "first_parent" ? [] : c.parents;
+    for (let i = 1; i < parents.length; i++) {
+      const p = parents[i];
+      if (!p) continue;
+      if (!present.has(p)) continue;
+      if (cols.includes(p)) continue;
+      cols.splice(insertAt, 0, p);
+      insertAt++;
+    }
+  }
+
+  return laneByHash;
+}
+
 function CommitLaneSvg(props: {
   row: CommitLaneRow;
   maxLanes: number;
@@ -2238,11 +2288,7 @@ function App() {
     const commits = commitsAll;
     const present = new Set(commits.map((c) => c.hash));
 
-    const laneByHash = new Map<string, number>();
-    const { rows: laneRows } = computeCommitLaneRows(commits, commitsHistoryOrder);
-    for (const r of laneRows) {
-      laneByHash.set(r.hash, r.lane);
-    }
+    const laneByHash = computeCompactLaneByHashForGraph(commits, commitsHistoryOrder);
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
@@ -2367,6 +2413,46 @@ function App() {
     const colGapX = 150;
     const maxPerCol = 6;
 
+    const edgeBBoxesByTarget = new Map<string, any[]>();
+    const getEdgeBBoxesForTarget = (targetId: string) => {
+      const cached = edgeBBoxesByTarget.get(targetId);
+      if (cached) return cached;
+      const t = cy.$id(targetId);
+      if (t.length === 0) return [];
+      const boxes = t
+        .connectedEdges()
+        .toArray()
+        .filter((e) => !e.hasClass("refEdge") && !e.hasClass("stashEdge"))
+        .map((e) => e.boundingBox({ includeLabels: false, includeOverlays: false } as any));
+      edgeBBoxesByTarget.set(targetId, boxes);
+      return boxes;
+    };
+
+    const bboxIntersectsEdges = (b: any, edgeBoxes: any[]) => {
+      for (const eb of edgeBoxes) {
+        if (eb.y1 > b.y2) continue;
+        if (eb.y2 < b.y1) continue;
+        if (eb.x1 < b.x2 && eb.x2 > b.x1) return true;
+      }
+      return false;
+    };
+
+    const pushNodeAwayFromEdges = (nodeId: string, side: -1 | 1, targetId: string) => {
+      const n = cy.$id(nodeId);
+      if (n.length === 0) return;
+      const step = 40;
+      const maxIter = 35;
+      const edgeBoxes = getEdgeBBoxesForTarget(targetId);
+      for (let i = 0; i < maxIter; i++) {
+        const bb = n.boundingBox({ includeLabels: true, includeOverlays: false } as any);
+        if (!bboxIntersectsEdges(bb, edgeBoxes)) break;
+        const pos = n.position();
+        n.unlock();
+        n.position({ x: pos.x + side * step, y: pos.y });
+        n.lock();
+      }
+    };
+
     for (const n of cy.nodes().toArray()) {
       if (n.hasClass("refBadge")) continue;
       const refs = (n.data("refs") as string) || "";
@@ -2418,6 +2504,18 @@ function App() {
 
       if (left.length > 0) placeSide(left, -1);
       if (right.length > 0) placeSide(right, 1);
+    }
+
+    for (const b of cy.$("node.refBadge").toArray()) {
+      const badge = b as any;
+      const id = badge.id();
+      const parts = id.split(":");
+      if (parts.length < 3) continue;
+      const targetId = parts[1];
+      const target = cy.$id(targetId);
+      if (target.length === 0) continue;
+      const side: -1 | 1 = badge.position().x < (target as any).position().x ? -1 : 1;
+      pushNodeAwayFromEdges(id, side, targetId);
     }
 
     if (!graphSettings.showStashesOnGraph || !activeRepoPath) return;
@@ -2490,6 +2588,7 @@ function App() {
             "background-color": stashBg,
             color: stashText,
           } as any);
+          pushNodeAwayFromEdges(id, -1, base);
         }
       }
     }
