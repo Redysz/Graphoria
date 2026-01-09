@@ -78,7 +78,7 @@ export const defaultGitSettings: GitSettings = {
   userEmail: "",
   commitsOnlyHead: false,
   commitsHistoryOrder: "topo",
-  showOnlineAvatars: false,
+  showOnlineAvatars: true,
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
