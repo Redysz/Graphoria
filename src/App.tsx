@@ -2413,39 +2413,84 @@ function App() {
     const colGapX = 150;
     const maxPerCol = 6;
 
-    const edgeBBoxesByTarget = new Map<string, any[]>();
-    const getEdgeBBoxesForTarget = (targetId: string) => {
-      const cached = edgeBBoxesByTarget.get(targetId);
-      if (cached) return cached;
-      const t = cy.$id(targetId);
-      if (t.length === 0) return [];
-      const boxes = t
-        .connectedEdges()
-        .toArray()
-        .filter((e) => !e.hasClass("refEdge") && !e.hasClass("stashEdge"))
-        .map((e) => e.boundingBox({ includeLabels: false, includeOverlays: false } as any));
-      edgeBBoxesByTarget.set(targetId, boxes);
-      return boxes;
+    const edgeSegs = cy
+      .edges()
+      .toArray()
+      .filter((e) => !e.hasClass("refEdge") && !e.hasClass("stashEdge"))
+      .map((e) => {
+        const s = (e.source() as any).position();
+        const t = (e.target() as any).position();
+        const x1 = Number(s?.x ?? 0);
+        const y1 = Number(s?.y ?? 0);
+        const x2 = Number(t?.x ?? 0);
+        const y2 = Number(t?.y ?? 0);
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+        return { x1, y1, x2, y2, minX, maxX, minY, maxY };
+      });
+
+    const segIntersectsRect = (seg: { x1: number; y1: number; x2: number; y2: number }, r: any) => {
+      const x1 = seg.x1;
+      const y1 = seg.y1;
+      const x2 = seg.x2;
+      const y2 = seg.y2;
+
+      const inside = (x: number, y: number) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2;
+      if (inside(x1, y1) || inside(x2, y2)) return true;
+
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      let t0 = 0;
+      let t1 = 1;
+
+      const clip = (p: number, q: number) => {
+        if (p === 0) return q >= 0;
+        const r0 = q / p;
+        if (p < 0) {
+          if (r0 > t1) return false;
+          if (r0 > t0) t0 = r0;
+        } else {
+          if (r0 < t0) return false;
+          if (r0 < t1) t1 = r0;
+        }
+        return true;
+      };
+
+      if (!clip(-dx, x1 - r.x1)) return false;
+      if (!clip(dx, r.x2 - x1)) return false;
+      if (!clip(-dy, y1 - r.y1)) return false;
+      if (!clip(dy, r.y2 - y1)) return false;
+
+      return t0 <= t1;
     };
 
-    const bboxIntersectsEdges = (b: any, edgeBoxes: any[]) => {
-      for (const eb of edgeBoxes) {
-        if (eb.y1 > b.y2) continue;
-        if (eb.y2 < b.y1) continue;
-        if (eb.x1 < b.x2 && eb.x2 > b.x1) return true;
+    const bboxIntersectsAnyEdge = (b: any) => {
+      for (const seg of edgeSegs) {
+        if (seg.minY > b.y2) continue;
+        if (seg.maxY < b.y1) continue;
+        if (seg.minX > b.x2) continue;
+        if (seg.maxX < b.x1) continue;
+        if (segIntersectsRect(seg, b)) return true;
       }
       return false;
     };
 
-    const pushNodeAwayFromEdges = (nodeId: string, side: -1 | 1, targetId: string) => {
+    const pushNodeAwayFromEdges = (nodeId: string, side: -1 | 1) => {
       const n = cy.$id(nodeId);
       if (n.length === 0) return;
       const step = 40;
       const maxIter = 35;
-      const edgeBoxes = getEdgeBBoxesForTarget(targetId);
       for (let i = 0; i < maxIter; i++) {
-        const bb = n.boundingBox({ includeLabels: true, includeOverlays: false } as any);
-        if (!bboxIntersectsEdges(bb, edgeBoxes)) break;
+        const bb0 = n.boundingBox({ includeLabels: true, includeOverlays: false } as any);
+        const bb = {
+          x1: bb0.x1 - 10,
+          y1: bb0.y1 - 6,
+          x2: bb0.x2 + 10,
+          y2: bb0.y2 + 6,
+        };
+        if (!bboxIntersectsAnyEdge(bb)) break;
         const pos = n.position();
         n.unlock();
         n.position({ x: pos.x + side * step, y: pos.y });
@@ -2515,7 +2560,7 @@ function App() {
       const target = cy.$id(targetId);
       if (target.length === 0) continue;
       const side: -1 | 1 = badge.position().x < (target as any).position().x ? -1 : 1;
-      pushNodeAwayFromEdges(id, side, targetId);
+      pushNodeAwayFromEdges(id, side);
     }
 
     if (!graphSettings.showStashesOnGraph || !activeRepoPath) return;
@@ -2588,7 +2633,7 @@ function App() {
             "background-color": stashBg,
             color: stashText,
           } as any);
-          pushNodeAwayFromEdges(id, -1, base);
+          pushNodeAwayFromEdges(id, -1);
         }
       }
     }
