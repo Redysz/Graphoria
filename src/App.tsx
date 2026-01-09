@@ -2238,38 +2238,10 @@ function App() {
     const commits = commitsAll;
     const present = new Set(commits.map((c) => c.hash));
 
-    const openLanes: Array<string | null> = [];
     const laneByHash = new Map<string, number>();
-
-    const allocFreeLane = () => {
-      const idx = openLanes.indexOf(null);
-      if (idx >= 0) return idx;
-      openLanes.push(null);
-      return openLanes.length - 1;
-    };
-
-    for (const c of commits) {
-      let lane = laneByHash.get(c.hash);
-      if (typeof lane !== "number") {
-        lane = openLanes.indexOf(c.hash);
-        if (lane < 0) lane = allocFreeLane();
-      }
-
-      laneByHash.set(c.hash, lane);
-      const p0 = c.parents[0] ?? null;
-      openLanes[lane] = p0 && present.has(p0) ? p0 : null;
-
-      const parents = commitsHistoryOrder === "first_parent" ? [] : c.parents;
-      for (let i = 1; i < parents.length; i++) {
-        const p = parents[i];
-        if (!p) continue;
-        if (!present.has(p)) continue;
-        if (typeof laneByHash.get(p) === "number") continue;
-        let pLane = openLanes.indexOf(p);
-        if (pLane < 0) pLane = allocFreeLane();
-        laneByHash.set(p, pLane);
-        openLanes[pLane] = p;
-      }
+    const { rows: laneRows } = computeCommitLaneRows(commits, commitsHistoryOrder);
+    for (const r of laneRows) {
+      laneByHash.set(r.hash, r.lane);
     }
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
