@@ -6,6 +6,8 @@ export type ViewMode = "graph" | "commits";
 export type RankDir = "TB" | "LR";
 export type EdgeDirection = "to_parent" | "to_child";
 
+ export type GitHistoryOrder = "topo" | "date" | "first_parent";
+
 export type GeneralSettings = {
   openOnStartup: boolean;
 };
@@ -13,6 +15,9 @@ export type GeneralSettings = {
 export type GitSettings = {
   userName: string;
   userEmail: string;
+  commitsOnlyHead: boolean;
+  commitsHistoryOrder: GitHistoryOrder;
+  showOnlineAvatars: boolean;
   diffTool: DiffToolSettings;
 };
 
@@ -71,6 +76,9 @@ export const defaultAppearanceSettings: AppearanceSettings = {
 export const defaultGitSettings: GitSettings = {
   userName: "",
   userEmail: "",
+  commitsOnlyHead: false,
+  commitsHistoryOrder: "topo",
+  showOnlineAvatars: true,
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
@@ -122,7 +130,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 5,
+      version: 8,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -134,6 +142,15 @@ export const useAppSettings = create<AppSettingsState>()(
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        if (typeof s.git.commitsOnlyHead !== "boolean") {
+          s.git.commitsOnlyHead = defaultGitSettings.commitsOnlyHead;
+        }
+        if (s.git.commitsHistoryOrder !== "topo" && s.git.commitsHistoryOrder !== "date" && s.git.commitsHistoryOrder !== "first_parent") {
+          s.git.commitsHistoryOrder = defaultGitSettings.commitsHistoryOrder;
+        }
+        if (typeof s.git.showOnlineAvatars !== "boolean") {
+          s.git.showOnlineAvatars = defaultGitSettings.showOnlineAvatars;
         }
         if (!s.graph || typeof s.graph !== "object") {
           s.graph = defaultGraphSettings;

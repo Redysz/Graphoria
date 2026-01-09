@@ -1,5 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useAppSettings, type ThemeName, type ViewMode, type RankDir, type EdgeDirection } from "./appSettingsStore";
+import {
+  useAppSettings,
+  type ThemeName,
+  type ViewMode,
+  type RankDir,
+  type EdgeDirection,
+  type GitHistoryOrder,
+} from "./appSettingsStore";
 
 type SettingsSection = "general" | "appearance" | "graph" | "git";
 
@@ -270,6 +277,45 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
 
               {section === "git" ? (
                 <div className="settingsContentBody">
+                  {field(
+                    "History scope",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.commitsOnlyHead}
+                        onChange={(e) => setGit({ commitsOnlyHead: e.target.checked })}
+                      />
+                      Show only commits reachable from HEAD
+                    </label>,
+                    "When disabled, history includes commits from all branches/tags/remotes (more lanes but more context). Affects Graph and Commits views.",
+                  )}
+
+                  {field(
+                    "History order",
+                    <select
+                      value={git.commitsHistoryOrder}
+                      onChange={(e) => setGit({ commitsHistoryOrder: e.target.value as GitHistoryOrder })}
+                    >
+                      <option value="topo">Topological (current)</option>
+                      <option value="date">Date order (compact)</option>
+                      <option value="first_parent">First parent (very compact)</option>
+                    </select>,
+                    "Affects the commit list order and the compactness of the graph (Graph and Commits views).",
+                  )}
+
+                  {field(
+                    "Author avatars",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.showOnlineAvatars}
+                        onChange={(e) => setGit({ showOnlineAvatars: e.target.checked })}
+                      />
+                      Show online avatars (Gravatar)
+                    </label>,
+                    "When enabled, Graphoria will try to load author avatars from Gravatar using the commit author email and fall back to initials if unavailable.",
+                  )}
+
                   {field(
                     "User name",
                     <input

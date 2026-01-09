@@ -454,6 +454,152 @@ button:disabled {
   display: block;
 }
 
+ .commitsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid rgba(15, 15, 15, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+ }
+
+ :root[data-theme="dark"] .commitsList {
+  border-color: rgba(255, 255, 255, 0.10);
+ }
+
+ .commitRow {
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  transition: background-color 0.15s;
+ }
+
+ .commitRow:hover {
+  background: rgba(47, 111, 237, 0.06);
+ }
+
+ .commitRowSelected {
+  background: rgba(47, 111, 237, 0.10);
+ }
+
+ .commitRowGrid {
+  display: grid;
+  grid-template-columns: auto 34px 1fr;
+  gap: 10px;
+  align-items: center;
+  height: 64px;
+  padding: 0 10px;
+ }
+
+ .commitGraphCell {
+  height: 64px;
+  display: grid;
+  align-items: center;
+ }
+
+ .commitAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(145deg, var(--avatar-c1), var(--avatar-c2));
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 6px 18px rgba(0, 0, 0, 0.10);
+ }
+
+ .commitAvatar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 28% 20%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 6;
+ }
+
+ :root[data-theme="dark"] .commitAvatar {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+ }
+
+ .commitAvatarText {
+  position: relative;
+  z-index: 2;
+  font-weight: 1000;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  user-select: none;
+ }
+
+ .commitAvatarImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 4;
+ }
+
+ .commitRowMain {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+ }
+
+ .commitRowTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+ }
+
+ .commitHash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 850;
+  opacity: 0.88;
+  flex: 0 0 auto;
+ }
+
+ .commitSubject {
+  font-weight: 850;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
+ .commitHead {
+  opacity: 0.7;
+  font-weight: 800;
+ }
+
+ .commitMeta {
+  opacity: 0.75;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
 .cyCanvas {
   position: absolute;
   inset: 0;

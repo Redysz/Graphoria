@@ -168,6 +168,7 @@ struct GitCommit {
     hash: String,
     parents: Vec<String>,
     author: String,
+    author_email: String,
     date: String,
     subject: String,
     refs: String,
@@ -846,24 +847,48 @@ fn open_in_file_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-fn list_commits_impl(repo_path: &str, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
+fn push_history_order_args(args: &mut Vec<String>, history_order: &str) {
+    match history_order {
+        "date" => {
+            args.push(String::from("--date-order"));
+        }
+        "first_parent" => {
+            args.push(String::from("--first-parent"));
+            args.push(String::from("--topo-order"));
+        }
+        _ => {
+            args.push(String::from("--topo-order"));
+        }
+    }
+}
+
+fn list_commits_impl_v2(
+    repo_path: &str,
+    max_count: Option<u32>,
+    only_head: bool,
+    history_order: &str,
+) -> Result<Vec<GitCommit>, String> {
     ensure_is_git_worktree(repo_path)?;
 
     let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
 
-    let format = "%H\x1f%P\x1f%an\x1f%ad\x1f%s\x1f%D\x1e";
+    let format = "%H\x1f%P\x1f%an\x1f%ae\x1f%ad\x1f%s\x1f%D\x1e";
     let pretty = format!("--pretty=format:{format}");
 
     let mut args: Vec<String> = vec![
         String::from("--no-pager"),
         String::from("log"),
-        String::from("--branches"),
-        String::from("--tags"),
-        String::from("--remotes"),
-        String::from("--topo-order"),
-        String::from("--date=iso-strict"),
-        pretty,
     ];
+
+    if !only_head {
+        args.push(String::from("--branches"));
+        args.push(String::from("--tags"));
+        args.push(String::from("--remotes"));
+    }
+
+    push_history_order_args(&mut args, history_order);
+    args.push(String::from("--date=iso-strict"));
+    args.push(pretty);
 
     if let Some(n) = max_count {
         args.push(String::from("-n"));
@@ -903,6 +928,7 @@ fn list_commits_impl(repo_path: &str, max_count: Option<u32>) -> Result<Vec<GitC
         let hash = parts.next().unwrap_or_default().to_string();
         let parents_raw = parts.next().unwrap_or_default();
         let author = parts.next().unwrap_or_default().to_string();
+        let author_email = parts.next().unwrap_or_default().to_string();
         let date = parts.next().unwrap_or_default().to_string();
         let subject = parts.next().unwrap_or_default().to_string();
         let refs = parts.next().unwrap_or_default().to_string();
@@ -923,6 +949,7 @@ fn list_commits_impl(repo_path: &str, max_count: Option<u32>) -> Result<Vec<GitC
             hash,
             parents,
             author,
+            author_email,
             date,
             subject,
             refs,
@@ -934,14 +961,21 @@ fn list_commits_impl(repo_path: &str, max_count: Option<u32>) -> Result<Vec<GitC
 }
 
 #[tauri::command]
-fn list_commits(repo_path: String, max_count: Option<u32>) -> Result<Vec<GitCommit>, String> {
+fn list_commits(
+    repo_path: String,
+    max_count: Option<u32>,
+    only_head: Option<bool>,
+    history_order: Option<String>,
+) -> Result<Vec<GitCommit>, String> {
     let max_count = max_count.unwrap_or(200).min(2000);
-    list_commits_impl(&repo_path, Some(max_count))
+    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
+    list_commits_impl_v2(&repo_path, Some(max_count), only_head.unwrap_or(false), &history_order)
 }
 
 #[tauri::command]
-fn list_commits_full(repo_path: String) -> Result<Vec<GitCommit>, String> {
-    list_commits_impl(&repo_path, None)
+fn list_commits_full(repo_path: String, only_head: Option<bool>, history_order: Option<String>) -> Result<Vec<GitCommit>, String> {
+    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
+    list_commits_impl_v2(&repo_path, None, only_head.unwrap_or(false), &history_order)
 }
 
 #[tauri::command]

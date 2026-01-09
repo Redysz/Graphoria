@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
-import { getCyPalette, useAppSettings, type ThemeName } from "./appSettingsStore";
+import { getCyPalette, useAppSettings, type CyPalette, type ThemeName, type GitHistoryOrder } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import "./App.css";
 
@@ -12,10 +12,20 @@ type GitCommit = {
   hash: string;
   parents: string[];
   author: string;
+  author_email: string;
   date: string;
   subject: string;
   refs: string;
   is_head: boolean;
+};
+
+type CommitLaneRow = {
+  hash: string;
+  lane: number;
+  activeTop: number[];
+  activeBottom: number[];
+  parentLanes: number[];
+  joinLanes: number[];
 };
 
 type RepoOverview = {
@@ -104,6 +114,400 @@ function repoNameFromPath(p: string) {
 function truncate(s: string, max: number) {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
+}
+
+function fnv1a32(input: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function md5Hex(input: string): string {
+  const s = unescape(encodeURIComponent(input));
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+
+  const origLenBits = bytes.length * 8;
+  const withOneLen = bytes.length + 1;
+  const padLen = (56 - (withOneLen % 64) + 64) % 64;
+  const totalLen = withOneLen + padLen + 8;
+
+  const buf = new Uint8Array(totalLen);
+  buf.set(bytes);
+  buf[bytes.length] = 0x80;
+
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(totalLen - 8, origLenBits >>> 0, true);
+  dv.setUint32(totalLen - 4, Math.floor(origLenBits / 0x100000000) >>> 0, true);
+
+  let a0 = 0x67452301;
+  let b0 = 0xefcdab89;
+  let c0 = 0x98badcfe;
+  let d0 = 0x10325476;
+
+  const rotl = (x: number, n: number) => (x << n) | (x >>> (32 - n));
+
+  const T = new Int32Array(64);
+  for (let i = 0; i < 64; i++) T[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) | 0;
+
+  const S = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  ];
+
+  for (let off = 0; off < buf.length; off += 64) {
+    const M = new Int32Array(16);
+    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true);
+
+    let A = a0;
+    let B = b0;
+    let C = c0;
+    let D = d0;
+
+    for (let i = 0; i < 64; i++) {
+      let F = 0;
+      let g = 0;
+
+      if (i < 16) {
+        F = (B & C) | (~B & D);
+        g = i;
+      } else if (i < 32) {
+        F = (D & B) | (~D & C);
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        F = B ^ C ^ D;
+        g = (3 * i + 5) % 16;
+      } else {
+        F = C ^ (B | ~D);
+        g = (7 * i) % 16;
+      }
+
+      const tmp = D;
+      D = C;
+      C = B;
+      const sum = (A + F + T[i] + M[g]) | 0;
+      B = (B + rotl(sum, S[i])) | 0;
+      A = tmp;
+    }
+
+    a0 = (a0 + A) | 0;
+    b0 = (b0 + B) | 0;
+    c0 = (c0 + C) | 0;
+    d0 = (d0 + D) | 0;
+  }
+
+  const toHexLe = (x: number) => {
+    let out = "";
+    for (let i = 0; i < 4; i++) {
+      const b = (x >>> (i * 8)) & 0xff;
+      out += b.toString(16).padStart(2, "0");
+    }
+    return out;
+  };
+
+  return `${toHexLe(a0)}${toHexLe(b0)}${toHexLe(c0)}${toHexLe(d0)}`;
+}
+
+function authorInitials(author: string) {
+  const parts = author
+    .trim()
+    .split(/\s+/g)
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+}
+
+function laneStrokeColor(lane: number, theme: ThemeName) {
+  const hue = (lane * 47) % 360;
+  const sat = theme === "dark" ? 72 : 66;
+  const light = theme === "dark" ? 62 : 44;
+  return `hsl(${hue} ${sat}% ${light}%)`;
+}
+
+function computeCommitLaneRows(commits: GitCommit[], historyOrder: GitHistoryOrder): { rows: CommitLaneRow[]; maxLanes: number } {
+  const cols: Array<string | null> = [];
+  const rows: CommitLaneRow[] = [];
+  let maxLanes = 0;
+
+  const present = new Set(commits.map((c) => c.hash));
+
+  const activeLaneIndices = () => {
+    const out: number[] = [];
+    for (let i = 0; i < cols.length; i++) {
+      if (cols[i] !== null) out.push(i);
+    }
+    return out;
+  };
+
+  const ensureLaneForCommit = (hash: string) => {
+    let lane = cols.indexOf(hash);
+    if (lane >= 0) return lane;
+    lane = cols.indexOf(null);
+    if (lane >= 0) {
+      cols[lane] = hash;
+      return lane;
+    }
+    cols.push(hash);
+    return cols.length - 1;
+  };
+
+  const allocLaneAfter = (afterLane: number) => {
+    for (let i = afterLane + 1; i < cols.length; i++) {
+      if (cols[i] === null) return i;
+    }
+    cols.push(null);
+    return cols.length - 1;
+  };
+
+  for (const c of commits) {
+    const activeTop = activeLaneIndices();
+
+    const lane = ensureLaneForCommit(c.hash);
+
+    const joinLanes: number[] = [];
+    for (let i = 0; i < cols.length; i++) {
+      if (i === lane) continue;
+      if (cols[i] === c.hash) {
+        joinLanes.push(i);
+        cols[i] = null;
+      }
+    }
+
+    const p0 = c.parents[0] ?? null;
+    cols[lane] = p0 && present.has(p0) ? p0 : null;
+
+    const parentLanes: number[] = [];
+    const parents = historyOrder === "first_parent" ? [] : c.parents;
+    for (let i = 1; i < parents.length; i++) {
+      const p = parents[i];
+      if (!p) continue;
+      if (!present.has(p)) continue;
+      const existing = cols.indexOf(p);
+      if (existing >= 0) {
+        parentLanes.push(existing);
+        continue;
+      }
+      const pLane = allocLaneAfter(lane);
+      cols[pLane] = p;
+      parentLanes.push(pLane);
+    }
+
+    while (cols.length > 0 && cols[cols.length - 1] === null) {
+      cols.pop();
+    }
+
+    maxLanes = Math.max(maxLanes, cols.length);
+    const activeBottom = activeLaneIndices();
+
+    rows.push({
+      hash: c.hash,
+      lane,
+      activeTop,
+      activeBottom,
+      parentLanes,
+      joinLanes,
+    });
+  }
+
+  return { rows, maxLanes };
+}
+
+function CommitLaneSvg(props: {
+  row: CommitLaneRow;
+  maxLanes: number;
+  theme: ThemeName;
+  selected: boolean;
+  isHead: boolean;
+  showMergeStub: boolean;
+  mergeParentCount: number;
+  nodeBg: string;
+  palette: CyPalette;
+  refMarkers: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>;
+}) {
+  const { row, maxLanes, theme, selected, isHead, showMergeStub, mergeParentCount, nodeBg, palette, refMarkers } = props;
+
+  const laneStep = 12;
+  const lanePad = 10;
+  const h = 64;
+  const yMid = h / 2;
+  const yTop = 0;
+  const yBottom = h;
+
+  const extraW = 56;
+  const w = Math.max(28, lanePad * 2 + Math.max(1, Math.min(maxLanes, 10)) * laneStep + extraW);
+
+  const xForLane = (lane: number) => lanePad + lane * laneStep;
+
+  const strokeWidth = selected ? 2.25 : 2;
+
+  const paths: Array<{ d: string; color: string }> = [];
+  const joinPaths: Array<{ d: string; color: string }> = [];
+
+  const parentLaneSet = new Set(row.parentLanes);
+  const joinLaneSet = new Set(row.joinLanes);
+
+  for (const lane of row.parentLanes) {
+    const x0 = xForLane(row.lane);
+    const x1 = xForLane(lane);
+    const c0y = yMid + 18;
+    const d = `M ${x0} ${yMid} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yBottom}`;
+    paths.push({ d, color: laneStrokeColor(lane, theme) });
+  }
+
+  for (const lane of row.joinLanes) {
+    const x0 = xForLane(lane);
+    const x1 = xForLane(row.lane);
+    const c0y = yMid - 18;
+    const d = `M ${x0} ${yTop} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yMid}`;
+    joinPaths.push({ d, color: laneStrokeColor(lane, theme) });
+  }
+
+  const nodeX = xForLane(row.lane);
+  const nodeColor = laneStrokeColor(row.lane, theme);
+
+  const markerSize = 10;
+  const markerGap = 4;
+  const maxMarkers = 3;
+  const markersShown = refMarkers.slice(0, maxMarkers);
+  const markersX0 = nodeX + 12;
+  const markersY0 = yMid - markerSize / 2;
+
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ display: "block" }}
+      aria-hidden="true"
+      focusable={false}
+    >
+      {row.activeTop.map((lane) => {
+        if (joinLaneSet.has(lane)) return null;
+        const x = xForLane(lane);
+        const color = laneStrokeColor(lane, theme);
+        return <line key={`t-${lane}`} x1={x} y1={yTop} x2={x} y2={yMid} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
+      })}
+      {row.activeBottom.map((lane) => {
+        if (parentLaneSet.has(lane)) return null;
+        const x = xForLane(lane);
+        const color = laneStrokeColor(lane, theme);
+        return <line key={`b-${lane}`} x1={x} y1={yMid} x2={x} y2={yBottom} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
+      })}
+      {paths.map((p, idx) => (
+        <path key={`p-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      ))}
+      {joinPaths.map((p, idx) => (
+        <path key={`j-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      ))}
+      <circle
+        cx={nodeX}
+        cy={yMid}
+        r={selected ? 6 : 5.4}
+        fill={isHead ? nodeColor : nodeBg}
+        stroke={nodeColor}
+        strokeWidth={selected ? 2.6 : isHead ? 2.3 : 2}
+      />
+      {showMergeStub ? (
+        <g>
+          <title>{`Merge commit (${mergeParentCount} parents)`}</title>
+          <path
+            d={`M ${nodeX + 10} ${yMid - 7} L ${nodeX + 5} ${yMid} L ${nodeX + 10} ${yMid + 7}`}
+            fill="none"
+            stroke={nodeColor}
+            strokeWidth={selected ? 2.2 : 2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+        </g>
+      ) : null}
+      {markersShown.map((m, idx) => {
+        const x = markersX0 + idx * (markerSize + markerGap);
+        const y = markersY0;
+        const fill =
+          m.kind === "head"
+            ? palette.refHeadBg
+            : m.kind === "tag"
+              ? palette.refTagBg
+              : m.kind === "remote"
+                ? palette.refRemoteBg
+                : palette.refBranchBg;
+        const stroke =
+          m.kind === "head"
+            ? palette.refHeadBorder
+            : m.kind === "tag"
+              ? palette.refTagBorder
+              : m.kind === "remote"
+                ? palette.refRemoteBorder
+                : palette.refBranchBorder;
+
+        if (m.kind === "remote") {
+          const isRemoteHead = /\/HEAD$/.test(m.label);
+          const remoteFill = isRemoteHead ? palette.refHeadBg : fill;
+          const remoteStroke = isRemoteHead ? palette.refHeadBorder : stroke;
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <circle
+                cx={x + markerSize / 2}
+                cy={y + markerSize / 2}
+                r={markerSize / 2}
+                fill={remoteFill}
+                stroke={remoteStroke}
+                strokeWidth={1}
+              />
+              <circle cx={x + markerSize / 2} cy={y + markerSize / 2} r={2} fill={palette.refRemoteText} opacity={0.7} />
+            </g>
+          );
+        }
+
+        if (m.kind === "tag") {
+          const p1 = `${x + markerSize / 2} ${y}`;
+          const p2 = `${x + markerSize} ${y + markerSize}`;
+          const p3 = `${x} ${y + markerSize}`;
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <polygon points={`${p1}, ${p2}, ${p3}`} fill={fill} stroke={stroke} strokeWidth={1} />
+            </g>
+          );
+        }
+
+        if (m.kind === "head") {
+          return (
+            <g key={`m-${idx}`}>
+              <title>{m.label}</title>
+              <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
+              <path d={`M ${x + 5} ${y + 2} L ${x + 7} ${y + 6} L ${x + 11} ${y + 6} L ${x + 8} ${y + 8} L ${x + 9} ${y + 12} L ${x + 5} ${y + 10} L ${x + 1} ${y + 12} L ${x + 2} ${y + 8} L ${x - 1} ${y + 6} L ${x + 3} ${y + 6} Z`} fill={stroke} opacity={0.55} />
+            </g>
+          );
+        }
+
+        return (
+          <g key={`m-${idx}`}>
+            <title>{m.label}</title>
+            <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
+          </g>
+        );
+      })}
+      {refMarkers.length > maxMarkers ? (
+        <text
+          x={markersX0 + maxMarkers * (markerSize + markerGap)}
+          y={yMid + 4}
+          fontSize={10}
+          fill={theme === "dark" ? "rgba(242, 244, 248, 0.75)" : "rgba(15, 15, 15, 0.65)"}
+        >
+          +{refMarkers.length - maxMarkers}
+        </text>
+      ) : null}
+    </svg>
+  );
 }
 
 function parseGitDubiousOwnershipError(raw: string): string | null {
@@ -371,6 +775,9 @@ function App() {
   const modalClosePosition = useAppSettings((s) => s.appearance.modalClosePosition);
   const graphSettings = useAppSettings((s) => s.graph);
   const diffTool = useAppSettings((s) => s.git.diffTool);
+  const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
+  const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
+  const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -419,12 +826,23 @@ function App() {
   const tagContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomPct, setZoomPct] = useState<number>(100);
 
+  const [avatarFailedByEmail, setAvatarFailedByEmail] = useState<Record<string, true>>({});
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.modalClose = modalClosePosition;
     document.documentElement.style.setProperty("--app-font-family", fontFamily);
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, modalClosePosition, fontFamily, fontSizePx]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    void loadRepo(activeRepoPath);
+    for (const p of repos) {
+      if (!p || p === activeRepoPath) continue;
+      void loadRepo(p, undefined, false);
+    }
+  }, [commitsOnlyHead, commitsHistoryOrder, repos]);
 
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
@@ -506,6 +924,21 @@ function App() {
   }, [cloneModalOpen]);
 
   const commitsAll = commitsByRepo[activeRepoPath] ?? [];
+
+  const commitLaneLayout = useMemo(() => {
+    if (viewMode !== "commits") return { rows: [] as CommitLaneRow[], maxLanes: 0 };
+    if (commitsAll.length === 0) return { rows: [] as CommitLaneRow[], maxLanes: 0 };
+    return computeCommitLaneRows(commitsAll, commitsHistoryOrder);
+  }, [commitsAll, commitsHistoryOrder, viewMode]);
+
+  const commitLaneRowByHash = useMemo(() => {
+    const m = new Map<string, CommitLaneRow>();
+    for (const r of commitLaneLayout.rows) m.set(r.hash, r);
+    return m;
+  }, [commitLaneLayout.rows]);
+
+  const commitLanePalette = useMemo(() => getCyPalette(theme), [theme]);
+  const commitLaneNodeBg = commitLanePalette.nodeBg;
 
   const confirmDialog = (opts: { title: string; message: string; okLabel?: string; cancelLabel?: string }) => {
     const { title, message, okLabel, cancelLabel } = opts;
@@ -1803,7 +2236,7 @@ function App() {
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
     const commits = commitsAll;
-    const commitCount = commits.length;
+    const present = new Set(commits.map((c) => c.hash));
 
     const openLanes: Array<string | null> = [];
     const laneByHash = new Map<string, number>();
@@ -1823,11 +2256,14 @@ function App() {
       }
 
       laneByHash.set(c.hash, lane);
-      openLanes[lane] = c.parents[0] ?? null;
+      const p0 = c.parents[0] ?? null;
+      openLanes[lane] = p0 && present.has(p0) ? p0 : null;
 
-      for (let i = 1; i < c.parents.length; i++) {
-        const p = c.parents[i];
+      const parents = commitsHistoryOrder === "first_parent" ? [] : c.parents;
+      for (let i = 1; i < parents.length; i++) {
+        const p = parents[i];
         if (!p) continue;
+        if (!present.has(p)) continue;
         if (typeof laneByHash.get(p) === "number") continue;
         let pLane = openLanes.indexOf(p);
         if (pLane < 0) pLane = allocFreeLane();
@@ -1842,13 +2278,6 @@ function App() {
 
     const rowForCommitIndex = (idx: number) => {
       return idx;
-    };
-
-    const placeholderRowByHash = new Map<string, number>();
-    let placeholderCount = 0;
-
-    const rowForPlaceholder = (placeholderIdx: number) => {
-      return commitCount + placeholderIdx;
     };
 
     const posFor = (lane: number, row: number) => {
@@ -1875,27 +2304,10 @@ function App() {
     }
 
     for (const c of commits) {
-      for (const p of c.parents) {
-        if (!nodes.has(p)) {
-          let placeholderIdx = placeholderRowByHash.get(p);
-          if (typeof placeholderIdx !== "number") {
-            placeholderIdx = placeholderCount;
-            placeholderRowByHash.set(p, placeholderCount);
-            placeholderCount += 1;
-          }
-
-          const lane = laneByHash.get(p) ?? 0;
-          const row = rowForPlaceholder(placeholderIdx);
-          nodes.set(p, {
-            data: {
-              id: p,
-              label: `${shortHash(p)}\n(older)`,
-              refs: "",
-            },
-            position: posFor(lane, row),
-            classes: "placeholder",
-          });
-        }
+      const parents = commitsHistoryOrder === "first_parent" ? (c.parents[0] ? [c.parents[0]] : []) : c.parents;
+      for (const p of parents) {
+        if (!p) continue;
+        if (!present.has(p)) continue;
 
         const source = graphSettings.edgeDirection === "to_parent" ? c.hash : p;
         const target = graphSettings.edgeDirection === "to_parent" ? p : c.hash;
@@ -1914,7 +2326,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
 
   function parseRefs(
     refs: string,
@@ -3225,19 +3637,23 @@ function App() {
     }
   }
 
-  async function loadRepo(nextRepoPath?: string, forceFullHistory?: boolean): Promise<boolean> {
+  async function loadRepo(nextRepoPath?: string, forceFullHistory?: boolean, updateSelection?: boolean): Promise<boolean> {
     const path = nextRepoPath ?? activeRepoPath;
     if (!path) return false;
+
+    const shouldUpdateSelection = updateSelection !== false;
 
     const fullHistory =
       typeof forceFullHistory === "boolean" ? forceFullHistory : Boolean(commitsFullByRepo[path]);
 
-    setLoading(true);
-    setError("");
+    if (shouldUpdateSelection) {
+      setLoading(true);
+      setError("");
+    }
     try {
       const commitsPromise = fullHistory
-        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path })
-        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200 });
+        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
+        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
       const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         invoke<RepoOverview>("repo_overview", { repoPath: path }),
@@ -3255,8 +3671,10 @@ function App() {
       setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
       setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
 
-      const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
-      setSelectedHash(headHash || "");
+      if (shouldUpdateSelection) {
+        const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
+        setSelectedHash(headHash || "");
+      }
       return true;
     } catch (e) {
       setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
@@ -3278,10 +3696,14 @@ function App() {
         return false;
       }
 
-      setError(msg);
+      if (shouldUpdateSelection) {
+        setError(msg);
+      }
       return false;
     } finally {
-      setLoading(false);
+      if (shouldUpdateSelection) {
+        setLoading(false);
+      }
     }
   }
 
@@ -4093,7 +4515,7 @@ function App() {
                 {commitsAll.length === 0 ? (
                   <div style={{ opacity: 0.7 }}>No commits loaded.</div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div className="commitsList">
                     {commitsAll.map((c) => (
                       <button
                         key={c.hash}
@@ -4106,27 +4528,87 @@ function App() {
                           setSelectedHash(c.hash);
                           openCommitContextMenu(c.hash, e.clientX, e.clientY);
                         }}
-                        style={{
-                          textAlign: "left",
-                          padding: 10,
-                          background: c.hash === selectedHash ? "rgba(47, 111, 237, 0.12)" : "#ffffff",
-                        }}
+                        className={
+                          c.hash === selectedHash ? "commitRow commitRowSelected" : "commitRow"
+                        }
                       >
-                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                          <span
+                        <div className="commitRowGrid">
+                          <div
+                            className="commitGraphCell"
                             style={{
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                              opacity: 0.9,
+                              width:
+                                commitLaneLayout.maxLanes > 0
+                                  ? Math.max(28, 20 + Math.min(commitLaneLayout.maxLanes, 10) * 12 + 56)
+                                  : 28,
                             }}
                           >
-                            {shortHash(c.hash)}
-                          </span>
-                          <span style={{ fontWeight: 800 }}>{truncate(c.subject, 100)}</span>
-                          {c.is_head ? <span style={{ opacity: 0.7 }}>(HEAD)</span> : null}
-                        </div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>
-                          {c.author} — {c.date}
+                            {commitLaneLayout.rows.length ? (
+                              <CommitLaneSvg
+                                row={commitLaneRowByHash.get(c.hash) ?? {
+                                  hash: c.hash,
+                                  lane: 0,
+                                  activeTop: [],
+                                  activeBottom: [],
+                                  parentLanes: [],
+                                  joinLanes: [],
+                                }}
+                                maxLanes={commitLaneLayout.maxLanes}
+                                theme={theme}
+                                selected={c.hash === selectedHash}
+                                isHead={c.is_head}
+                                showMergeStub={commitsHistoryOrder === "first_parent" && c.parents.length > 1}
+                                mergeParentCount={c.parents.length}
+                                nodeBg={commitLaneNodeBg}
+                                palette={commitLanePalette}
+                                refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}
+                              />
+                            ) : null}
+                          </div>
+                          <div
+                            className="commitAvatar"
+                            style={
+                              {
+                                ["--avatar-c1" as any]: `hsl(${fnv1a32(c.author) % 360} 72% ${theme === "dark" ? 58 : 46}%)`,
+                                ["--avatar-c2" as any]: `hsl(${(fnv1a32(c.author + "::2") + 28) % 360} 72% ${theme === "dark" ? 48 : 38}%)`,
+                              } as CSSProperties
+                            }
+                            title={c.author}
+                          >
+                            {(() => {
+                              const email = (c.author_email ?? "").trim().toLowerCase();
+                              const canUse = Boolean(showOnlineAvatars && email && !avatarFailedByEmail[email]);
+                              const url = canUse ? `https://www.gravatar.com/avatar/${md5Hex(email)}?d=404&s=64` : null;
+                              return (
+                                <>
+                                  <span className="commitAvatarText">{authorInitials(c.author)}</span>
+                                  {url ? (
+                                    <img
+                                      className="commitAvatarImg"
+                                      src={url}
+                                      alt={c.author}
+                                      loading="lazy"
+                                      decoding="async"
+                                      referrerPolicy="no-referrer"
+                                      draggable={false}
+                                      onError={() => {
+                                        setAvatarFailedByEmail((prev) => ({ ...prev, [email]: true }));
+                                      }}
+                                    />
+                                  ) : null}
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <div className="commitRowMain">
+                            <div className="commitRowTop">
+                              <span className="commitHash">{shortHash(c.hash)}</span>
+                              <span className="commitSubject">{truncate(c.subject, 100)}</span>
+                              {c.is_head ? <span className="commitHead">(HEAD)</span> : null}
+                            </div>
+                            <div className="commitMeta">
+                              {c.author} — {c.date}
+                            </div>
+                          </div>
                         </div>
                       </button>
                     ))}
