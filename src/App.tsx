@@ -318,6 +318,56 @@ function computeCommitLaneRows(commits: GitCommit[], historyOrder: GitHistoryOrd
   return { rows, maxLanes };
 }
 
+function computeCompactLaneByHashForGraph(commits: GitCommit[], historyOrder: GitHistoryOrder): Map<string, number> {
+  const present = new Set(commits.map((c) => c.hash));
+  const cols: string[] = [];
+  const laneByHash = new Map<string, number>();
+
+  const removeDuplicatesKeep = (hash: string, keepIdx: number) => {
+    for (let i = cols.length - 1; i >= 0; i--) {
+      if (i === keepIdx) continue;
+      if (cols[i] !== hash) continue;
+      cols.splice(i, 1);
+      if (i < keepIdx) keepIdx--;
+    }
+    return keepIdx;
+  };
+
+  for (const c of commits) {
+    let lane = cols.indexOf(c.hash);
+    if (lane < 0) {
+      lane = cols.length;
+      cols.push(c.hash);
+    }
+    lane = removeDuplicatesKeep(c.hash, lane);
+    laneByHash.set(c.hash, lane);
+
+    const p0 = c.parents[0] ?? null;
+    const primary = p0 && present.has(p0) ? p0 : null;
+
+    if (primary) {
+      cols[lane] = primary;
+    } else {
+      cols.splice(lane, 1);
+    }
+
+    const insertBase = primary ? lane + 1 : lane;
+    let insertAt = Math.min(insertBase, cols.length);
+
+    const parents = historyOrder === "first_parent" ? [] : c.parents;
+    for (let i = 1; i < parents.length; i++) {
+      const p = parents[i];
+      if (!p) continue;
+      if (!present.has(p)) continue;
+      if (cols.includes(p)) continue;
+      cols.splice(insertAt, 0, p);
+      insertAt++;
+    }
+  }
+
+  return laneByHash;
+}
+
 function CommitLaneSvg(props: {
   row: CommitLaneRow;
   maxLanes: number;
@@ -2238,39 +2288,7 @@ function App() {
     const commits = commitsAll;
     const present = new Set(commits.map((c) => c.hash));
 
-    const openLanes: Array<string | null> = [];
-    const laneByHash = new Map<string, number>();
-
-    const allocFreeLane = () => {
-      const idx = openLanes.indexOf(null);
-      if (idx >= 0) return idx;
-      openLanes.push(null);
-      return openLanes.length - 1;
-    };
-
-    for (const c of commits) {
-      let lane = laneByHash.get(c.hash);
-      if (typeof lane !== "number") {
-        lane = openLanes.indexOf(c.hash);
-        if (lane < 0) lane = allocFreeLane();
-      }
-
-      laneByHash.set(c.hash, lane);
-      const p0 = c.parents[0] ?? null;
-      openLanes[lane] = p0 && present.has(p0) ? p0 : null;
-
-      const parents = commitsHistoryOrder === "first_parent" ? [] : c.parents;
-      for (let i = 1; i < parents.length; i++) {
-        const p = parents[i];
-        if (!p) continue;
-        if (!present.has(p)) continue;
-        if (typeof laneByHash.get(p) === "number") continue;
-        let pLane = openLanes.indexOf(p);
-        if (pLane < 0) pLane = allocFreeLane();
-        laneByHash.set(p, pLane);
-        openLanes[pLane] = p;
-      }
-    }
+    const laneByHash = computeCompactLaneByHashForGraph(commits, commitsHistoryOrder);
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
@@ -2395,6 +2413,91 @@ function App() {
     const colGapX = 150;
     const maxPerCol = 6;
 
+    const edgeSegs = cy
+      .edges()
+      .toArray()
+      .filter((e) => !e.hasClass("refEdge") && !e.hasClass("stashEdge"))
+      .map((e) => {
+        const s = (e.source() as any).position();
+        const t = (e.target() as any).position();
+        const x1 = Number(s?.x ?? 0);
+        const y1 = Number(s?.y ?? 0);
+        const x2 = Number(t?.x ?? 0);
+        const y2 = Number(t?.y ?? 0);
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+        return { x1, y1, x2, y2, minX, maxX, minY, maxY };
+      });
+
+    const segIntersectsRect = (seg: { x1: number; y1: number; x2: number; y2: number }, r: any) => {
+      const x1 = seg.x1;
+      const y1 = seg.y1;
+      const x2 = seg.x2;
+      const y2 = seg.y2;
+
+      const inside = (x: number, y: number) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2;
+      if (inside(x1, y1) || inside(x2, y2)) return true;
+
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      let t0 = 0;
+      let t1 = 1;
+
+      const clip = (p: number, q: number) => {
+        if (p === 0) return q >= 0;
+        const r0 = q / p;
+        if (p < 0) {
+          if (r0 > t1) return false;
+          if (r0 > t0) t0 = r0;
+        } else {
+          if (r0 < t0) return false;
+          if (r0 < t1) t1 = r0;
+        }
+        return true;
+      };
+
+      if (!clip(-dx, x1 - r.x1)) return false;
+      if (!clip(dx, r.x2 - x1)) return false;
+      if (!clip(-dy, y1 - r.y1)) return false;
+      if (!clip(dy, r.y2 - y1)) return false;
+
+      return t0 <= t1;
+    };
+
+    const bboxIntersectsAnyEdge = (b: any) => {
+      for (const seg of edgeSegs) {
+        if (seg.minY > b.y2) continue;
+        if (seg.maxY < b.y1) continue;
+        if (seg.minX > b.x2) continue;
+        if (seg.maxX < b.x1) continue;
+        if (segIntersectsRect(seg, b)) return true;
+      }
+      return false;
+    };
+
+    const pushNodeAwayFromEdges = (nodeId: string, side: -1 | 1) => {
+      const n = cy.$id(nodeId);
+      if (n.length === 0) return;
+      const step = 40;
+      const maxIter = 35;
+      for (let i = 0; i < maxIter; i++) {
+        const bb0 = n.boundingBox({ includeLabels: true, includeOverlays: false } as any);
+        const bb = {
+          x1: bb0.x1 - 10,
+          y1: bb0.y1 - 6,
+          x2: bb0.x2 + 10,
+          y2: bb0.y2 + 6,
+        };
+        if (!bboxIntersectsAnyEdge(bb)) break;
+        const pos = n.position();
+        n.unlock();
+        n.position({ x: pos.x + side * step, y: pos.y });
+        n.lock();
+      }
+    };
+
     for (const n of cy.nodes().toArray()) {
       if (n.hasClass("refBadge")) continue;
       const refs = (n.data("refs") as string) || "";
@@ -2446,6 +2549,18 @@ function App() {
 
       if (left.length > 0) placeSide(left, -1);
       if (right.length > 0) placeSide(right, 1);
+    }
+
+    for (const b of cy.$("node.refBadge").toArray()) {
+      const badge = b as any;
+      const id = badge.id();
+      const parts = id.split(":");
+      if (parts.length < 3) continue;
+      const targetId = parts[1];
+      const target = cy.$id(targetId);
+      if (target.length === 0) continue;
+      const side: -1 | 1 = badge.position().x < (target as any).position().x ? -1 : 1;
+      pushNodeAwayFromEdges(id, side);
     }
 
     if (!graphSettings.showStashesOnGraph || !activeRepoPath) return;
@@ -2518,6 +2633,7 @@ function App() {
             "background-color": stashBg,
             color: stashText,
           } as any);
+          pushNodeAwayFromEdges(id, -1);
         }
       }
     }
