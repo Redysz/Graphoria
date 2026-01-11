@@ -13,6 +13,12 @@ type DiffRow = {
   rightNo: number | null;
 };
 
+type MiniMark = {
+  topPct: number;
+  heightPct: number;
+  kind: "add" | "del" | "mod";
+};
+
 type DiffOp = { kind: "equal" | "insert" | "delete"; text: string };
 
 type Props = {
@@ -189,6 +195,55 @@ function buildSplitRows(left: string, right: string): DiffRow[] {
   return rows;
 }
 
+function rowChangeKind(r: DiffRow): "add" | "del" | "mod" | null {
+  const hasDel = r.leftKind === "del";
+  const hasAdd = r.rightKind === "add";
+  if (hasDel && hasAdd) return "mod";
+  if (hasDel) return "del";
+  if (hasAdd) return "add";
+  return null;
+}
+
+function buildMiniMarks(rows: DiffRow[]): MiniMark[] {
+  if (rows.length === 0) return [];
+
+  const out: MiniMark[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    const k = rowChangeKind(rows[i]);
+    if (!k) {
+      i++;
+      continue;
+    }
+
+    let start = i;
+    let end = i;
+    let hasAdd = k === "add";
+    let hasDel = k === "del";
+    let hasMod = k === "mod";
+    i++;
+
+    while (i < rows.length) {
+      const kk = rowChangeKind(rows[i]);
+      if (!kk) break;
+      end = i;
+      if (kk === "add") hasAdd = true;
+      if (kk === "del") hasDel = true;
+      if (kk === "mod") hasMod = true;
+      i++;
+    }
+
+    const kind: MiniMark["kind"] = hasMod || (hasAdd && hasDel) ? "mod" : hasDel ? "del" : "add";
+    out.push({
+      topPct: start / rows.length,
+      heightPct: (end - start + 1) / rows.length,
+      kind,
+    });
+  }
+
+  return out;
+}
+
 export default function DiffToolModal(props: Props) {
   const { open: isOpen, onClose, repos, activeRepoPath } = props;
 
@@ -297,6 +352,7 @@ export default function DiffToolModal(props: Props) {
   }, [isOpen, syncScroll, leftRef.current, rightRef.current]);
 
   const rows = useMemo(() => buildSplitRows(leftContent, rightContent), [leftContent, rightContent]);
+  const miniMarks = useMemo(() => buildMiniMarks(rows), [rows]);
   const emptyHint = useMemo(() => {
     if (loading) return "Comparing…";
     if (error) return "";
@@ -304,6 +360,21 @@ export default function DiffToolModal(props: Props) {
     if (rows.length === 0) return "No content.";
     return "";
   }, [error, leftContent, loading, rightContent, rows.length]);
+
+  function scrollRightToPct(pct: number) {
+    const rightEl = rightRef.current;
+    if (!rightEl) return;
+    const maxTop = Math.max(0, rightEl.scrollHeight - rightEl.clientHeight);
+    rightEl.scrollTop = pct * maxTop;
+  }
+
+  function onMiniBarClick(e: React.MouseEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const pct = rect.height > 0 ? Math.max(0, Math.min(1, y / rect.height)) : 0;
+    scrollRightToPct(pct);
+  }
 
   async function pickRepoFile() {
     if (!repoPath.trim()) {
@@ -427,7 +498,7 @@ export default function DiffToolModal(props: Props) {
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
-      <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
+      <div className="modal" style={{ width: "min(1200px, 96vw)", height: "min(92vh, 980px)", maxHeight: "min(92vh, 980px)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>Diff Tool</div>
           <button type="button" onClick={onClose} disabled={loading}>
@@ -435,7 +506,7 @@ export default function DiffToolModal(props: Props) {
           </button>
         </div>
 
-        <div className="modalBody" style={{ padding: 12, display: "grid", gap: 12, minHeight: 0 }}>
+        <div className="modalBody" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12, minHeight: 0, overflow: "hidden" }}>
           {error ? <div className="error">{error}</div> : null}
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -507,7 +578,7 @@ export default function DiffToolModal(props: Props) {
             </div>
           )}
 
-          <div className="splitDiffLayout" style={{ height: "min(64vh, 720px)" }}>
+          <div className="splitDiffLayout" style={{ flex: "1 1 auto", minHeight: 0 }}>
             <div className="splitDiffHeader">
               <div className="splitDiffHeaderCell" title={leftLabel}>
                 {leftLabel}
@@ -530,17 +601,29 @@ export default function DiffToolModal(props: Props) {
                 )}
               </div>
 
-              <div ref={rightRef} className="diffCode splitDiffPane">
-                {emptyHint ? (
-                  <div style={{ opacity: 0.75 }}>{emptyHint}</div>
-                ) : (
-                  rows.map((r, i) => (
-                    <div key={i} className="splitDiffRow">
-                      <span className="splitDiffLineNo">{r.rightNo ?? ""}</span>
-                      <span className={`diffLine diffLine-${r.rightKind}`}>{r.rightText ? r.rightText : "\u00A0"}</span>
-                    </div>
-                  ))
-                )}
+              <div className="splitDiffRightWrap">
+                <div ref={rightRef} className="diffCode splitDiffPane splitDiffPaneRight">
+                  {emptyHint ? (
+                    <div style={{ opacity: 0.75 }}>{emptyHint}</div>
+                  ) : (
+                    rows.map((r, i) => (
+                      <div key={i} className="splitDiffRow">
+                        <span className="splitDiffLineNo">{r.rightNo ?? ""}</span>
+                        <span className={`diffLine diffLine-${r.rightKind}`}>{r.rightText ? r.rightText : "\u00A0"}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="splitDiffMiniBar" onClick={onMiniBarClick} title="Changes overview">
+                  {miniMarks.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className={`splitDiffMiniMark splitDiffMiniMark-${m.kind}`}
+                      style={{ top: `${m.topPct * 100}%`, height: `${m.heightPct * 100}%` }}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           </div>
