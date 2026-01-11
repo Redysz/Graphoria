@@ -6,6 +6,7 @@ import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings, type CyPalette, type ThemeName, type GitHistoryOrder } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
+import DiffToolModal from "./DiffToolModal";
 import "./App.css";
 
 type GitCommit = {
@@ -658,6 +659,7 @@ function App() {
   const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("Confirm");
@@ -4150,6 +4152,15 @@ function App() {
                     type="button"
                     onClick={() => {
                       setToolsMenuOpen(false);
+                      setDiffToolModalOpen(true);
+                    }}
+                  >
+                    Diff tool…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setToolsMenuOpen(false);
                       void (async () => {
                         const ok = await confirmDialog({
                           title: "Clear all stashes",
@@ -4931,6 +4942,10 @@ function App() {
             );
           })()}
         </div>
+      ) : null}
+
+      {diffToolModalOpen ? (
+        <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
       ) : null}
 
       {refBadgeContextMenu ? (
