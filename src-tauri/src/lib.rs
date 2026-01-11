@@ -1443,6 +1443,179 @@ fn git_working_file_content(repo_path: String, path: String) -> Result<String, S
 }
 
 #[tauri::command]
+fn git_head_vs_working_diff(repo_path: String, path: String, unified: u32) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let head_spec = format!("HEAD:{path}");
+    let head_bytes = match git_command_in_repo(&repo_path)
+        .args(["show", head_spec.as_str()])
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => Vec::new(),
+    };
+
+    let working_bytes = match fs::read(full) {
+        Ok(b) => b,
+        Err(_) => Vec::new(),
+    };
+
+    if head_bytes.iter().any(|b| *b == 0) || working_bytes.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+
+    let dir = make_temp_diff_dir()?;
+    let safe = sanitize_filename(path.as_str());
+    let left = dir.join(format!("HEAD_{safe}"));
+    let right = dir.join(format!("WORK_{safe}"));
+    fs::write(&left, head_bytes.as_slice()).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    fs::write(&right, working_bytes.as_slice()).map_err(|e| format!("Failed to write temp file: {e}"))?;
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    let out = Command::new("git")
+        .args([
+            "diff",
+            "--no-index",
+            "--no-color",
+            unified_arg.as_str(),
+            "--",
+            left.to_string_lossy().as_ref(),
+            right.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    if out.status.code() == Some(1) {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if !stderr.is_empty() {
+        return Err(format!("git diff failed: {stderr}"));
+    }
+    Err(String::from("git diff failed."))
+}
+
+#[tauri::command]
+fn git_diff_no_index(left_path: String, right_path: String, unified: u32) -> Result<String, String> {
+    let left_path = left_path.trim().to_string();
+    let right_path = right_path.trim().to_string();
+    if left_path.is_empty() {
+        return Err(String::from("left_path is empty"));
+    }
+    if right_path.is_empty() {
+        return Err(String::from("right_path is empty"));
+    }
+
+    let left = Path::new(left_path.as_str());
+    let right = Path::new(right_path.as_str());
+    if !left.exists() {
+        return Err(String::from("Left file does not exist."));
+    }
+    if !right.exists() {
+        return Err(String::from("Right file does not exist."));
+    }
+    if !left.is_file() {
+        return Err(String::from("Left path is not a file."));
+    }
+    if !right.is_file() {
+        return Err(String::from("Right path is not a file."));
+    }
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    let out = Command::new("git")
+        .args([
+            "diff",
+            "--no-index",
+            "--no-color",
+            unified_arg.as_str(),
+            "--",
+            left.to_string_lossy().as_ref(),
+            right.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    if out.status.code() == Some(1) {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if !stderr.is_empty() {
+        return Err(format!("git diff failed: {stderr}"));
+    }
+    Err(String::from("git diff failed."))
+}
+
+#[tauri::command]
+fn git_head_file_content(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let _ = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let spec = format!("HEAD:{path}");
+    let out = git_command_in_repo(&repo_path)
+        .args(["show", spec.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
+
+    if out.stdout.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+
+    Ok(String::from_utf8_lossy(out.stdout.as_slice()).to_string())
+}
+
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let p = Path::new(path.as_str());
+    if !p.exists() {
+        return Err(String::from("File does not exist."));
+    }
+    if !p.is_file() {
+        return Err(String::from("Selected path is not a file."));
+    }
+
+    let bytes = fs::read(p).map_err(|e| format!("Failed to read file: {e}"))?;
+    if bytes.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+    Ok(String::from_utf8_lossy(bytes.as_slice()).to_string())
+}
+
+#[tauri::command]
 fn git_launch_external_diff_working(
     repo_path: String,
     path: String,
@@ -2657,6 +2830,10 @@ pub fn run() {
             git_working_file_diff,
             git_working_file_diff_unified,
             git_working_file_content,
+            git_head_file_content,
+            read_text_file,
+            git_head_vs_working_diff,
+            git_diff_no_index,
             git_launch_external_diff_working,
             git_launch_external_diff_commit,
             git_commit,

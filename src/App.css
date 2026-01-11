@@ -1136,3 +1136,61 @@ button:disabled {
   background: rgba(120, 185, 255, 0.18);
   border: 1px solid rgba(120, 185, 255, 0.28);
  }
+
+ .splitDiffLayout {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+ }
+
+ .splitDiffHeader {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid rgba(15, 15, 15, 0.08);
+  background: var(--panel);
+ }
+
+ .splitDiffHeaderCell {
+  padding: 10px 12px;
+  font-weight: 900;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+ }
+
+ .splitDiffHeaderCell + .splitDiffHeaderCell {
+  border-left: 1px solid var(--border);
+ }
+
+ .splitDiffPanes {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+ }
+
+ .splitDiffPane {
+  min-height: 0;
+  overflow: auto;
+ }
+
+ .splitDiffPaneLeft {
+  border-right: 1px solid var(--border);
+ }
+
+ .splitDiffRow {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: start;
+ }
+
+ .splitDiffLineNo {
+  padding: 0 8px;
+  opacity: 0.55;
+  text-align: right;
+  user-select: none;
+ }
