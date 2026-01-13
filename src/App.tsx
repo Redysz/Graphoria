@@ -117,6 +117,44 @@ function truncate(s: string, max: number) {
   return `${s.slice(0, max - 1)}…`;
 }
 
+function fileExtLower(path: string) {
+  const p = path.trim().toLowerCase();
+  const idx = p.lastIndexOf(".");
+  if (idx < 0) return "";
+  return p.slice(idx + 1);
+}
+
+function isImageExt(ext: string) {
+  return ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "webp" || ext === "gif" || ext === "bmp";
+}
+
+function imageMimeFromExt(ext: string) {
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "bmp") return "image/bmp";
+  return "application/octet-stream";
+}
+
+function isDocTextPreviewExt(ext: string) {
+  return ext === "docx" || ext === "pdf" || ext === "xlsx" || ext === "xlsm" || ext === "xltx" || ext === "xltm";
+}
+
+function statusBadge(status: string) {
+  const s = status.replace(/\s+/g, "");
+  if (!s) return "?";
+  if (s.includes("?")) return "A";
+  if (s.includes("U")) return "U";
+  if (s.includes("D")) return "D";
+  if (s.includes("R")) return "R";
+  if (s.includes("C")) return "C";
+  if (s.includes("A")) return "A";
+  if (s.includes("M")) return "M";
+  if (s.includes("T")) return "T";
+  return (s[0] ?? "?").toUpperCase();
+}
+
 function fnv1a32(input: string) {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
@@ -711,6 +749,7 @@ function App() {
   const [stashPreviewStatus, setStashPreviewStatus] = useState("");
   const [stashPreviewDiff, setStashPreviewDiff] = useState("");
   const [stashPreviewContent, setStashPreviewContent] = useState("");
+  const [stashPreviewImageBase64, setStashPreviewImageBase64] = useState("");
   const [stashPreviewLoading, setStashPreviewLoading] = useState(false);
   const [stashPreviewError, setStashPreviewError] = useState("");
 
@@ -730,6 +769,7 @@ function App() {
   const [commitPreviewStatus, setCommitPreviewStatus] = useState("");
   const [commitPreviewDiff, setCommitPreviewDiff] = useState("");
   const [commitPreviewContent, setCommitPreviewContent] = useState("");
+  const [commitPreviewImageBase64, setCommitPreviewImageBase64] = useState("");
   const [commitPreviewLoading, setCommitPreviewLoading] = useState(false);
   const [commitPreviewError, setCommitPreviewError] = useState("");
 
@@ -800,6 +840,7 @@ function App() {
   const [filePreviewPath, setFilePreviewPath] = useState("");
   const [filePreviewDiff, setFilePreviewDiff] = useState("");
   const [filePreviewContent, setFilePreviewContent] = useState("");
+  const [filePreviewImageBase64, setFilePreviewImageBase64] = useState("");
   const [filePreviewLoading, setFilePreviewLoading] = useState(false);
   const [filePreviewError, setFilePreviewError] = useState("");
 
@@ -2086,6 +2127,7 @@ function App() {
     if (!filePreviewOpen || !activeRepoPath || !filePreviewPath) {
       setFilePreviewDiff("");
       setFilePreviewContent("");
+      setFilePreviewImageBase64("");
       setFilePreviewError("");
       setFilePreviewLoading(false);
       return;
@@ -2096,6 +2138,7 @@ function App() {
     setFilePreviewError("");
     setFilePreviewDiff("");
     setFilePreviewContent("");
+    setFilePreviewImageBase64("");
 
     const run = async () => {
       try {
@@ -2109,6 +2152,38 @@ function App() {
           });
           if (!alive) return;
           setFilePreviewContent("Opened in external diff tool.");
+          return;
+        }
+
+        const ext = fileExtLower(filePreviewPath);
+        if (isImageExt(ext)) {
+          const b64 = await invoke<string>("git_working_file_image_base64", {
+            repoPath: activeRepoPath,
+            path: filePreviewPath,
+          });
+          if (!alive) return;
+          setFilePreviewImageBase64(b64);
+          return;
+        }
+
+        if (isDocTextPreviewExt(ext)) {
+          const diff = await invoke<string>("git_head_vs_working_text_diff", {
+            repoPath: activeRepoPath,
+            path: filePreviewPath,
+            unified: 3,
+          });
+          if (!alive) return;
+          if (diff.trim()) {
+            setFilePreviewDiff(diff);
+            return;
+          }
+
+          const content = await invoke<string>("git_working_file_text_preview", {
+            repoPath: activeRepoPath,
+            path: filePreviewPath,
+          });
+          if (!alive) return;
+          setFilePreviewContent(content);
           return;
         }
 
@@ -3231,6 +3306,7 @@ function App() {
     if (!commitModalOpen || !activeRepoPath || !commitPreviewPath) {
       setCommitPreviewDiff("");
       setCommitPreviewContent("");
+      setCommitPreviewImageBase64("");
       setCommitPreviewError("");
       setCommitPreviewLoading(false);
       return;
@@ -3241,6 +3317,7 @@ function App() {
     setCommitPreviewError("");
     setCommitPreviewDiff("");
     setCommitPreviewContent("");
+    setCommitPreviewImageBase64("");
 
     const run = async () => {
       try {
@@ -3257,7 +3334,50 @@ function App() {
           return;
         }
 
+        const ext = fileExtLower(commitPreviewPath);
+        if (isImageExt(ext)) {
+          const b64 = await invoke<string>("git_working_file_image_base64", {
+            repoPath: activeRepoPath,
+            path: commitPreviewPath,
+          });
+          if (!alive) return;
+          setCommitPreviewImageBase64(b64);
+          return;
+        }
+
         const st = commitPreviewStatus.trim();
+
+        if (isDocTextPreviewExt(ext)) {
+          if (st.startsWith("??")) {
+            const content = await invoke<string>("git_working_file_text_preview", {
+              repoPath: activeRepoPath,
+              path: commitPreviewPath,
+            });
+            if (!alive) return;
+            setCommitPreviewContent(content);
+            return;
+          }
+
+          const diff = await invoke<string>("git_head_vs_working_text_diff", {
+            repoPath: activeRepoPath,
+            path: commitPreviewPath,
+            unified: 3,
+          });
+          if (!alive) return;
+          if (diff.trim()) {
+            setCommitPreviewDiff(diff);
+            return;
+          }
+
+          const content = await invoke<string>("git_working_file_text_preview", {
+            repoPath: activeRepoPath,
+            path: commitPreviewPath,
+          });
+          if (!alive) return;
+          setCommitPreviewContent(content);
+          return;
+        }
+
         if (st.startsWith("??")) {
           const content = await invoke<string>("git_working_file_content", {
             repoPath: activeRepoPath,
@@ -3323,6 +3443,7 @@ function App() {
     if (!stashModalOpen || !activeRepoPath || !stashPreviewPath) {
       setStashPreviewDiff("");
       setStashPreviewContent("");
+      setStashPreviewImageBase64("");
       setStashPreviewError("");
       setStashPreviewLoading(false);
       return;
@@ -3333,6 +3454,7 @@ function App() {
     setStashPreviewError("");
     setStashPreviewDiff("");
     setStashPreviewContent("");
+    setStashPreviewImageBase64("");
 
     const run = async () => {
       try {
@@ -3349,7 +3471,50 @@ function App() {
           return;
         }
 
+        const ext = fileExtLower(stashPreviewPath);
+        if (isImageExt(ext)) {
+          const b64 = await invoke<string>("git_working_file_image_base64", {
+            repoPath: activeRepoPath,
+            path: stashPreviewPath,
+          });
+          if (!alive) return;
+          setStashPreviewImageBase64(b64);
+          return;
+        }
+
         const st = stashPreviewStatus.trim();
+
+        if (isDocTextPreviewExt(ext)) {
+          if (st.startsWith("??")) {
+            const content = await invoke<string>("git_working_file_text_preview", {
+              repoPath: activeRepoPath,
+              path: stashPreviewPath,
+            });
+            if (!alive) return;
+            setStashPreviewContent(content);
+            return;
+          }
+
+          const diff = await invoke<string>("git_head_vs_working_text_diff", {
+            repoPath: activeRepoPath,
+            path: stashPreviewPath,
+            unified: stashAdvancedMode ? 20 : 3,
+          });
+          if (!alive) return;
+          if (diff.trim()) {
+            setStashPreviewDiff(diff);
+            return;
+          }
+
+          const content = await invoke<string>("git_working_file_text_preview", {
+            repoPath: activeRepoPath,
+            path: stashPreviewPath,
+          });
+          if (!alive) return;
+          setStashPreviewContent(content);
+          return;
+        }
+
         if (st.startsWith("??")) {
           const content = await invoke<string>("git_working_file_content", {
             repoPath: activeRepoPath,
@@ -3409,6 +3574,12 @@ function App() {
       } else {
         if (!stashPreviewPath) {
           setStashError("Select a file.");
+          return;
+        }
+
+        const ext = fileExtLower(stashPreviewPath);
+        if (isImageExt(ext) || isDocTextPreviewExt(ext)) {
+          setStashError("Partial stash is not supported for this file type.");
           return;
         }
 
@@ -5051,6 +5222,20 @@ function App() {
               {!filePreviewLoading && !filePreviewError ? (
                 diffTool.difftool !== "Graphoria builtin diff" ? (
                   <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                ) : filePreviewImageBase64 ? (
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      maxHeight: "min(62vh, 720px)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <img
+                      src={`data:${imageMimeFromExt(fileExtLower(filePreviewPath))};base64,${filePreviewImageBase64}`}
+                      style={{ width: "100%", height: "100%", maxHeight: "min(62vh, 720px)", objectFit: "contain", display: "block" }}
+                    />
+                  </div>
                 ) : filePreviewDiff ? (
                   <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
                     {parseUnifiedDiff(filePreviewDiff).map((l, i) => (
@@ -5947,8 +6132,17 @@ function App() {
             <div className="modalBody">
               {stashError ? <div className="error">{stashError}</div> : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
+                  gap: 12,
+                  alignItems: "stretch",
+                  minHeight: 0,
+                  height: "100%",
+                }}
+              >
+                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
                   <div style={{ display: "grid", gap: 8 }}>
                     <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
                     <textarea
@@ -6034,7 +6228,9 @@ function App() {
                             onChange={(ev) => setStashSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
                             disabled={stashBusy}
                           />
-                          <span className="statusCode">{e.status}</span>
+                          <span className="statusCode" title={e.status}>
+                            {statusBadge(e.status)}
+                          </span>
                           <span className="statusPath">{e.path}</span>
                         </div>
                       ))}
@@ -6042,7 +6238,7 @@ function App() {
                   )}
                 </div>
 
-                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
                   {stashAdvancedMode ? (
                     <div style={{ display: "grid", gap: 8 }}>
@@ -6089,8 +6285,33 @@ function App() {
                   {!stashPreviewLoading && !stashPreviewError ? (
                     diffTool.difftool !== "Graphoria builtin diff" ? (
                       <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                    ) : stashPreviewImageBase64 ? (
+                      <div
+                        style={{
+                          border: "1px solid var(--border)",
+                          borderRadius: 12,
+                          overflow: "hidden",
+                          flex: 1,
+                          minHeight: 0,
+                          minWidth: 0,
+                          display: "grid",
+                        }}
+                      >
+                        <img
+                          src={`data:${imageMimeFromExt(fileExtLower(stashPreviewPath))};base64,${stashPreviewImageBase64}`}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      </div>
                     ) : stashPreviewDiff ? (
-                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                      <pre
+                        className="diffCode"
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
+                      >
                         {parseUnifiedDiff(stashPreviewDiff).map((l, i) => (
                           <div key={i} className={`diffLine diffLine-${l.kind}`}>
                             {l.text}
@@ -6098,7 +6319,10 @@ function App() {
                         ))}
                       </pre>
                     ) : stashPreviewContent ? (
-                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                      <pre
+                        className="diffCode"
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
+                      >
                         {stashPreviewContent.replace(/\r\n/g, "\n")}
                       </pre>
                     ) : (
@@ -6309,8 +6533,17 @@ function App() {
             <div className="modalBody">
               {commitError ? <div className="error">{commitError}</div> : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
+                  gap: 12,
+                  alignItems: "stretch",
+                  minHeight: 0,
+                  height: "100%",
+                }}
+              >
+                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
                   <div style={{ display: "grid", gap: 8 }}>
                     <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
                     <textarea
@@ -6363,7 +6596,9 @@ function App() {
                             onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
                             disabled={commitBusy}
                           />
-                          <span className="statusCode">{e.status}</span>
+                          <span className="statusCode" title={e.status}>
+                            {statusBadge(e.status)}
+                          </span>
                           <span className="statusPath">{e.path}</span>
                         </div>
                       ))}
@@ -6384,7 +6619,7 @@ function App() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
                   <div style={{ opacity: 0.75, fontSize: 12 }}>
                     Green: added, red: removed. Yellow/blue: detected moved lines.
@@ -6396,8 +6631,33 @@ function App() {
                   {!commitPreviewLoading && !commitPreviewError ? (
                     diffTool.difftool !== "Graphoria builtin diff" ? (
                       <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
+                    ) : commitPreviewImageBase64 ? (
+                      <div
+                        style={{
+                          border: "1px solid var(--border)",
+                          borderRadius: 12,
+                          overflow: "hidden",
+                          flex: 1,
+                          minHeight: 0,
+                          minWidth: 0,
+                          display: "grid",
+                        }}
+                      >
+                        <img
+                          src={`data:${imageMimeFromExt(fileExtLower(commitPreviewPath))};base64,${commitPreviewImageBase64}`}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      </div>
                     ) : commitPreviewDiff ? (
-                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                      <pre
+                        className="diffCode"
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
+                      >
                         {parseUnifiedDiff(commitPreviewDiff).map((l, i) => (
                           <div key={i} className={`diffLine diffLine-${l.kind}`}>
                             {l.text}
@@ -6405,7 +6665,10 @@ function App() {
                         ))}
                       </pre>
                     ) : commitPreviewContent ? (
-                      <pre className="diffCode" style={{ maxHeight: 360, border: "1px solid var(--border)", borderRadius: 12 }}>
+                      <pre
+                        className="diffCode"
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
+                      >
                         {commitPreviewContent.replace(/\r\n/g, "\n")}
                       </pre>
                     ) : (

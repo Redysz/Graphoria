@@ -1,6 +1,11 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
 use tauri::Emitter;
+use base64::Engine;
+use quick_xml::events::Event as XmlEvent;
+use quick_xml::Reader as XmlReader;
+use zip::ZipArchive;
+use calamine::Reader;
 use std::io::{Read, Write};
 use std::fs;
 use std::collections::HashSet;
@@ -40,6 +45,7 @@ fn git_command_in_repo(repo_path: &str) -> Command {
         let safe = normalize_repo_path(repo_path);
         cmd.arg("-c").arg(format!("safe.directory={safe}"));
     }
+    cmd.arg("-c").arg("core.quotepath=false");
     cmd.args(["-C", repo_path]);
     cmd
 }
@@ -439,6 +445,132 @@ fn sanitize_filename(s: &str) -> String {
     } else {
         out
     }
+}
+
+fn file_extension_lower(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn truncate_preview(mut s: String) -> String {
+    const MAX_CHARS: usize = 400_000;
+    if s.len() <= MAX_CHARS {
+        return s;
+    }
+    s.truncate(MAX_CHARS);
+    s
+}
+
+fn extract_docx_text(bytes: &[u8]) -> Result<String, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let mut zip = ZipArchive::new(cursor).map_err(|e| format!("Failed to open docx zip: {e}"))?;
+    let mut file = zip
+        .by_name("word/document.xml")
+        .map_err(|e| format!("Failed to open word/document.xml: {e}"))?;
+
+    let mut xml_bytes: Vec<u8> = Vec::new();
+    file.read_to_end(&mut xml_bytes)
+        .map_err(|e| format!("Failed to read document.xml: {e}"))?;
+
+    let xml = String::from_utf8_lossy(xml_bytes.as_slice());
+    let mut reader = XmlReader::from_str(xml.as_ref());
+    reader.trim_text(true);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut out = String::new();
+    let mut in_text = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(XmlEvent::Start(e)) => {
+                if e.name().as_ref() == b"w:t" {
+                    in_text = true;
+                } else if e.name().as_ref() == b"w:tab" {
+                    out.push('\t');
+                } else if e.name().as_ref() == b"w:br" || e.name().as_ref() == b"w:cr" {
+                    out.push('\n');
+                }
+            }
+            Ok(XmlEvent::End(e)) => {
+                if e.name().as_ref() == b"w:t" {
+                    in_text = false;
+                } else if e.name().as_ref() == b"w:p" {
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+            }
+            Ok(XmlEvent::Text(e)) => {
+                if in_text {
+                    let t = e
+                        .unescape()
+                        .map_err(|e| format!("Failed to decode docx text: {e}"))?;
+                    out.push_str(t.as_ref());
+                }
+            }
+            Ok(XmlEvent::Eof) => break,
+            Err(e) => return Err(format!("Failed to parse docx xml: {e}")),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(out.trim_end().to_string())
+}
+
+fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
+    pdf_extract::extract_text_from_mem(bytes).map_err(|e| format!("Failed to extract pdf text: {e}"))
+}
+
+fn extract_xlsx_text(bytes: &[u8]) -> Result<String, String> {
+    let cursor = std::io::Cursor::new(bytes.to_vec());
+    let mut workbook = calamine::open_workbook_auto_from_rs(cursor)
+        .map_err(|e| format!("Failed to open workbook: {e}"))?;
+
+    let sheet_names = workbook.sheet_names().to_owned();
+    let mut out = String::new();
+    for (i, name) in sheet_names.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(name);
+        out.push('\n');
+        out.push_str("---\n");
+
+        if let Ok(range) = workbook.worksheet_range(name) {
+            for row in range.rows() {
+                let mut first = true;
+                for cell in row.iter() {
+                    if !first {
+                        out.push('\t');
+                    }
+                    first = false;
+                    out.push_str(format!("{cell}").as_str());
+                }
+                out.push('\n');
+            }
+        }
+    }
+
+    Ok(out.trim_end().to_string())
+}
+
+fn extract_text_preview(path: &str, bytes: &[u8]) -> Result<String, String> {
+    let ext = file_extension_lower(path);
+    let text = match ext.as_str() {
+        "docx" => extract_docx_text(bytes)?,
+        "pdf" => extract_pdf_text(bytes)?,
+        "xlsx" | "xlsm" | "xltx" | "xltm" => extract_xlsx_text(bytes)?,
+        _ => {
+            if bytes.iter().any(|b| *b == 0) {
+                return Err(String::from("Binary file preview is not supported."));
+            }
+            String::from_utf8_lossy(bytes).to_string()
+        }
+    };
+    Ok(truncate_preview(text))
 }
 
 fn make_temp_diff_dir() -> Result<PathBuf, String> {
@@ -999,35 +1131,74 @@ fn init_repo(repo_path: String) -> Result<String, String> {
 fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let raw = run_git(&repo_path, &["status", "--porcelain"]).unwrap_or_default();
-    let mut entries = Vec::new();
+    let out = git_command_in_repo(&repo_path)
+        .args(["status", "--porcelain", "-z"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
-    for line in raw.lines() {
-        if line.trim().is_empty() {
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
+
+    let mut entries: Vec<GitStatusEntry> = Vec::new();
+    let mut i: usize = 0;
+    let b = out.stdout.as_slice();
+    while i < b.len() {
+        let start = i;
+        while i < b.len() && b[i] != 0 {
+            i += 1;
+        }
+        let rec = &b[start..i];
+        i += 1;
+        if rec.is_empty() {
+            continue;
+        }
+        if rec.len() < 3 {
             continue;
         }
 
-        let status = if line.len() >= 2 {
-            line[0..2].to_string()
-        } else {
-            line.to_string()
-        };
+        let status_bytes = &rec[0..2];
+        let status = String::from_utf8_lossy(status_bytes).to_string();
 
-        let mut path = if line.len() >= 4 {
-            line[3..].trim().to_string()
-        } else {
-            String::new()
-        };
-
-        if let Some(idx) = path.rfind(" -> ") {
-            path = path[idx + 4..].trim().to_string();
+        let path_bytes = if rec.len() >= 4 { &rec[3..] } else { &[] };
+        if path_bytes.is_empty() {
+            continue;
         }
 
-        if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
-            path = path[1..path.len() - 1].to_string();
-        }
+        let has_rename = status_bytes[0] == b'R'
+            || status_bytes[1] == b'R'
+            || status_bytes[0] == b'C'
+            || status_bytes[1] == b'C';
 
-        entries.push(GitStatusEntry { status, path });
+        if has_rename {
+            let old_path = String::from_utf8_lossy(path_bytes).to_string();
+
+            let start2 = i;
+            while i < b.len() && b[i] != 0 {
+                i += 1;
+            }
+            let new_path_bytes = &b[start2..i];
+            i += 1;
+
+            let new_path = String::from_utf8_lossy(new_path_bytes).to_string();
+            if !new_path.trim().is_empty() {
+                entries.push(GitStatusEntry {
+                    status,
+                    path: new_path,
+                });
+            } else if !old_path.trim().is_empty() {
+                entries.push(GitStatusEntry {
+                    status,
+                    path: old_path,
+                });
+            }
+        } else {
+            let path = String::from_utf8_lossy(path_bytes).to_string();
+            if !path.trim().is_empty() {
+                entries.push(GitStatusEntry { status, path });
+            }
+        }
     }
 
     Ok(entries)
@@ -1307,42 +1478,72 @@ fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChange
         return Err(String::from("commit is empty"));
     }
 
-    let raw = run_git(&repo_path, &["show", "--name-status", "--pretty=format:", commit.as_str()])
-        .unwrap_or_default();
+    let out_bytes = git_command_in_repo(&repo_path)
+        .args(["show", "--name-status", "-z", "--pretty=format:", commit.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out_bytes.status.success() {
+        let stderr = String::from_utf8_lossy(&out_bytes.stderr);
+        return Err(format!("git command failed: {stderr}"));
+    }
 
     let mut out: Vec<GitChangeEntry> = Vec::new();
-    for line in raw.lines() {
-        let t = line.trim();
-        if t.is_empty() {
+    let b = out_bytes.stdout.as_slice();
+    let mut i: usize = 0;
+    while i < b.len() {
+        let start = i;
+        while i < b.len() && b[i] != 0 {
+            i += 1;
+        }
+        let rec = &b[start..i];
+        i += 1;
+        if rec.is_empty() {
             continue;
         }
 
-        let parts: Vec<&str> = t.split('\t').collect();
-        if parts.is_empty() {
+        let tab = rec.iter().position(|c| *c == b'\t');
+        let Some(tab_pos) = tab else {
+            continue;
+        };
+
+        let status_bytes = &rec[0..tab_pos];
+        let status = String::from_utf8_lossy(status_bytes).trim().to_string();
+        if status.is_empty() {
             continue;
         }
 
-        let status = parts[0].trim().to_string();
-        if parts.len() == 2 {
-            let path = parts[1].trim().to_string();
-            if !path.is_empty() {
+        let path_bytes = &rec[tab_pos + 1..];
+        if path_bytes.is_empty() {
+            continue;
+        }
+
+        let has_rename = status_bytes.starts_with(b"R") || status_bytes.starts_with(b"C");
+        if has_rename {
+            let old_path = String::from_utf8_lossy(path_bytes).to_string();
+
+            let start2 = i;
+            while i < b.len() && b[i] != 0 {
+                i += 1;
+            }
+            let new_path_bytes = &b[start2..i];
+            i += 1;
+            let new_path = String::from_utf8_lossy(new_path_bytes).to_string();
+
+            if !new_path.trim().is_empty() {
+                out.push(GitChangeEntry {
+                    status,
+                    path: new_path,
+                    old_path: if old_path.trim().is_empty() { None } else { Some(old_path) },
+                });
+            }
+        } else {
+            let path = String::from_utf8_lossy(path_bytes).to_string();
+            if !path.trim().is_empty() {
                 out.push(GitChangeEntry {
                     status,
                     path,
                     old_path: None,
-                });
-            }
-            continue;
-        }
-
-        if parts.len() >= 3 {
-            let old_path = parts[1].trim().to_string();
-            let path = parts[2].trim().to_string();
-            if !path.is_empty() {
-                out.push(GitChangeEntry {
-                    status,
-                    path,
-                    old_path: if old_path.is_empty() { None } else { Some(old_path) },
                 });
             }
         }
@@ -1440,6 +1641,127 @@ fn git_working_file_content(repo_path: String, path: String) -> Result<String, S
         return Err(String::from("Binary file preview is not supported."));
     }
     Ok(String::from_utf8_lossy(bytes.as_slice()).to_string())
+}
+
+#[tauri::command]
+fn git_working_file_text_preview(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    extract_text_preview(path.as_str(), bytes.as_slice())
+}
+
+#[tauri::command]
+fn git_head_file_text_preview(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let _ = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let spec = format!("HEAD:{path}");
+    let out = match git_command_in_repo(&repo_path)
+        .args(["show", spec.as_str()])
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => Vec::new(),
+    };
+
+    if out.is_empty() {
+        return Ok(String::new());
+    }
+
+    extract_text_preview(path.as_str(), out.as_slice())
+}
+
+#[tauri::command]
+fn git_head_vs_working_text_diff(repo_path: String, path: String, unified: u32) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let head_spec = format!("HEAD:{path}");
+    let head_bytes = match git_command_in_repo(&repo_path)
+        .args(["show", head_spec.as_str()])
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => Vec::new(),
+    };
+
+    let working_bytes = match fs::read(full) {
+        Ok(b) => b,
+        Err(_) => Vec::new(),
+    };
+
+    let head_text = extract_text_preview(path.as_str(), head_bytes.as_slice()).unwrap_or_default();
+    let working_text = extract_text_preview(path.as_str(), working_bytes.as_slice()).unwrap_or_default();
+
+    let dir = make_temp_diff_dir()?;
+    let safe = sanitize_filename(path.as_str());
+    let left = write_temp_file(&dir, format!("HEAD_{safe}.txt").as_str(), head_text.as_str())?;
+    let right = write_temp_file(&dir, format!("WORK_{safe}.txt").as_str(), working_text.as_str())?;
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    let out = Command::new("git")
+        .args([
+            "diff",
+            "--no-index",
+            "--no-color",
+            unified_arg.as_str(),
+            "--",
+            left.to_string_lossy().as_ref(),
+            right.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    if out.status.code() == Some(1) {
+        return Ok(String::from_utf8_lossy(out.stdout.as_slice()).trim_end().to_string());
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if !stderr.is_empty() {
+        return Err(format!("git diff failed: {stderr}"));
+    }
+    Err(String::from("git diff failed."))
+}
+
+#[tauri::command]
+fn git_working_file_image_base64(repo_path: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    if bytes.len() > 10_000_000 {
+        return Err(String::from("Image is too large to preview."));
+    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()))
 }
 
 #[tauri::command]
@@ -2830,10 +3152,14 @@ pub fn run() {
             git_working_file_diff,
             git_working_file_diff_unified,
             git_working_file_content,
+            git_working_file_text_preview,
             git_head_file_content,
+            git_head_file_text_preview,
             read_text_file,
             git_head_vs_working_diff,
+            git_head_vs_working_text_diff,
             git_diff_no_index,
+            git_working_file_image_base64,
             git_launch_external_diff_working,
             git_launch_external_diff_commit,
             git_commit,
