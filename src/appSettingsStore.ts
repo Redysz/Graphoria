@@ -8,8 +8,18 @@ export type EdgeDirection = "to_parent" | "to_child";
 
  export type GitHistoryOrder = "topo" | "date" | "first_parent";
 
+ export type TooltipMode = "custom" | "native";
+
+ export type TooltipSettings = {
+  enabled: boolean;
+  mode: TooltipMode;
+  showDelayMs: number;
+  autoHideMs: number;
+ };
+
 export type GeneralSettings = {
   openOnStartup: boolean;
+  tooltips: TooltipSettings;
 };
 
 export type GitSettings = {
@@ -64,6 +74,12 @@ export type AppSettingsState = {
 
 export const defaultGeneralSettings: GeneralSettings = {
   openOnStartup: false,
+  tooltips: {
+    enabled: true,
+    mode: "custom",
+    showDelayMs: 250,
+    autoHideMs: 0,
+  },
 };
 
 export const defaultAppearanceSettings: AppearanceSettings = {
@@ -130,10 +146,33 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 8,
+      version: 9,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
+        if (!s.general || typeof s.general !== "object") {
+          s.general = defaultGeneralSettings;
+        } else {
+          if (typeof s.general.openOnStartup !== "boolean") {
+            s.general.openOnStartup = defaultGeneralSettings.openOnStartup;
+          }
+          if (!s.general.tooltips || typeof s.general.tooltips !== "object") {
+            s.general.tooltips = defaultGeneralSettings.tooltips;
+          } else {
+            if (typeof s.general.tooltips.enabled !== "boolean") {
+              s.general.tooltips.enabled = defaultGeneralSettings.tooltips.enabled;
+            }
+            if (s.general.tooltips.mode !== "custom" && s.general.tooltips.mode !== "native") {
+              s.general.tooltips.mode = defaultGeneralSettings.tooltips.mode;
+            }
+            if (!Number.isFinite(s.general.tooltips.showDelayMs)) {
+              s.general.tooltips.showDelayMs = defaultGeneralSettings.tooltips.showDelayMs;
+            }
+            if (!Number.isFinite(s.general.tooltips.autoHideMs)) {
+              s.general.tooltips.autoHideMs = defaultGeneralSettings.tooltips.autoHideMs;
+            }
+          }
+        }
         if (!s.appearance || typeof s.appearance !== "object") {
           s.appearance = defaultAppearanceSettings;
         } else if (s.appearance.modalClosePosition !== "left" && s.appearance.modalClosePosition !== "right") {

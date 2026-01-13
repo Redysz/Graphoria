@@ -6,6 +6,7 @@ import {
   type RankDir,
   type EdgeDirection,
   type GitHistoryOrder,
+  type TooltipMode,
 } from "./appSettingsStore";
 
 type SettingsSection = "general" | "appearance" | "graph" | "git";
@@ -31,6 +32,7 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
   const [section, setSection] = useState<SettingsSection>("general");
 
   const diffTool = git.diffTool;
+  const tooltips = general.tooltips;
 
   const title = useMemo(() => {
     switch (section) {
@@ -118,6 +120,60 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                       Enable
                     </label>,
                     "Not implemented yet at OS level; currently only stored in Graphoria settings.",
+                  )}
+
+                  {field(
+                    "Tooltips",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={tooltips.enabled}
+                        onChange={(e) => setGeneral({ tooltips: { ...tooltips, enabled: e.target.checked } })}
+                      />
+                      Enable
+                    </label>,
+                    "Shows help bubbles on hover for buttons/options.",
+                  )}
+
+                  {field(
+                    "Tooltip style",
+                    <select
+                      value={tooltips.mode}
+                      onChange={(e) => setGeneral({ tooltips: { ...tooltips, mode: e.target.value as TooltipMode } })}
+                      disabled={!tooltips.enabled}
+                    >
+                      <option value="custom">Graphoria (custom)</option>
+                      <option value="native">System (native)</option>
+                    </select>,
+                    "Custom tooltips support faster display and optional auto-hide.",
+                  )}
+
+                  {field(
+                    "Tooltip show delay (ms)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      max={5000}
+                      value={tooltips.showDelayMs}
+                      onChange={(e) => setGeneral({ tooltips: { ...tooltips, showDelayMs: Number(e.target.value || 0) } })}
+                      disabled={!tooltips.enabled || tooltips.mode !== "custom"}
+                    />,
+                    "Lower = faster. Applies to custom tooltips only.",
+                  )}
+
+                  {field(
+                    "Tooltip auto-hide (ms)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      max={60000}
+                      value={tooltips.autoHideMs}
+                      onChange={(e) => setGeneral({ tooltips: { ...tooltips, autoHideMs: Number(e.target.value || 0) } })}
+                      disabled={!tooltips.enabled || tooltips.mode !== "custom"}
+                    />,
+                    "0 = never. When enabled, a thin progress bar shows remaining time.",
                   )}
                 </div>
               ) : null}
