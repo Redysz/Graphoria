@@ -6117,8 +6117,17 @@ function App() {
             <div className="modalBody">
               {stashError ? <div className="error">{stashError}</div> : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)",
+                  gap: 12,
+                  alignItems: "stretch",
+                  minHeight: 0,
+                  height: "100%",
+                }}
+              >
+                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
                   <div style={{ display: "grid", gap: 8 }}>
                     <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
                     <textarea
@@ -6214,7 +6223,7 @@ function App() {
                   )}
                 </div>
 
-                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
                   {stashAdvancedMode ? (
                     <div style={{ display: "grid", gap: 8 }}>
@@ -6266,8 +6275,11 @@ function App() {
                         style={{
                           border: "1px solid var(--border)",
                           borderRadius: 12,
-                          maxHeight: "min(62vh, 720px)",
                           overflow: "hidden",
+                          flex: 1,
+                          minHeight: 0,
+                          minWidth: 0,
+                          display: "grid",
                         }}
                       >
                         <img
@@ -6275,7 +6287,6 @@ function App() {
                           style={{
                             width: "100%",
                             height: "100%",
-                            maxHeight: "min(62vh, 720px)",
                             objectFit: "contain",
                             display: "block",
                           }}
@@ -6284,7 +6295,7 @@ function App() {
                     ) : stashPreviewDiff ? (
                       <pre
                         className="diffCode"
-                        style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
                       >
                         {parseUnifiedDiff(stashPreviewDiff).map((l, i) => (
                           <div key={i} className={`diffLine diffLine-${l.kind}`}>
@@ -6295,7 +6306,7 @@ function App() {
                     ) : stashPreviewContent ? (
                       <pre
                         className="diffCode"
-                        style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
                       >
                         {stashPreviewContent.replace(/\r\n/g, "\n")}
                       </pre>
@@ -6507,8 +6518,17 @@ function App() {
             <div className="modalBody">
               {commitError ? <div className="error">{commitError}</div> : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-                <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)",
+                  gap: 12,
+                  alignItems: "stretch",
+                  minHeight: 0,
+                  height: "100%",
+                }}
+              >
+                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
                   <div style={{ display: "grid", gap: 8 }}>
                     <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
                     <textarea
@@ -6584,7 +6604,7 @@ function App() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gap: 8, minHeight: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
                   <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
                   <div style={{ opacity: 0.75, fontSize: 12 }}>
                     Green: added, red: removed. Yellow/blue: detected moved lines.
@@ -6601,8 +6621,11 @@ function App() {
                         style={{
                           border: "1px solid var(--border)",
                           borderRadius: 12,
-                          maxHeight: "min(62vh, 720px)",
                           overflow: "hidden",
+                          flex: 1,
+                          minHeight: 0,
+                          minWidth: 0,
+                          display: "grid",
                         }}
                       >
                         <img
@@ -6610,7 +6633,6 @@ function App() {
                           style={{
                             width: "100%",
                             height: "100%",
-                            maxHeight: "min(62vh, 720px)",
                             objectFit: "contain",
                             display: "block",
                           }}
@@ -6619,7 +6641,7 @@ function App() {
                     ) : commitPreviewDiff ? (
                       <pre
                         className="diffCode"
-                        style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
                       >
                         {parseUnifiedDiff(commitPreviewDiff).map((l, i) => (
                           <div key={i} className={`diffLine diffLine-${l.kind}`}>
@@ -6630,7 +6652,7 @@ function App() {
                     ) : commitPreviewContent ? (
                       <pre
                         className="diffCode"
-                        style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}
+                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
                       >
                         {commitPreviewContent.replace(/\r\n/g, "\n")}
                       </pre>
