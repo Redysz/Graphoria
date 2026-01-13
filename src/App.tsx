@@ -7,6 +7,7 @@ import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings, type CyPalette, type ThemeName, type GitHistoryOrder } from "./appSettingsStore";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import DiffToolModal from "./DiffToolModal";
+import TooltipLayer from "./TooltipLayer";
 import "./App.css";
 
 type GitCommit = {
@@ -4125,6 +4126,7 @@ function App() {
 
   return (
     <div className="app">
+      <TooltipLayer />
       <div className="topbar">
         <div className="menubar">
           <div className="menubarLeft">
