@@ -910,6 +910,14 @@ function App() {
     stashMessage: string;
   } | null>(null);
   const stashContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [workingFileContextMenu, setWorkingFileContextMenu] = useState<{
+    x: number;
+    y: number;
+    mode: "commit" | "stash";
+    path: string;
+    status: string;
+  } | null>(null);
+  const workingFileContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [refBadgeContextMenu, setRefBadgeContextMenu] = useState<{
     x: number;
     y: number;
@@ -961,7 +969,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!commitContextMenu && !tagContextMenu && !stashContextMenu && !branchContextMenu && !refBadgeContextMenu) return;
+    if (!commitContextMenu && !tagContextMenu && !stashContextMenu && !branchContextMenu && !refBadgeContextMenu && !workingFileContextMenu) return;
 
     const onMouseDown = (e: MouseEvent) => {
       const commitEl = commitContextMenuRef.current;
@@ -969,18 +977,21 @@ function App() {
       const branchEl = branchContextMenuRef.current;
       const tagEl = tagContextMenuRef.current;
       const refBadgeEl = refBadgeContextMenuRef.current;
+      const fileEl = workingFileContextMenuRef.current;
       if (e.target instanceof Node) {
         if (commitEl && commitEl.contains(e.target)) return;
         if (stashEl && stashEl.contains(e.target)) return;
         if (branchEl && branchEl.contains(e.target)) return;
         if (tagEl && tagEl.contains(e.target)) return;
         if (refBadgeEl && refBadgeEl.contains(e.target)) return;
+        if (fileEl && fileEl.contains(e.target)) return;
       }
       setCommitContextMenu(null);
       setStashContextMenu(null);
       setBranchContextMenu(null);
       setTagContextMenu(null);
       setRefBadgeContextMenu(null);
+      setWorkingFileContextMenu(null);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -990,6 +1001,7 @@ function App() {
         setBranchContextMenu(null);
         setTagContextMenu(null);
         setRefBadgeContextMenu(null);
+        setWorkingFileContextMenu(null);
       }
     };
 
@@ -999,7 +1011,7 @@ function App() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [commitContextMenu, tagContextMenu, stashContextMenu, branchContextMenu, refBadgeContextMenu]);
+  }, [commitContextMenu, tagContextMenu, stashContextMenu, branchContextMenu, refBadgeContextMenu, workingFileContextMenu]);
 
   useEffect(() => {
     if (!cloneModalOpen) return;
@@ -1460,6 +1472,111 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
+  }
+
+  function openWorkingFileContextMenu(mode: "commit" | "stash", path: string, status: string, x: number, y: number) {
+    const menuW = 320;
+    const menuH = 280;
+    const maxX = Math.max(0, window.innerWidth - menuW);
+    const maxY = Math.max(0, window.innerHeight - menuH);
+    setWorkingFileContextMenu({
+      mode,
+      path,
+      status,
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    });
+  }
+
+  async function refreshCommitStatusEntries() {
+    if (!activeRepoPath) return;
+    const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+    setStatusEntries(entries);
+    setSelectedPaths((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const e of entries) next[e.path] = prev[e.path] ?? true;
+      return next;
+    });
+    const keep = commitPreviewPath && entries.some((e) => e.path === commitPreviewPath) ? commitPreviewPath : (entries[0]?.path ?? "");
+    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
+    setCommitPreviewPath(keep);
+    setCommitPreviewStatus(keepStatus);
+    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+  }
+
+  async function refreshStashStatusEntries() {
+    if (!activeRepoPath) return;
+    const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+    setStashStatusEntries(entries);
+    setStashSelectedPaths((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const e of entries) next[e.path] = prev[e.path] ?? true;
+      return next;
+    });
+    const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
+    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
+    setStashPreviewPath(keep);
+    setStashPreviewStatus(keepStatus);
+    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+  }
+
+  async function discardWorkingFile(mode: "commit" | "stash", path: string, status: string) {
+    if (!activeRepoPath) return;
+    if (mode === "commit" ? commitBusy : stashBusy) return;
+    const isUntracked = status.trim().startsWith("??");
+    const ok = await confirmDialog({
+      title: isUntracked ? "Delete untracked file" : "Discard changes",
+      message: isUntracked
+        ? `This will delete the untracked file from disk:\n\n${path}\n\nContinue?`
+        : `This will discard all changes (and unstage) for:\n\n${path}\n\nContinue?`,
+      okLabel: isUntracked ? "Delete" : "Discard",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    try {
+      await invoke<void>("git_discard_working_path", { repoPath: activeRepoPath, path, isUntracked });
+      if (mode === "commit") await refreshCommitStatusEntries();
+      else await refreshStashStatusEntries();
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      if (mode === "commit") setCommitError(msg);
+      else setStashError(msg);
+    }
+  }
+
+  async function deleteWorkingFile(mode: "commit" | "stash", path: string) {
+    if (!activeRepoPath) return;
+    if (mode === "commit" ? commitBusy : stashBusy) return;
+    const ok = await confirmDialog({
+      title: "Delete file",
+      message: `This will delete the file from disk:\n\n${path}\n\nContinue?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    try {
+      await invoke<void>("git_delete_working_path", { repoPath: activeRepoPath, path });
+      if (mode === "commit") await refreshCommitStatusEntries();
+      else await refreshStashStatusEntries();
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      if (mode === "commit") setCommitError(msg);
+      else setStashError(msg);
+    }
+  }
+
+  async function addToGitignore(mode: "commit" | "stash", pattern: string) {
+    if (!activeRepoPath) return;
+    if (mode === "commit" ? commitBusy : stashBusy) return;
+    try {
+      await invoke<void>("git_add_to_gitignore", { repoPath: activeRepoPath, pattern });
+      if (mode === "commit") await refreshCommitStatusEntries();
+      else await refreshStashStatusEntries();
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      if (mode === "commit") setCommitError(msg);
+      else setStashError(msg);
+    }
   }
 
   function openResetDialog() {
@@ -5372,6 +5489,117 @@ function App() {
         </div>
       ) : null}
 
+      {workingFileContextMenu ? (
+        <div
+          className="menuDropdown"
+          ref={workingFileContextMenuRef}
+          style={{
+            position: "fixed",
+            left: workingFileContextMenu.x,
+            top: workingFileContextMenu.y,
+            zIndex: 200,
+            minWidth: 260,
+          }}
+        >
+          <button
+            type="button"
+            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m) return;
+              void discardWorkingFile(m.mode, m.path, m.status);
+            }}
+          >
+            Reset file / Discard changes…
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m) return;
+              void deleteWorkingFile(m.mode, m.path);
+            }}
+          >
+            Delete file…
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m) return;
+              void copyText(m.path);
+            }}
+          >
+            Copy path (relative)
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m || !activeRepoPath) return;
+              const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+              const abs = joinPath(activeRepoPath, m.path.replace(/[\\/]/g, sep));
+              void copyText(abs);
+            }}
+          >
+            Copy path (absolute)
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m || !activeRepoPath) return;
+              const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+              const abs = joinPath(activeRepoPath, m.path.replace(/[\\/]/g, sep));
+              void invoke<void>("reveal_in_file_explorer", { path: abs });
+            }}
+          >
+            Reveal in File Explorer
+          </button>
+          <button
+            type="button"
+            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+            onClick={() => {
+              const m = workingFileContextMenu;
+              setWorkingFileContextMenu(null);
+              if (!m) return;
+              void addToGitignore(m.mode, m.path.replace(/\\/g, "/"));
+            }}
+          >
+            Add to .gitignore (file)
+          </button>
+          {(() => {
+            const m = workingFileContextMenu;
+            if (!m) return null;
+            const p = m.path.replace(/\\/g, "/");
+            const idx = p.lastIndexOf("/");
+            if (idx <= 0) return null;
+            const dir = p.slice(0, idx + 1);
+            if (!dir.trim()) return null;
+            return (
+              <button
+                type="button"
+                disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
+                onClick={() => {
+                  setWorkingFileContextMenu(null);
+                  void addToGitignore(m.mode, dir);
+                }}
+              >
+                Add to .gitignore (folder)
+              </button>
+            );
+          })()}
+        </div>
+      ) : null}
+
       {diffToolModalOpen ? (
         <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
       ) : null}
@@ -6629,6 +6857,13 @@ function App() {
                             setStashPreviewPath(e.path);
                             setStashPreviewStatus(e.status);
                           }}
+                          onContextMenu={(ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            setStashPreviewPath(e.path);
+                            setStashPreviewStatus(e.status);
+                            openWorkingFileContextMenu("stash", e.path, e.status, ev.clientX, ev.clientY);
+                          }}
                           style={
                             e.path === stashPreviewPath
                               ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
@@ -6646,6 +6881,58 @@ function App() {
                             {statusBadge(e.status)}
                           </span>
                           <span className="statusPath">{e.path}</span>
+                          <span className="statusActions">
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reset file / Discard changes"
+                              disabled={!activeRepoPath || stashBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void discardWorkingFile("stash", e.path, e.status);
+                              }}
+                            >
+                              R
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Delete file"
+                              disabled={!activeRepoPath || stashBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void deleteWorkingFile("stash", e.path);
+                              }}
+                            >
+                              D
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Copy path (relative)"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void copyText(e.path);
+                              }}
+                            >
+                              C
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reveal in File Explorer"
+                              disabled={!activeRepoPath || stashBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                void invoke<void>("reveal_in_file_explorer", { path: abs });
+                              }}
+                            >
+                              E
+                            </button>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -6997,6 +7284,13 @@ function App() {
                             setCommitPreviewPath(e.path);
                             setCommitPreviewStatus(e.status);
                           }}
+                          onContextMenu={(ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            setCommitPreviewPath(e.path);
+                            setCommitPreviewStatus(e.status);
+                            openWorkingFileContextMenu("commit", e.path, e.status, ev.clientX, ev.clientY);
+                          }}
                           style={
                             e.path === commitPreviewPath
                               ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
@@ -7014,6 +7308,58 @@ function App() {
                             {statusBadge(e.status)}
                           </span>
                           <span className="statusPath">{e.path}</span>
+                          <span className="statusActions">
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reset file / Discard changes"
+                              disabled={!activeRepoPath || commitBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void discardWorkingFile("commit", e.path, e.status);
+                              }}
+                            >
+                              R
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Delete file"
+                              disabled={!activeRepoPath || commitBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void deleteWorkingFile("commit", e.path);
+                              }}
+                            >
+                              D
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Copy path (relative)"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                void copyText(e.path);
+                              }}
+                            >
+                              C
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reveal in File Explorer"
+                              disabled={!activeRepoPath || commitBusy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                void invoke<void>("reveal_in_file_explorer", { path: abs });
+                              }}
+                            >
+                              E
+                            </button>
+                          </span>
                         </div>
                       ))}
                     </div>

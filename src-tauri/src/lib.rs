@@ -154,6 +154,194 @@ fn git_trust_repo_global(repo_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn reveal_in_file_explorer(path: String) -> Result<(), String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let p = PathBuf::from(path);
+
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_dir() {
+            Command::new("explorer")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| format!("Failed to open file explorer: {e}"))?;
+        } else {
+            Command::new("explorer")
+                .arg("/select,")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file in explorer: {e}"))?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(p.as_os_str())
+            .spawn()
+            .map_err(|e| format!("Failed to reveal file in Finder: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let dir = if p.is_dir() {
+            p
+        } else {
+            p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+        };
+
+        Command::new("xdg-open")
+            .arg(dir.as_os_str())
+            .spawn()
+            .map_err(|e| format!("Failed to open file manager: {e}"))?;
+        return Ok(());
+    }
+}
+
+fn ensure_rel_path_safe(rel: &str) -> Result<(), String> {
+    let rel = rel.trim();
+    if rel.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+    if rel.contains('\u{0000}') {
+        return Err(String::from("path contains null byte"));
+    }
+
+    let normalized = rel.replace('\\', "/");
+    let p = Path::new(normalized.as_str());
+    for comp in p.components() {
+        match comp {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => return Err(String::from("path must be a relative path inside repository")),
+        }
+    }
+    Ok(())
+}
+
+fn repo_join_path(repo_path: &str, rel: &str) -> Result<PathBuf, String> {
+    ensure_rel_path_safe(rel)?;
+    let rel = rel.trim().replace('\\', "/");
+    let rel = rel.trim_end_matches('/');
+    let rel_os = rel.replace('/', &std::path::MAIN_SEPARATOR.to_string());
+    Ok(Path::new(repo_path).join(rel_os))
+}
+
+fn delete_working_path(repo_path: &str, rel: &str) -> Result<(), String> {
+    let abs = repo_join_path(repo_path, rel)?;
+    if !abs.exists() {
+        return Ok(());
+    }
+    if abs.is_dir() {
+        fs::remove_dir_all(abs).map_err(|e| format!("Failed to delete directory: {e}"))?;
+    } else {
+        fs::remove_file(abs).map_err(|e| format!("Failed to delete file: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn git_delete_working_path(repo_path: String, path: String) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+    delete_working_path(&repo_path, path.as_str())
+}
+
+#[tauri::command]
+fn git_discard_working_path(repo_path: String, path: String, is_untracked: Option<bool>) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let is_untracked = is_untracked.unwrap_or(false);
+    if is_untracked {
+        return delete_working_path(&repo_path, path.as_str());
+    }
+
+    let (ok, _stdout, stderr) = run_git_status(&repo_path, &["restore", "--staged", "--worktree", "--", path.as_str()])?;
+    if ok {
+        return Ok(());
+    }
+
+    let (ok_reset, _stdout_reset, stderr_reset) =
+        run_git_status(&repo_path, &["reset", "-q", "--", path.as_str()])?;
+    let (ok_checkout, _stdout_checkout, stderr_checkout) =
+        run_git_status(&repo_path, &["checkout", "--", path.as_str()])?;
+
+    if ok_reset && ok_checkout {
+        return Ok(());
+    }
+
+    let head_spec = format!("HEAD:{}", path.as_str());
+    let (ok_head, _stdout_head, _stderr_head) = run_git_status(&repo_path, &["cat-file", "-e", head_spec.as_str()])?;
+    if !ok_head {
+        let _ = run_git_status(&repo_path, &["reset", "-q", "--", path.as_str()]);
+        let _ = delete_working_path(&repo_path, path.as_str());
+        return Ok(());
+    }
+
+    let msg = if !stderr.trim().is_empty() {
+        stderr
+    } else if !stderr_reset.trim().is_empty() {
+        stderr_reset
+    } else if !stderr_checkout.trim().is_empty() {
+        stderr_checkout
+    } else {
+        String::from("Failed to discard changes for path.")
+    };
+    Err(msg)
+}
+
+#[tauri::command]
+fn git_add_to_gitignore(repo_path: String, pattern: String) -> Result<(), String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let pattern = pattern.trim().replace('\\', "/");
+    if pattern.is_empty() {
+        return Err(String::from("pattern is empty"));
+    }
+    ensure_rel_path_safe(pattern.as_str())?;
+
+    let gitignore_path = Path::new(&repo_path).join(".gitignore");
+    let mut content = fs::read_to_string(gitignore_path.as_path()).unwrap_or_default();
+    let needle = pattern.trim_end_matches('/');
+    let needle_dir = format!("{needle}/");
+
+    let mut already = false;
+    for line in content.lines() {
+        let l = line.trim_end_matches('\r').trim();
+        if l == needle || l == needle_dir {
+            already = true;
+            break;
+        }
+    }
+
+    if already {
+        return Ok(());
+    }
+
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(pattern.as_str());
+    content.push('\n');
+
+    fs::write(gitignore_path.as_path(), content).map_err(|e| format!("Failed to write .gitignore: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn git_trust_repo_session(repo_path: String) -> Result<(), String> {
     let repo_path = repo_path.trim().to_string();
     if repo_path.is_empty() {
@@ -3454,6 +3642,7 @@ pub fn run() {
             list_commits_full,
             init_repo,
             open_in_file_explorer,
+            reveal_in_file_explorer,
             git_check_worktree,
             git_trust_repo_global,
             git_trust_repo_session,
@@ -3489,6 +3678,9 @@ pub fn run() {
             git_working_file_image_base64,
             git_launch_external_diff_working,
             git_launch_external_diff_commit,
+            git_discard_working_path,
+            git_delete_working_path,
+            git_add_to_gitignore,
             git_commit,
             git_status_summary,
             git_ahead_behind,

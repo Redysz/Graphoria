@@ -1002,7 +1002,7 @@ button:disabled {
 
 .statusRow {
   display: grid;
-  grid-template-columns: 20px 44px 1fr;
+  grid-template-columns: 20px 44px 1fr auto;
   gap: 10px;
   align-items: center;
   padding: 8px;
@@ -1029,6 +1029,32 @@ button:disabled {
 
 .statusRow:hover {
   border-color: rgba(47, 111, 237, 0.35);
+}
+
+.statusActions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.statusRow:hover .statusActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.statusActionBtn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 0 6px;
+  border-radius: 6px;
+  height: 22px;
+}
+
+.statusActionBtn:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(47, 111, 237, 0.12);
 }
 
 .statusCode {
