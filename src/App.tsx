@@ -5574,29 +5574,8 @@ function App() {
               void addToGitignore(m.mode, m.path.replace(/\\/g, "/"));
             }}
           >
-            Add to .gitignore (file)
+            Add to .gitignore
           </button>
-          {(() => {
-            const m = workingFileContextMenu;
-            if (!m) return null;
-            const p = m.path.replace(/\\/g, "/");
-            const idx = p.lastIndexOf("/");
-            if (idx <= 0) return null;
-            const dir = p.slice(0, idx + 1);
-            if (!dir.trim()) return null;
-            return (
-              <button
-                type="button"
-                disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-                onClick={() => {
-                  setWorkingFileContextMenu(null);
-                  void addToGitignore(m.mode, dir);
-                }}
-              >
-                Add to .gitignore (folder)
-              </button>
-            );
-          })()}
         </div>
       ) : null}
 
@@ -6909,10 +6888,13 @@ function App() {
                             <button
                               type="button"
                               className="statusActionBtn"
-                              title="Copy path (relative)"
+                              title="Copy path (absolute)"
                               onClick={(ev) => {
                                 ev.stopPropagation();
-                                void copyText(e.path);
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                void copyText(abs);
                               }}
                             >
                               C
@@ -7336,10 +7318,13 @@ function App() {
                             <button
                               type="button"
                               className="statusActionBtn"
-                              title="Copy path (relative)"
+                              title="Copy path (absolute)"
                               onClick={(ev) => {
                                 ev.stopPropagation();
-                                void copyText(e.path);
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                void copyText(abs);
                               }}
                             >
                               C
