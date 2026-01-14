@@ -700,6 +700,7 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
+  const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("Confirm");
@@ -863,6 +864,13 @@ function App() {
   const [cherryReflog, setCherryReflog] = useState<string>("");
 
   const [previewZoomSrc, setPreviewZoomSrc] = useState<string | null>(null);
+
+  const [cleanOldBranchesDays, setCleanOldBranchesDays] = useState<number>(30);
+  const [cleanOldBranchesLoading, setCleanOldBranchesLoading] = useState(false);
+  const [cleanOldBranchesDeleting, setCleanOldBranchesDeleting] = useState(false);
+  const [cleanOldBranchesError, setCleanOldBranchesError] = useState<string>("");
+  const [cleanOldBranchesAll, setCleanOldBranchesAll] = useState<GitBranchInfo[]>([]);
+  const [cleanOldBranchesSelected, setCleanOldBranchesSelected] = useState<Record<string, boolean>>({});
 
   const defaultViewMode = useAppSettings((s) => s.viewMode);
   const theme = useAppSettings((s) => s.appearance.theme);
@@ -1123,6 +1131,52 @@ function App() {
 
   const isDetached = overview?.head_name === "(detached)";
   const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
+
+  const cleanOldBranchesCandidates = useMemo(() => {
+    const days = Number.isFinite(cleanOldBranchesDays) ? Math.max(0, Math.floor(cleanOldBranchesDays)) : 0;
+    const now = Date.now();
+
+    const rows = (cleanOldBranchesAll ?? [])
+      .filter((b) => b.kind === "local")
+      .map((b) => {
+        const dt = new Date(b.committer_date);
+        const time = dt.getTime();
+        const valid = Number.isFinite(time);
+        const daysOld = valid ? Math.max(0, Math.floor((now - time) / 86_400_000)) : null;
+        return {
+          name: b.name,
+          committer_date: b.committer_date,
+          daysOld,
+        };
+      })
+      .filter((r) => r.name.trim() && r.daysOld !== null)
+      .filter((r) => normalizeBranchName(r.name) !== normalizeBranchName(activeBranchName))
+      .filter((r) => (r.daysOld ?? 0) >= days)
+      .sort((a, b) => (b.daysOld ?? 0) - (a.daysOld ?? 0));
+
+    return rows;
+  }, [activeBranchName, cleanOldBranchesAll, cleanOldBranchesDays]);
+
+  const cleanOldBranchesSelectedCount = useMemo(() => {
+    let n = 0;
+    for (const r of cleanOldBranchesCandidates) {
+      if (cleanOldBranchesSelected[r.name]) n++;
+    }
+    return n;
+  }, [cleanOldBranchesCandidates, cleanOldBranchesSelected]);
+
+  useEffect(() => {
+    if (!cleanOldBranchesOpen) return;
+
+    setCleanOldBranchesSelected((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const r of cleanOldBranchesCandidates) {
+        const k = r.name;
+        next[k] = prev[k] ?? true;
+      }
+      return next;
+    });
+  }, [cleanOldBranchesCandidates, cleanOldBranchesOpen]);
 
   useEffect(() => {
     if (!commitContextMenu || !activeRepoPath || !isDetached) {
@@ -1648,6 +1702,84 @@ function App() {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshCleanOldBranches() {
+    if (!activeRepoPath) return;
+    setCleanOldBranchesLoading(true);
+    setCleanOldBranchesError("");
+    try {
+      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: false });
+      setCleanOldBranchesAll(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setCleanOldBranchesAll([]);
+      setCleanOldBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCleanOldBranchesLoading(false);
+    }
+  }
+
+  async function openCleanOldBranchesDialog() {
+    if (!activeRepoPath) return;
+    setCleanOldBranchesError("");
+    setCleanOldBranchesAll([]);
+    setCleanOldBranchesSelected({});
+    setCleanOldBranchesLoading(true);
+    setCleanOldBranchesDeleting(false);
+    setCleanOldBranchesOpen(true);
+    await refreshCleanOldBranches();
+  }
+
+  async function runDeleteCleanOldBranches() {
+    if (!activeRepoPath) return;
+    if (cleanOldBranchesDeleting) return;
+
+    const toDelete = cleanOldBranchesCandidates
+      .map((r) => r.name)
+      .filter((name) => cleanOldBranchesSelected[name])
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (toDelete.length === 0) return;
+
+    const ok = await confirmDialog({
+      title: "Delete branches",
+      message: `Delete ${toDelete.length} local branch(es)?\n\nThis only deletes local branches. It does NOT delete anything on remotes.`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setCleanOldBranchesDeleting(true);
+    setCleanOldBranchesError("");
+    try {
+      const failures: Array<{ branch: string; error: string }> = [];
+      for (const b of toDelete) {
+        try {
+          await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: b, force: false });
+        } catch (e) {
+          failures.push({ branch: b, error: typeof e === "string" ? e : JSON.stringify(e) });
+        }
+      }
+
+      await refreshCleanOldBranches();
+
+      try {
+        const ov = await invoke<RepoOverview>("repo_overview", { repoPath: activeRepoPath });
+        setOverviewByRepo((prev) => ({ ...prev, [activeRepoPath]: ov }));
+      } catch {
+      }
+
+      if (failures.length > 0) {
+        const msg = failures
+          .slice(0, 8)
+          .map((f) => `${f.branch}: ${f.error}`)
+          .join("\n");
+        setCleanOldBranchesError(failures.length > 8 ? msg + "\n…" : msg);
+      }
+    } finally {
+      setCleanOldBranchesDeleting(false);
     }
   }
 
@@ -4440,6 +4572,17 @@ function App() {
                     type="button"
                     onClick={() => {
                       setToolsMenuOpen(false);
+                      void openCleanOldBranchesDialog();
+                    }}
+                    disabled={!activeRepoPath || loading}
+                    title={!activeRepoPath ? "No repository" : undefined}
+                  >
+                    Clean old branches…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setToolsMenuOpen(false);
                       void (async () => {
                         const ok = await confirmDialog({
                           title: "Clear all stashes",
@@ -5231,6 +5374,145 @@ function App() {
 
       {diffToolModalOpen ? (
         <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
+      ) : null}
+
+      {cleanOldBranchesOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(84vh, 900px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>Clean old branches</div>
+              <button type="button" onClick={() => setCleanOldBranchesOpen(false)} disabled={cleanOldBranchesDeleting}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody" style={{ display: "grid", gap: 12, minHeight: 0 }}>
+              {cleanOldBranchesError ? <div className="error">{cleanOldBranchesError}</div> : null}
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontWeight: 900, opacity: 0.75 }}>Stale if last commit older than</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={String(cleanOldBranchesDays)}
+                      disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        setCleanOldBranchesDays(Number.isFinite(n) ? Math.max(0, n) : 0);
+                      }}
+                      style={{ width: 140 }}
+                    />
+                    <div style={{ fontWeight: 800, opacity: 0.75 }}>days</div>
+                    {cleanOldBranchesLoading ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
+                        <span className="miniSpinner" />
+                        <span>Scanning…</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div style={{ opacity: 0.8, fontWeight: 800 }}>
+                  This tool only deletes local branches. It does NOT delete anything on remotes.
+                </div>
+              </div>
+
+              <div style={{ border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", background: "var(--panel)", minHeight: 0 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "42px 1fr 200px 90px",
+                    gap: 10,
+                    alignItems: "center",
+                    padding: "10px 12px",
+                    borderBottom: "1px solid rgba(15, 15, 15, 0.08)",
+                    background: "var(--panel)",
+                    fontWeight: 900,
+                    opacity: 0.8,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={cleanOldBranchesCandidates.length > 0 && cleanOldBranchesSelectedCount === cleanOldBranchesCandidates.length}
+                    ref={(el) => {
+                      if (!el) return;
+                      el.indeterminate =
+                        cleanOldBranchesSelectedCount > 0 && cleanOldBranchesSelectedCount < cleanOldBranchesCandidates.length;
+                    }}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setCleanOldBranchesSelected(() => {
+                        const next: Record<string, boolean> = {};
+                        for (const r of cleanOldBranchesCandidates) next[r.name] = v;
+                        return next;
+                      });
+                    }}
+                    disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting || cleanOldBranchesCandidates.length === 0}
+                    title="Select all"
+                  />
+                  <div>Branch</div>
+                  <div>Last commit</div>
+                  <div style={{ textAlign: "right" }}>Age</div>
+                </div>
+
+                <div style={{ overflow: "auto", maxHeight: "min(52vh, 520px)" }}>
+                  {cleanOldBranchesCandidates.length === 0 ? (
+                    <div style={{ padding: 12, opacity: 0.75 }}>
+                      {cleanOldBranchesLoading ? "Scanning…" : "No branches match the current criteria."}
+                    </div>
+                  ) : (
+                    cleanOldBranchesCandidates.map((r) => (
+                      <div
+                        key={r.name}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "42px 1fr 200px 90px",
+                          gap: 10,
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          borderBottom: "1px solid rgba(15, 15, 15, 0.06)",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!cleanOldBranchesSelected[r.name]}
+                          onChange={(e) => setCleanOldBranchesSelected((prev) => ({ ...prev, [r.name]: e.target.checked }))}
+                          disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting}
+                        />
+                        <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
+                          {r.name}
+                        </div>
+                        <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, opacity: 0.85 }}>
+                          {r.committer_date}
+                        </div>
+                        <div style={{ textAlign: "right", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, opacity: 0.85 }}>
+                          {typeof r.daysOld === "number" ? `${r.daysOld}d` : ""}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button type="button" onClick={() => setCleanOldBranchesOpen(false)} disabled={cleanOldBranchesDeleting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runDeleteCleanOldBranches()}
+                disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting || cleanOldBranchesSelectedCount === 0}
+                title={cleanOldBranchesSelectedCount === 0 ? "No branches selected" : undefined}
+              >
+                {cleanOldBranchesDeleting ? "Deleting…" : `Delete (${cleanOldBranchesSelectedCount})`}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {refBadgeContextMenu ? (
