@@ -3155,9 +3155,15 @@ function App() {
 
   useEffect(() => {
     if (!activeRepoPath) return;
-    void refreshIndicators(activeRepoPath);
+    if (loading) return;
+    const t = window.setTimeout(() => {
+      void refreshIndicators(activeRepoPath);
+    }, 350);
+    return () => {
+      window.clearTimeout(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRepoPath]);
+  }, [activeRepoPath, loading]);
 
   useEffect(() => {
     if (viewMode !== "commits") return;
@@ -4033,9 +4039,6 @@ function App() {
         ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
         : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
-      const ovPromise = invoke<RepoOverview>("repo_overview", { repoPath: path });
-      const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path });
-
       const cs = await commitsPromise;
       setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
 
@@ -4045,19 +4048,23 @@ function App() {
         setLoading(false);
       }
 
-      const [ov, statusSummary] = await Promise.all([ovPromise, statusSummaryPromise]);
-      setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
-      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
+      void Promise.allSettled([
+        invoke<RepoOverview>("repo_overview", { repoPath: path }),
+        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
+      ]).then(([ovRes, statusSummaryRes]) => {
+        if (ovRes.status === "fulfilled") {
+          setOverviewByRepo((prev) => ({ ...prev, [path]: ovRes.value }));
+        }
+        if (statusSummaryRes.status === "fulfilled") {
+          setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummaryRes.value }));
+        }
+      });
 
       void invoke<GitStashEntry[]>("git_stash_list", { repoPath: path })
         .then((stashes) => {
           setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
         })
         .catch(() => undefined);
-
-      if (shouldUpdateSelection) {
-        void refreshIndicators(path);
-      }
 
       if (shouldUpdateSelection) {
         // selection already updated above (after commits), keep it stable
