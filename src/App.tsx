@@ -3179,25 +3179,25 @@ function App() {
     if (!path) return;
     setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: true }));
     try {
-      const [statusSummaryRes, aheadBehindRes, remoteRes] = await Promise.allSettled([
-        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
-        invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
-        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
-      ]);
+      const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path })
+        .then((statusSummary) => {
+          setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
+        })
+        .catch(() => undefined);
 
-      if (statusSummaryRes.status === "fulfilled") {
-        setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummaryRes.value }));
-      }
-
-      const initialAheadBehind = aheadBehindRes.status === "fulfilled" ? aheadBehindRes.value : undefined;
-      if (initialAheadBehind) {
-        setAheadBehindByRepo((prev) => ({ ...prev, [path]: initialAheadBehind }));
-      }
-
-      const remote = remoteRes.status === "fulfilled" ? remoteRes.value : null;
+      const remote = await invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }).catch(() => null);
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
+
       if (remote) {
+        const initialAheadBehind = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(
+          () => undefined,
+        );
+        if (initialAheadBehind) {
+          setAheadBehindByRepo((prev) => ({ ...prev, [path]: initialAheadBehind }));
+        }
+
         await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
+
         const updated = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(
           () => initialAheadBehind,
         );
@@ -3205,6 +3205,8 @@ function App() {
           setAheadBehindByRepo((prev) => ({ ...prev, [path]: updated }));
         }
       }
+
+      await statusSummaryPromise;
     } catch {
       // ignore
     } finally {
