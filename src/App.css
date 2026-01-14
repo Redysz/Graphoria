@@ -184,7 +184,7 @@ button:disabled {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  min-width: 160px;
+  min-width: 240px;
   display: grid;
   gap: 6px;
   padding: 8px;
@@ -198,6 +198,7 @@ button:disabled {
 .menuDropdown button {
   width: 100%;
   text-align: left;
+  white-space: nowrap;
 }
 
 .toolbar {
