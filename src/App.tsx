@@ -839,6 +839,8 @@ function App() {
 
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewPath, setFilePreviewPath] = useState("");
+  const [filePreviewUpstream, setFilePreviewUpstream] = useState("");
+  const [filePreviewMode, setFilePreviewMode] = useState<"normal" | "pullPredict">("normal");
   const [filePreviewDiff, setFilePreviewDiff] = useState("");
   const [filePreviewContent, setFilePreviewContent] = useState("");
   const [filePreviewImageBase64, setFilePreviewImageBase64] = useState("");
@@ -2120,6 +2122,18 @@ function App() {
   function openFilePreview(path: string) {
     const p = path.trim();
     if (!p) return;
+    setFilePreviewMode("normal");
+    setFilePreviewUpstream("");
+    setFilePreviewOpen(true);
+    setFilePreviewPath(p);
+  }
+
+  function openPullPredictConflictPreview(path: string) {
+    const p = path.trim();
+    if (!p) return;
+    const upstream = pullPredictResult?.upstream?.trim() ?? "";
+    setFilePreviewMode(upstream ? "pullPredict" : "normal");
+    setFilePreviewUpstream(upstream);
     setFilePreviewOpen(true);
     setFilePreviewPath(p);
   }
@@ -2143,6 +2157,17 @@ function App() {
 
     const run = async () => {
       try {
+        if (filePreviewMode === "pullPredict" && filePreviewUpstream.trim()) {
+          const content = await invoke<string>("git_pull_predict_conflict_preview", {
+            repoPath: activeRepoPath,
+            upstream: filePreviewUpstream,
+            path: filePreviewPath,
+          });
+          if (!alive) return;
+          setFilePreviewContent(content);
+          return;
+        }
+
         const useExternal = diffTool.difftool !== "Graphoria builtin diff";
         if (useExternal) {
           await invoke<void>("git_launch_external_diff_working", {
@@ -2217,7 +2242,16 @@ function App() {
     return () => {
       alive = false;
     };
-  }, [activeRepoPath, diffTool.command, diffTool.difftool, diffTool.path, filePreviewOpen, filePreviewPath]);
+  }, [
+    activeRepoPath,
+    diffTool.command,
+    diffTool.difftool,
+    diffTool.path,
+    filePreviewMode,
+    filePreviewOpen,
+    filePreviewPath,
+    filePreviewUpstream,
+  ]);
 
   async function predictPull(rebase: boolean) {
     if (!activeRepoPath) return;
@@ -3136,6 +3170,7 @@ function App() {
   async function refreshIndicators(path: string) {
     if (!path) return;
     try {
+      await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
       const [statusSummary, aheadBehind] = await Promise.all([
         invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
         invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
@@ -3945,13 +3980,23 @@ function App() {
         ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
         : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
-      const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
-        invoke<RepoOverview>("repo_overview", { repoPath: path }),
+      const ovPromise = invoke<RepoOverview>("repo_overview", { repoPath: path });
+      const remotePromise = invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" });
+      const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path });
+      const stashesPromise = invoke<GitStashEntry[]>("git_stash_list", { repoPath: path });
+
+      const remote = await remotePromise.catch(() => null);
+      if (remote) {
+        await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
+      }
+
+      const aheadBehindPromise = invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" });
+      const [ov, cs, statusSummary, aheadBehind, stashes] = await Promise.all([
+        ovPromise,
         commitsPromise,
-        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
-        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
-        invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
-        invoke<GitStashEntry[]>("git_stash_list", { repoPath: path }),
+        statusSummaryPromise,
+        aheadBehindPromise,
+        stashesPromise,
       ]);
 
       setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
@@ -6039,7 +6084,7 @@ function App() {
                     {pullPredictResult.conflict_files?.length ? (
                       <div className="statusList">
                         {pullPredictResult.conflict_files.map((p) => (
-                          <div key={p} className="statusRow statusRowSingleCol" onClick={() => openFilePreview(p)} title={p}>
+                          <div key={p} className="statusRow statusRowSingleCol" onClick={() => openPullPredictConflictPreview(p)} title={p}>
                             <span className="statusPath">{p}</span>
                           </div>
                         ))}

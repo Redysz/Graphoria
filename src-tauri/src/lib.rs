@@ -589,6 +589,12 @@ fn write_temp_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf, Str
     Ok(p)
 }
 
+fn write_temp_file_bytes(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let p = dir.join(name);
+    fs::write(&p, bytes).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    Ok(p)
+}
+
 fn expand_external_diff_command(tool_path: &str, command: &str, local: &Path, remote: &Path, base: &Path) -> Result<String, String> {
     let tool_path = tool_path.trim();
     let mut cmd = command.trim().to_string();
@@ -905,6 +911,34 @@ fn predict_merge_conflicts(repo_path: &str, upstream: &str) -> Vec<String> {
         combined.push_str(String::from_utf8_lossy(&out.stderr).as_ref());
     }
     parse_merge_tree_conflict_paths(combined.as_str())
+}
+
+fn git_show_path_bytes_or_empty(repo_path: &str, rev: &str, path: &str) -> Result<Vec<u8>, String> {
+    let spec = format!("{rev}:{path}");
+    let out = git_command_in_repo(repo_path)
+        .args(["show", spec.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git show: {e}"))?;
+
+    if out.status.success() {
+        return Ok(out.stdout);
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    let s = stderr.to_lowercase();
+    if s.contains("does not exist in")
+        || s.contains("exists on disk, but not in")
+        || s.contains("path '")
+        || s.contains("path \"")
+    {
+        return Ok(Vec::new());
+    }
+
+    Err(if !stderr.is_empty() {
+        format!("git show failed: {stderr}")
+    } else {
+        String::from("git show failed.")
+    })
 }
 
 fn is_git_dubious_ownership_error(stderr_lower: &str) -> bool {
@@ -2611,6 +2645,72 @@ fn git_pull_predict(
 }
 
 #[tauri::command]
+fn git_pull_predict_conflict_preview(repo_path: String, upstream: String, path: String) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let upstream = upstream.trim().to_string();
+    if upstream.is_empty() {
+        return Err(String::from("upstream is empty"));
+    }
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let _ = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let base = run_git(&repo_path, &["merge-base", "HEAD", upstream.as_str()])?;
+    let base = base.trim().to_string();
+    if base.is_empty() {
+        return Err(String::from("Failed to determine merge-base."));
+    }
+
+    let base_bytes = git_show_path_bytes_or_empty(&repo_path, base.as_str(), path.as_str())?;
+    let our_bytes = git_show_path_bytes_or_empty(&repo_path, "HEAD", path.as_str())?;
+    let their_bytes = git_show_path_bytes_or_empty(&repo_path, upstream.as_str(), path.as_str())?;
+
+    if base_bytes.iter().any(|b| *b == 0) || our_bytes.iter().any(|b| *b == 0) || their_bytes.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+
+    let dir = make_temp_diff_dir()?;
+    let ours_path = write_temp_file_bytes(dir.as_path(), "ours.txt", our_bytes.as_slice())?;
+    let base_path = write_temp_file_bytes(dir.as_path(), "base.txt", base_bytes.as_slice())?;
+    let theirs_path = write_temp_file_bytes(dir.as_path(), "theirs.txt", their_bytes.as_slice())?;
+
+    let out = git_command_in_repo(&repo_path)
+        .arg("merge-file")
+        .arg("-p")
+        .arg("--diff3")
+        .arg("-L")
+        .arg("ours")
+        .arg("-L")
+        .arg("base")
+        .arg("-L")
+        .arg("theirs")
+        .arg(&ours_path)
+        .arg(&base_path)
+        .arg(&theirs_path)
+        .output()
+        .map_err(|e| format!("Failed to spawn git merge-file: {e}"))?;
+
+    let _ = fs::remove_dir_all(&dir);
+
+    match out.status.code() {
+        Some(0) | Some(1) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        _ => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+            Err(if !stderr.is_empty() {
+                format!("git merge-file failed: {stderr}")
+            } else {
+                String::from("git merge-file failed.")
+            })
+        }
+    }
+}
+
+#[tauri::command]
 fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -3348,7 +3448,8 @@ pub fn run() {
             git_merge_abort,
             git_rebase_continue,
             git_rebase_abort,
-            git_pull_predict
+            git_pull_predict,
+            git_pull_predict_conflict_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
