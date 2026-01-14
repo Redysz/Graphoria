@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   useAppSettings,
   type ThemeName,
@@ -11,8 +12,8 @@ import {
 
 type SettingsSection = "general" | "appearance" | "graph" | "git";
 
-export default function SettingsModal(props: { open: boolean; onClose: () => void }) {
-  const { open, onClose } = props;
+export default function SettingsModal(props: { open: boolean; activeRepoPath: string; onClose: () => void }) {
+  const { open, activeRepoPath, onClose } = props;
 
   const general = useAppSettings((s) => s.general);
   const appearance = useAppSettings((s) => s.appearance);
@@ -31,6 +32,11 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
 
   const [section, setSection] = useState<SettingsSection>("general");
 
+  const [applyScope, setApplyScope] = useState<"repo" | "global">("repo");
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyError, setApplyError] = useState<string>("");
+  const [applyOk, setApplyOk] = useState(false);
+
   const diffTool = git.diffTool;
   const tooltips = general.tooltips;
 
@@ -46,6 +52,14 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
         return "Git";
     }
   }, [section]);
+
+  useEffect(() => {
+    if (!open) return;
+    setApplyBusy(false);
+    setApplyError("");
+    setApplyOk(false);
+    setApplyScope(activeRepoPath.trim() ? "repo" : "global");
+  }, [activeRepoPath, open]);
 
   if (!open) return null;
 
@@ -68,6 +82,36 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
       </div>
     </div>
   );
+
+  async function applyGitIdentity() {
+    setApplyBusy(true);
+    setApplyError("");
+    setApplyOk(false);
+
+    try {
+      const scope = applyScope;
+      if (scope === "repo" && !activeRepoPath.trim()) {
+        setApplyError("Open a repository first.");
+        return;
+      }
+
+      const payload: Record<string, unknown> = {
+        scope,
+        userName: git.userName,
+        userEmail: git.userEmail,
+      };
+      if (scope === "repo") {
+        payload.repoPath = activeRepoPath;
+      }
+
+      await invoke<void>("git_set_user_identity", payload);
+      setApplyOk(true);
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -333,6 +377,7 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
 
               {section === "git" ? (
                 <div className="settingsContentBody">
+                  {applyError ? <div className="error">{applyError}</div> : null}
                   {field(
                     "History scope",
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
@@ -377,10 +422,13 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                     <input
                       className="modalInput"
                       value={git.userName}
-                      onChange={(e) => setGit({ userName: e.target.value })}
+                      onChange={(e) => {
+                        setApplyOk(false);
+                        setGit({ userName: e.target.value });
+                      }}
                       placeholder="Your Name"
                     />,
-                    "Not applied to git config yet (UI + persist only).",
+                    "Stored in Graphoria settings. Use Apply below to write to git config.",
                   )}
 
                   {field(
@@ -388,9 +436,40 @@ export default function SettingsModal(props: { open: boolean; onClose: () => voi
                     <input
                       className="modalInput"
                       value={git.userEmail}
-                      onChange={(e) => setGit({ userEmail: e.target.value })}
+                      onChange={(e) => {
+                        setApplyOk(false);
+                        setGit({ userEmail: e.target.value });
+                      }}
                       placeholder="you@example.com"
                     />,
+                  )}
+
+                  {field(
+                    "Apply",
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <select
+                        value={applyScope}
+                        onChange={(e) => {
+                          setApplyOk(false);
+                          setApplyScope(e.target.value as "repo" | "global");
+                        }}
+                      >
+                        <option value="repo">This repository</option>
+                        <option value="global">Global</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void applyGitIdentity()}
+                        disabled={applyBusy || (applyScope === "repo" && !activeRepoPath.trim())}
+                      >
+                        {applyBusy ? "Applying…" : "Apply to git config"}
+                      </button>
+                    </div>,
+                    applyScope === "repo" && !activeRepoPath.trim()
+                      ? "Open a repository to apply repo-local config."
+                      : applyOk
+                        ? "Applied."
+                        : undefined,
                   )}
 
                   {field(
