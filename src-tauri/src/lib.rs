@@ -589,6 +589,12 @@ fn write_temp_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf, Str
     Ok(p)
 }
 
+fn write_temp_file_bytes(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let p = dir.join(name);
+    fs::write(&p, bytes).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    Ok(p)
+}
+
 fn expand_external_diff_command(tool_path: &str, command: &str, local: &Path, remote: &Path, base: &Path) -> Result<String, String> {
     let tool_path = tool_path.trim();
     let mut cmd = command.trim().to_string();
@@ -750,52 +756,189 @@ fn infer_upstream(repo_path: &str, remote_name: &str, head_name: &str) -> Option
     None
 }
 
+fn merge_tree_header_is_conflict(header: &str) -> bool {
+    let h = header.trim().to_lowercase();
+    h.contains("conflict")
+        || h.contains("changed in both")
+        || h.contains("added in both")
+        || h.contains("deleted in both")
+        || h.contains("removed in both")
+        || h.contains("rename")
+        || h.contains("modify/delete")
+        || h.contains("delete/modify")
+        || h.contains("directory/file")
+        || h.contains("file/directory")
+}
+
+fn normalize_conflict_path_candidate(s: &str) -> String {
+    let t = s.trim().trim_matches('.').trim_matches(':').trim();
+    t.to_string()
+}
+
+fn extract_path_from_conflict_header(header: &str) -> Option<String> {
+    let h = header.trim();
+    if h.is_empty() {
+        return None;
+    }
+
+    let after_colon = if let Some(i) = h.find(':') { &h[i + 1..] } else { h };
+    let after_colon = after_colon.trim();
+    if after_colon.is_empty() {
+        return None;
+    }
+
+    let lower = after_colon.to_lowercase();
+    if let Some(i) = lower.find("merge conflict in ") {
+        let p = normalize_conflict_path_candidate(&after_colon[i + "merge conflict in ".len()..]);
+        if !p.is_empty() {
+            return Some(p);
+        }
+    }
+
+    let first = after_colon.split_whitespace().next().unwrap_or("");
+    let first = normalize_conflict_path_candidate(first);
+    if first.is_empty() {
+        return None;
+    }
+    if first.eq_ignore_ascii_case("merge") || first.eq_ignore_ascii_case("conflict") {
+        return None;
+    }
+    Some(first)
+}
+
+fn parse_merge_tree_conflict_paths(stdout: &str) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    let mut in_conflict_block = false;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let starts_with_alpha = trimmed
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic())
+            .unwrap_or(false);
+
+        if starts_with_alpha && !trimmed.starts_with("base ") && !trimmed.starts_with("our ") && !trimmed.starts_with("their ") {
+            in_conflict_block = merge_tree_header_is_conflict(trimmed);
+            if in_conflict_block {
+                let is_explicit_conflict = trimmed.to_lowercase().contains("conflict");
+                if is_explicit_conflict {
+                    if let Some(p) = extract_path_from_conflict_header(trimmed) {
+                        if !p.trim().is_empty() {
+                            files.push(p);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if !in_conflict_block {
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("diff --cc ") {
+            let p = normalize_conflict_path_candidate(rest);
+            if !p.is_empty() {
+                files.push(p);
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("diff --combined ") {
+            let p = normalize_conflict_path_candidate(rest);
+            if !p.is_empty() {
+                files.push(p);
+            }
+            continue;
+        }
+
+        if trimmed.starts_with("base ") || trimmed.starts_with("our ") || trimmed.starts_with("their ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let p = parts[3..].join(" ");
+                if !p.trim().is_empty() {
+                    files.push(p);
+                }
+            } else if let Some(p) = parts.last() {
+                if !p.trim().is_empty() {
+                    files.push((*p).to_string());
+                }
+            }
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn predict_merge_conflicts(repo_path: &str, upstream: &str) -> Vec<String> {
     let base = match run_git(repo_path, &["merge-base", "HEAD", upstream]) {
         Ok(s) if !s.trim().is_empty() => s,
         _ => return Vec::new(),
     };
 
-    if let Ok((ok, stdout, _stderr)) = run_git_status(
-        repo_path,
-        &["merge-tree", "--name-only", base.as_str(), "HEAD", upstream],
-    ) {
-        if ok {
-            let mut files: Vec<String> = stdout
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect();
-            files.sort();
-            files.dedup();
-            return files;
-        }
-    }
+    let base = base.trim().to_string();
 
-    let (ok, stdout, _stderr) = match run_git_status(repo_path, &["merge-tree", base.as_str(), "HEAD", upstream]) {
-        Ok(v) => v,
+    let out = match git_command_in_repo(repo_path)
+        .args([
+            "merge-tree",
+            "--write-tree",
+            "--messages",
+            "--merge-base",
+            base.as_str(),
+            "HEAD",
+            upstream,
+        ])
+        .output()
+    {
+        Ok(o) => o,
         Err(_) => return Vec::new(),
     };
-    if !ok {
-        return Vec::new();
+    match out.status.code() {
+        Some(0) | Some(1) => {}
+        _ => return Vec::new(),
     }
 
-    let mut files: Vec<String> = Vec::new();
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("base ") || trimmed.starts_with("our ") || trimmed.starts_with("their ") {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if let Some(p) = parts.last() {
-                if !p.is_empty() && !files.contains(&p.to_string()) {
-                    files.push(p.to_string());
-                }
-            }
-        }
+    let mut combined = String::new();
+    combined.push_str(String::from_utf8_lossy(&out.stdout).as_ref());
+    if !out.stderr.is_empty() {
+        combined.push('\n');
+        combined.push_str(String::from_utf8_lossy(&out.stderr).as_ref());
     }
-    files.sort();
-    files.dedup();
-    files
+    parse_merge_tree_conflict_paths(combined.as_str())
+}
+
+fn git_show_path_bytes_or_empty(repo_path: &str, rev: &str, path: &str) -> Result<Vec<u8>, String> {
+    let spec = format!("{rev}:{path}");
+    let out = git_command_in_repo(repo_path)
+        .args(["show", spec.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git show: {e}"))?;
+
+    if out.status.success() {
+        return Ok(out.stdout);
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    let s = stderr.to_lowercase();
+    if s.contains("does not exist in")
+        || s.contains("exists on disk, but not in")
+        || s.contains("path '")
+        || s.contains("path \"")
+    {
+        return Ok(Vec::new());
+    }
+
+    Err(if !stderr.is_empty() {
+        format!("git show failed: {stderr}")
+    } else {
+        String::from("git show failed.")
+    })
 }
 
 fn is_git_dubious_ownership_error(stderr_lower: &str) -> bool {
@@ -817,6 +960,28 @@ fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
             return Err(format!("GIT_DUBIOUS_OWNERSHIP\n{stderr}"));
         }
         return Err(String::from("Selected path is not a Git working tree."));
+    }
+
+    let top = git_command_in_repo(repo_path)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !top.status.success() {
+        return Err(String::from("Selected path is not a Git working tree."));
+    }
+
+    let top_s = String::from_utf8_lossy(&top.stdout).trim().to_string();
+    if top_s.is_empty() {
+        return Err(String::from("Selected path is not a Git working tree."));
+    }
+
+    let selected_norm = normalize_repo_path(repo_path);
+    let top_norm = normalize_repo_path(top_s.as_str());
+    if !selected_norm.eq_ignore_ascii_case(top_norm.as_str()) {
+        return Err(format!(
+            "Selected path must be the Git repository root (folder containing .git). Try: {top_s}"
+        ));
     }
 
     Ok(())
@@ -1636,7 +1801,15 @@ fn git_working_file_content(repo_path: String, path: String) -> Result<String, S
     let full = safe_repo_join(&repo_path, path.as_str())
         .map_err(|e| format!("Invalid path: {e}"))?;
 
-    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    let bytes = match fs::read(full) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(String::from("File does not exist in working tree."));
+        }
+        Err(e) => {
+            return Err(format!("Failed to read file: {e}"));
+        }
+    };
     if bytes.iter().any(|b| *b == 0) {
         return Err(String::from("Binary file preview is not supported."));
     }
@@ -1653,7 +1826,15 @@ fn git_working_file_text_preview(repo_path: String, path: String) -> Result<Stri
     }
 
     let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    let bytes = match fs::read(full) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(String::from("File does not exist in working tree."));
+        }
+        Err(e) => {
+            return Err(format!("Failed to read file: {e}"));
+        }
+    };
     extract_text_preview(path.as_str(), bytes.as_slice())
 }
 
@@ -1757,7 +1938,15 @@ fn git_working_file_image_base64(repo_path: String, path: String) -> Result<Stri
     }
 
     let full = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-    let bytes = fs::read(full).map_err(|e| format!("Failed to read file: {e}"))?;
+    let bytes = match fs::read(full) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(String::from("File does not exist in working tree."));
+        }
+        Err(e) => {
+            return Err(format!("Failed to read file: {e}"));
+        }
+    };
     if bytes.len() > 10_000_000 {
         return Err(String::from("Image is too large to preview."));
     }
@@ -2456,11 +2645,81 @@ fn git_pull_predict(
 }
 
 #[tauri::command]
-fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
+fn git_pull_predict_conflict_preview(repo_path: String, upstream: String, path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    run_git(&repo_path, &["fetch", remote_name.as_str()])
+    let upstream = upstream.trim().to_string();
+    if upstream.is_empty() {
+        return Err(String::from("upstream is empty"));
+    }
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let _ = safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    let base = run_git(&repo_path, &["merge-base", "HEAD", upstream.as_str()])?;
+    let base = base.trim().to_string();
+    if base.is_empty() {
+        return Err(String::from("Failed to determine merge-base."));
+    }
+
+    let base_bytes = git_show_path_bytes_or_empty(&repo_path, base.as_str(), path.as_str())?;
+    let our_bytes = git_show_path_bytes_or_empty(&repo_path, "HEAD", path.as_str())?;
+    let their_bytes = git_show_path_bytes_or_empty(&repo_path, upstream.as_str(), path.as_str())?;
+
+    if base_bytes.iter().any(|b| *b == 0) || our_bytes.iter().any(|b| *b == 0) || their_bytes.iter().any(|b| *b == 0) {
+        return Err(String::from("Binary file preview is not supported."));
+    }
+
+    let dir = make_temp_diff_dir()?;
+    let ours_path = write_temp_file_bytes(dir.as_path(), "ours.txt", our_bytes.as_slice())?;
+    let base_path = write_temp_file_bytes(dir.as_path(), "base.txt", base_bytes.as_slice())?;
+    let theirs_path = write_temp_file_bytes(dir.as_path(), "theirs.txt", their_bytes.as_slice())?;
+
+    let out = git_command_in_repo(&repo_path)
+        .arg("merge-file")
+        .arg("-p")
+        .arg("--diff3")
+        .arg("-L")
+        .arg("ours")
+        .arg("-L")
+        .arg("base")
+        .arg("-L")
+        .arg("theirs")
+        .arg(&ours_path)
+        .arg(&base_path)
+        .arg(&theirs_path)
+        .output()
+        .map_err(|e| format!("Failed to spawn git merge-file: {e}"))?;
+
+    let _ = fs::remove_dir_all(&dir);
+
+    match out.status.code() {
+        Some(0) | Some(1) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        _ => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+            Err(if !stderr.is_empty() {
+                format!("git merge-file failed: {stderr}")
+            } else {
+                String::from("git merge-file failed.")
+            })
+        }
+    }
+}
+
+#[tauri::command]
+async fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_is_git_worktree(&repo_path)?;
+
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        run_git(&repo_path, &["fetch", remote_name.as_str()])
+    })
+    .await
+    .map_err(|e| format!("Failed to run git fetch: {e}"))?
 }
 
 #[tauri::command]
@@ -3193,7 +3452,8 @@ pub fn run() {
             git_merge_abort,
             git_rebase_continue,
             git_rebase_abort,
-            git_pull_predict
+            git_pull_predict,
+            git_pull_predict_conflict_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
