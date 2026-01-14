@@ -3173,19 +3173,31 @@ function App() {
     if (!path) return;
     setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: true }));
     try {
-      const [statusSummary, aheadBehind, remote] = await Promise.all([
+      const [statusSummaryRes, aheadBehindRes, remoteRes] = await Promise.allSettled([
         invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
         invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
-        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }).catch(() => null),
+        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }),
       ]);
-      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
-      setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
 
+      if (statusSummaryRes.status === "fulfilled") {
+        setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummaryRes.value }));
+      }
+
+      const initialAheadBehind = aheadBehindRes.status === "fulfilled" ? aheadBehindRes.value : undefined;
+      if (initialAheadBehind) {
+        setAheadBehindByRepo((prev) => ({ ...prev, [path]: initialAheadBehind }));
+      }
+
+      const remote = remoteRes.status === "fulfilled" ? remoteRes.value : null;
       setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
       if (remote) {
         await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
-        const updated = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(() => aheadBehind);
-        setAheadBehindByRepo((prev) => ({ ...prev, [path]: updated }));
+        const updated = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(
+          () => initialAheadBehind,
+        );
+        if (updated) {
+          setAheadBehindByRepo((prev) => ({ ...prev, [path]: updated }));
+        }
       }
     } catch {
       // ignore
@@ -4022,30 +4034,33 @@ function App() {
         : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
       const ovPromise = invoke<RepoOverview>("repo_overview", { repoPath: path });
-      const remotePromise = invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" });
       const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path });
-      const stashesPromise = invoke<GitStashEntry[]>("git_stash_list", { repoPath: path });
 
-      const aheadBehindPromise = invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" });
-      const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
-        ovPromise,
-        commitsPromise,
-        remotePromise.catch(() => null),
-        statusSummaryPromise,
-        aheadBehindPromise,
-        stashesPromise,
-      ]);
-
-      setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
+      const cs = await commitsPromise;
       setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
-      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
-      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
-      setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
-      setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
 
       if (shouldUpdateSelection) {
-        const headHash = cs.find((c) => c.is_head)?.hash || ov.head;
-        setSelectedHash(headHash || "");
+        const headHash = cs.find((c) => c.is_head)?.hash || "";
+        setSelectedHash(headHash);
+        setLoading(false);
+      }
+
+      const [ov, statusSummary] = await Promise.all([ovPromise, statusSummaryPromise]);
+      setOverviewByRepo((prev) => ({ ...prev, [path]: ov }));
+      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
+
+      void invoke<GitStashEntry[]>("git_stash_list", { repoPath: path })
+        .then((stashes) => {
+          setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
+        })
+        .catch(() => undefined);
+
+      if (shouldUpdateSelection) {
+        void refreshIndicators(path);
+      }
+
+      if (shouldUpdateSelection) {
+        // selection already updated above (after commits), keep it stable
       }
       return true;
     } catch (e) {
