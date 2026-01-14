@@ -50,6 +50,73 @@ fn git_command_in_repo(repo_path: &str) -> Command {
     cmd
 }
 
+ #[tauri::command]
+ fn git_set_user_identity(
+     repo_path: Option<String>,
+     scope: String,
+     user_name: String,
+     user_email: String,
+ ) -> Result<(), String> {
+     let scope = scope.trim().to_lowercase();
+     let user_name = user_name.trim().to_string();
+     let user_email = user_email.trim().to_string();
+
+     if user_name.is_empty() && user_email.is_empty() {
+         return Err(String::from("User name and email are empty."));
+     }
+
+     if scope == "global" {
+         if !user_name.is_empty() {
+             let out = Command::new("git")
+                 .args(["config", "--global", "user.name", user_name.as_str()])
+                 .output()
+                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
+             if !out.status.success() {
+                 let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                 return Err(if !stderr.is_empty() {
+                     format!("git config failed: {stderr}")
+                 } else {
+                     String::from("git config failed.")
+                 });
+             }
+         }
+         if !user_email.is_empty() {
+             let out = Command::new("git")
+                 .args(["config", "--global", "user.email", user_email.as_str()])
+                 .output()
+                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
+             if !out.status.success() {
+                 let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                 return Err(if !stderr.is_empty() {
+                     format!("git config failed: {stderr}")
+                 } else {
+                     String::from("git config failed.")
+                 });
+             }
+         }
+         return Ok(());
+     }
+
+     if scope != "repo" {
+         return Err(String::from("Invalid scope. Expected 'repo' or 'global'."));
+     }
+
+     let repo_path = repo_path.unwrap_or_default();
+     if repo_path.trim().is_empty() {
+         return Err(String::from("repo_path is required for repo scope."));
+     }
+     ensure_is_git_worktree(repo_path.as_str())?;
+
+     if !user_name.is_empty() {
+         run_git(repo_path.as_str(), &["config", "user.name", user_name.as_str()])?;
+     }
+     if !user_email.is_empty() {
+         run_git(repo_path.as_str(), &["config", "user.email", user_email.as_str()])?;
+     }
+
+     Ok(())
+ }
+
 #[tauri::command]
 fn git_check_worktree(repo_path: String) -> Result<(), String> {
     ensure_is_git_worktree(repo_path.trim())
@@ -3390,6 +3457,7 @@ pub fn run() {
             git_check_worktree,
             git_trust_repo_global,
             git_trust_repo_session,
+            git_set_user_identity,
             get_current_username,
             change_repo_ownership_to_current_user,
             git_resolve_ref,

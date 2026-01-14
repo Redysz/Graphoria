@@ -7544,7 +7544,7 @@ function App() {
         </div>
       ) : null}
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal open={settingsOpen} activeRepoPath={activeRepoPath} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
