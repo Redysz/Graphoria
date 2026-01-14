@@ -2711,11 +2711,15 @@ fn git_pull_predict_conflict_preview(repo_path: String, upstream: String, path: 
 }
 
 #[tauri::command]
-fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
+async fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    run_git(&repo_path, &["fetch", remote_name.as_str()])
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        run_git(&repo_path, &["fetch", remote_name.as_str()])
+    })
+    .await
+    .map_err(|e| format!("Failed to run git fetch: {e}"))?
 }
 
 #[tauri::command]

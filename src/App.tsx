@@ -685,6 +685,7 @@ function App() {
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [statusSummaryByRepo, setStatusSummaryByRepo] = useState<Record<string, GitStatusSummary | undefined>>({});
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
+  const [indicatorsUpdatingByRepo, setIndicatorsUpdatingByRepo] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [gitTrustOpen, setGitTrustOpen] = useState(false);
@@ -1059,6 +1060,7 @@ function App() {
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
+  const indicatorsUpdating = indicatorsUpdatingByRepo[activeRepoPath] ?? false;
   const stashes = stashesByRepo[activeRepoPath] ?? [];
 
   useEffect(() => {
@@ -3169,17 +3171,53 @@ function App() {
 
   async function refreshIndicators(path: string) {
     if (!path) return;
+    setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: true }));
     try {
-      await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
-      const [statusSummary, aheadBehind] = await Promise.all([
+      const [statusSummary, aheadBehind, remote] = await Promise.all([
         invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
         invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }),
+        invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }).catch(() => null),
       ]);
       setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
       setAheadBehindByRepo((prev) => ({ ...prev, [path]: aheadBehind }));
+
+      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
+      if (remote) {
+        await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
+        const updated = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(() => aheadBehind);
+        setAheadBehindByRepo((prev) => ({ ...prev, [path]: updated }));
+      }
     } catch {
       // ignore
+    } finally {
+      setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: false }));
     }
+  }
+
+  function parsePullPredictConflictPreview(text: string): { kind: "common" | "ours" | "base" | "theirs"; text: string }[] {
+    const out: { kind: "common" | "ours" | "base" | "theirs"; text: string }[] = [];
+    let kind: "common" | "ours" | "base" | "theirs" = "common";
+    for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+      const line = raw;
+      if (line.startsWith("<<<<<<<")) {
+        kind = "ours";
+        continue;
+      }
+      if (line.startsWith("|||||||")) {
+        kind = "base";
+        continue;
+      }
+      if (line.startsWith("=======")) {
+        kind = "theirs";
+        continue;
+      }
+      if (line.startsWith(">>>>>>>")) {
+        kind = "common";
+        continue;
+      }
+      out.push({ kind, text: line });
+    }
+    return out;
   }
 
   async function pickRepository() {
@@ -3883,6 +3921,7 @@ function App() {
   async function openRepository(path: string) {
     setError("");
     setSelectedHash("");
+    setLoading(true);
 
     try {
       await invoke<void>("git_check_worktree", { repoPath: path });
@@ -3895,9 +3934,11 @@ function App() {
         setGitTrustDetailsOpen(false);
         setGitTrustActionError("");
         setGitTrustOpen(true);
+        setLoading(false);
         return;
       }
       setError(msg);
+      setLoading(false);
       return;
     }
 
@@ -3985,15 +4026,11 @@ function App() {
       const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path });
       const stashesPromise = invoke<GitStashEntry[]>("git_stash_list", { repoPath: path });
 
-      const remote = await remotePromise.catch(() => null);
-      if (remote) {
-        await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
-      }
-
       const aheadBehindPromise = invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" });
-      const [ov, cs, statusSummary, aheadBehind, stashes] = await Promise.all([
+      const [ov, cs, remote, statusSummary, aheadBehind, stashes] = await Promise.all([
         ovPromise,
         commitsPromise,
+        remotePromise.catch(() => null),
         statusSummaryPromise,
         aheadBehindPromise,
         stashesPromise,
@@ -4453,6 +4490,7 @@ function App() {
             >
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span>Pull</span>
+                {indicatorsUpdating ? <span className="miniSpinner" title="Updating remote status" /> : null}
                 {behindCount > 0 ? <span className="badge">↓{behindCount}</span> : null}
               </span>
             </button>
@@ -4552,7 +4590,12 @@ function App() {
           <button type="button" onClick={() => void openTerminal()} disabled={!activeRepoPath} title="Open terminal in repository">
             Git Bash
           </button>
-          {loading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
+          {loading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
+              <span className="miniSpinner" />
+              <span>Loading…</span>
+            </div>
+          ) : null}
           {error ? <div className="error">{error}</div> : null}
           {pullError ? <div className="error">{pullError}</div> : null}
         </div>
@@ -5292,9 +5335,27 @@ function App() {
                     ))}
                   </pre>
                 ) : filePreviewContent ? (
-                  <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                    {filePreviewContent.replace(/\r\n/g, "\n")}
-                  </pre>
+                  filePreviewMode === "pullPredict" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 900, opacity: 0.75 }}>Legend:</span>
+                        <span className="conflictLegend conflictLegend-ours">ours</span>
+                        <span className="conflictLegend conflictLegend-base">base</span>
+                        <span className="conflictLegend conflictLegend-theirs">theirs</span>
+                      </div>
+                      <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
+                        {parsePullPredictConflictPreview(filePreviewContent).map((l, i) => (
+                          <div key={i} className={`conflictLine conflictLine-${l.kind}`}>
+                            {l.text}
+                          </div>
+                        ))}
+                      </pre>
+                    </div>
+                  ) : (
+                    <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
+                      {filePreviewContent.replace(/\r\n/g, "\n")}
+                    </pre>
+                  )
                 ) : (
                   <div style={{ opacity: 0.75 }}>No preview.</div>
                 )
