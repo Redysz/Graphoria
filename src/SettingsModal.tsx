@@ -29,6 +29,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const setGraph = useAppSettings((s) => s.setGraph);
   const setViewMode = useAppSettings((s) => s.setViewMode);
   const resetSettings = useAppSettings((s) => s.resetSettings);
+  const resetLayout = useAppSettings((s) => s.resetLayout);
 
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -218,6 +219,14 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       disabled={!tooltips.enabled || tooltips.mode !== "custom"}
                     />,
                     "0 = never. When enabled, a thin progress bar shows remaining time.",
+                  )}
+
+                  {field(
+                    "Window layout",
+                    <button type="button" onClick={() => resetLayout()}>
+                      Reset window layout
+                    </button>,
+                    "Resets sidebar width and Details panel height.",
                   )}
                 </div>
               ) : null}

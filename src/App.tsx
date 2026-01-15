@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -883,6 +883,8 @@ function App() {
   const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
   const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
   const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
+  const layout = useAppSettings((s) => s.layout);
+  const setLayout = useAppSettings((s) => s.setLayout);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -895,6 +897,62 @@ function App() {
   const [detailsTab, setDetailsTab] = useState<"details" | "changes">("details");
   const [showChangesOpen, setShowChangesOpen] = useState(false);
   const [showChangesCommit, setShowChangesCommit] = useState("");
+
+  function startSidebarResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = layout.sidebarWidthPx;
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 200;
+      const max = 620;
+      const next = Math.max(min, Math.min(max, Math.round(startW + (ev.clientX - startX))));
+      setLayout({ sidebarWidthPx: next });
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function startDetailsResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = layout.detailsHeightPx;
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 160;
+      const max = Math.max(min, window.innerHeight - 220);
+      const next = Math.max(min, Math.min(max, Math.round(startH - (ev.clientY - startY))));
+      setLayout({ detailsHeightPx: next });
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
   const [commitContextMenu, setCommitContextMenu] = useState<{
     x: number;
     y: number;
@@ -4774,7 +4832,6 @@ function App() {
             >
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span>Pull</span>
-                {indicatorsUpdating ? <span className="miniSpinner" title="Updating remote status" /> : null}
                 {behindCount > 0 ? <span className="badge">↓{behindCount}</span> : null}
               </span>
             </button>
@@ -4874,6 +4931,12 @@ function App() {
           <button type="button" onClick={() => void openTerminal()} disabled={!activeRepoPath} title="Open terminal in repository">
             Git Bash
           </button>
+          <div style={{ flex: 1 }} />
+          {indicatorsUpdating ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.75 }} title="Updating remote status">
+              <span className="miniSpinner" />
+            </div>
+          ) : null}
           {loading ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
               <span className="miniSpinner" />
@@ -4911,7 +4974,7 @@ function App() {
         </div>
       </div>
 
-      <div className="content">
+      <div className="content" style={{ gridTemplateColumns: `${layout.sidebarWidthPx}px 6px 1fr` }}>
         <aside className="sidebar">
           <div className="sidebarSection">
             <div className="sidebarTitle">Branches</div>
@@ -5082,7 +5145,9 @@ function App() {
           </div>
         </aside>
 
-        <div className="main">
+        <div className="splitterV" onMouseDown={startSidebarResize} title="Drag to resize sidebar" />
+
+        <div className="main" style={{ gridTemplateRows: `auto 1fr 6px ${layout.detailsHeightPx}px` }}>
           <div className="mainHeader">
             <div className="repoTitle">
               <div className="repoName">{activeRepoPath ? repoNameFromPath(activeRepoPath) : "Graphoria"}</div>
@@ -5287,6 +5352,8 @@ function App() {
               </div>
             )}
           </div>
+
+          <div className="splitterH" onMouseDown={startDetailsResize} title="Drag to resize details panel" />
 
           <div className="details">
             <div className="detailsTitle">

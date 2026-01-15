@@ -56,12 +56,18 @@ export type GraphSettings = {
   showRemoteBranchesOnGraph: boolean;
 };
 
+export type LayoutSettings = {
+  sidebarWidthPx: number;
+  detailsHeightPx: number;
+};
+
 export type AppSettingsState = {
   general: GeneralSettings;
   appearance: AppearanceSettings;
   git: GitSettings;
   viewMode: ViewMode;
   graph: GraphSettings;
+  layout: LayoutSettings;
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -69,6 +75,8 @@ export type AppSettingsState = {
   setAppearance: (patch: Partial<AppearanceSettings>) => void;
   setGit: (patch: Partial<GitSettings>) => void;
   setGraph: (patch: Partial<GraphSettings>) => void;
+  setLayout: (patch: Partial<LayoutSettings>) => void;
+  resetLayout: () => void;
   resetSettings: () => void;
 };
 
@@ -114,6 +122,11 @@ export const defaultGraphSettings: GraphSettings = {
   showRemoteBranchesOnGraph: true,
 };
 
+export const defaultLayoutSettings: LayoutSettings = {
+  sidebarWidthPx: 280,
+  detailsHeightPx: 280,
+};
+
 export const useAppSettings = create<AppSettingsState>()(
   persist(
     (set) => ({
@@ -122,6 +135,7 @@ export const useAppSettings = create<AppSettingsState>()(
       git: defaultGitSettings,
       viewMode: "graph",
       graph: defaultGraphSettings,
+      layout: defaultLayoutSettings,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -135,6 +149,8 @@ export const useAppSettings = create<AppSettingsState>()(
       setAppearance: (patch) => set((s) => ({ appearance: { ...s.appearance, ...patch } })),
       setGit: (patch) => set((s) => ({ git: { ...s.git, ...patch } })),
       setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
+      setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
+      resetLayout: () => set({ layout: defaultLayoutSettings }),
       resetSettings: () =>
         set({
           general: defaultGeneralSettings,
@@ -142,11 +158,12 @@ export const useAppSettings = create<AppSettingsState>()(
           git: defaultGitSettings,
           viewMode: "graph",
           graph: defaultGraphSettings,
+          layout: defaultLayoutSettings,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 9,
+      version: 10,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -198,6 +215,16 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (s.graph && typeof s.graph.showRemoteBranchesOnGraph !== "boolean") {
           s.graph.showRemoteBranchesOnGraph = true;
+        }
+        if (!s.layout || typeof s.layout !== "object") {
+          s.layout = defaultLayoutSettings;
+        } else {
+          if (!Number.isFinite(s.layout.sidebarWidthPx)) {
+            s.layout.sidebarWidthPx = defaultLayoutSettings.sidebarWidthPx;
+          }
+          if (!Number.isFinite(s.layout.detailsHeightPx)) {
+            s.layout.detailsHeightPx = defaultLayoutSettings.detailsHeightPx;
+          }
         }
         return s;
       },
