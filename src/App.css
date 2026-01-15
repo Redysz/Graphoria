@@ -240,6 +240,15 @@ button:disabled {
   border-color: rgba(47, 111, 237, 0.35);
 }
 
+.tabDragging {
+  opacity: 0.6;
+}
+
+.tabDragOver {
+  border-color: rgba(47, 111, 237, 0.75);
+  background: rgba(47, 111, 237, 0.16);
+}
+
 .tabClose {
   width: 22px;
   height: 22px;
@@ -255,10 +264,23 @@ button:disabled {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 280px 6px 1fr;
   grid-template-rows: 1fr;
   height: 100%;
   overflow: hidden;
+}
+
+.splitterV {
+  background: rgba(15, 15, 15, 0.06);
+  cursor: col-resize;
+}
+
+:root[data-theme="dark"] .splitterV {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.splitterV:hover {
+  background: rgba(47, 111, 237, 0.18);
 }
 
 .sidebar {
@@ -429,8 +451,21 @@ button:disabled {
 .main {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr 280px;
+  grid-template-rows: auto 1fr 6px 280px;
   overflow: hidden;
+}
+
+.splitterH {
+  background: rgba(15, 15, 15, 0.06);
+  cursor: row-resize;
+}
+
+:root[data-theme="dark"] .splitterH {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.splitterH:hover {
+  background: rgba(47, 111, 237, 0.18);
 }
 
 .mainHeader {
