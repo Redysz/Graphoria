@@ -1898,10 +1898,37 @@ fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChange
         return Err(String::from("commit is empty"));
     }
 
-    let out_bytes = git_command_in_repo(&repo_path)
-        .args(["show", "--name-status", "-z", "--pretty=format:", commit.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+    let parents_line = run_git(&repo_path, &["rev-list", "--parents", "-n", "1", commit.as_str()]).unwrap_or_default();
+    let mut parents_it = parents_line.split_whitespace();
+    let _self_hash = parents_it.next();
+    let first_parent = parents_it.next().map(|s| s.to_string());
+    let is_merge_commit = parents_it.next().is_some();
+
+    let out_bytes = if is_merge_commit {
+        if let Some(p1) = first_parent.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            git_command_in_repo(&repo_path)
+                .args([
+                    "diff",
+                    "--name-status",
+                    "-z",
+                    "-M",
+                    p1,
+                    commit.as_str(),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to spawn git: {e}"))?
+        } else {
+            git_command_in_repo(&repo_path)
+                .args(["show", "--name-status", "-z", "--pretty=format:", commit.as_str()])
+                .output()
+                .map_err(|e| format!("Failed to spawn git: {e}"))?
+        }
+    } else {
+        git_command_in_repo(&repo_path)
+            .args(["show", "--name-status", "-z", "--pretty=format:", commit.as_str()])
+            .output()
+            .map_err(|e| format!("Failed to spawn git: {e}"))?
+    };
 
     if !out_bytes.status.success() {
         let stderr = String::from_utf8_lossy(&out_bytes.stderr);
@@ -1975,6 +2002,30 @@ fn git_commit_file_diff(repo_path: String, commit: String, path: String) -> Resu
 
     if path.is_empty() {
         return Err(String::from("path is empty"));
+    }
+
+    let parents_line = run_git(&repo_path, &["rev-list", "--parents", "-n", "1", commit.as_str()]).unwrap_or_default();
+    let mut parents_it = parents_line.split_whitespace();
+    let _self_hash = parents_it.next();
+    let first_parent = parents_it.next().map(|s| s.to_string());
+    let is_merge_commit = parents_it.next().is_some();
+
+    if is_merge_commit {
+        if let Some(p1) = first_parent.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            return run_git_stdout_raw(
+                &repo_path,
+                &[
+                    "diff",
+                    "--no-color",
+                    "-M",
+                    "--patch",
+                    p1,
+                    commit.as_str(),
+                    "--",
+                    path.as_str(),
+                ],
+            );
+        }
     }
 
     run_git_stdout_raw(
