@@ -14,9 +14,9 @@
       {
         "title": "Graphoria",
         "width": 1400,
-        "height": 900,
+        "height": 960,
         "minWidth": 1100,
-        "minHeight": 700
+        "minHeight": 740
       }
     ],
     "security": {

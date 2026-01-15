@@ -4921,7 +4921,6 @@ function App() {
                   <button
                     type="button"
                     className="branchMain"
-                    style={{ border: 0, background: "transparent", padding: 0, color: "inherit", textAlign: "left" }}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -5038,9 +5037,8 @@ function App() {
                           type="button"
                           className="stashMain"
                           onClick={() => void openStashView(s)}
-                          style={{ border: 0, background: "transparent", padding: 0, color: "inherit", textAlign: "left" }}
                         >
-                          <span className="stashLabel">{truncate(s.message || s.reference, 38)}</span>
+                          <span className="stashLabel">{s.message || s.reference}</span>
                         </button>
 
                         <span className="stashActions">
@@ -5314,43 +5312,45 @@ function App() {
               </div>
             </div>
 
-            {!selectedCommit ? (
-              <div style={{ opacity: 0.7 }}>Select a commit to see details.</div>
-            ) : detailsTab === "details" ? (
-              <div className="detailsGrid">
-                <div className="detailsLabel">Hash</div>
-                <div className="detailsValue mono">{selectedCommit.hash}</div>
+            <div className="detailsBody">
+              {!selectedCommit ? (
+                <div style={{ opacity: 0.7 }}>Select a commit to see details.</div>
+              ) : detailsTab === "details" ? (
+                <div className="detailsGrid">
+                  <div className="detailsLabel">Hash</div>
+                  <div className="detailsValue mono">{selectedCommit.hash}</div>
 
-                <div className="detailsLabel">Subject</div>
-              <div className="detailsValue">{selectedCommit.subject}</div>
+                  <div className="detailsLabel">Subject</div>
+                  <div className="detailsValue">{selectedCommit.subject}</div>
 
-              <div className="detailsLabel">Author</div>
-              <div className="detailsValue">
-                {selectedCommit.author_email?.trim()
-                  ? `${selectedCommit.author} (${selectedCommit.author_email.trim()})`
-                  : selectedCommit.author}
-              </div>
+                  <div className="detailsLabel">Author</div>
+                  <div className="detailsValue">
+                    {selectedCommit.author_email?.trim()
+                      ? `${selectedCommit.author} (${selectedCommit.author_email.trim()})`
+                      : selectedCommit.author}
+                  </div>
 
-              <div className="detailsLabel">Date</div>
-              <div className="detailsValue">{selectedCommit.date}</div>
+                  <div className="detailsLabel">Date</div>
+                  <div className="detailsValue">{selectedCommit.date}</div>
 
-              <div className="detailsLabel">Refs</div>
-                <div className="detailsValue mono">{selectedCommit.refs || "(none)"}</div>
-              </div>
-            ) : (
-              <div style={{ height: 180, minHeight: 0 }}>
-                {activeRepoPath ? (
-                  <DiffView
-                    repoPath={activeRepoPath}
-                    source={{ kind: "commit", commit: selectedCommit.hash }}
-                    tool={diffTool}
-                    height={180}
-                  />
-                ) : (
-                  <div style={{ opacity: 0.7 }}>No repository selected.</div>
-                )}
-              </div>
-            )}
+                  <div className="detailsLabel">Refs</div>
+                  <div className="detailsValue mono">{selectedCommit.refs || "(none)"}</div>
+                </div>
+              ) : (
+                <div style={{ height: "100%", minHeight: 0 }}>
+                  {activeRepoPath ? (
+                    <DiffView
+                      repoPath={activeRepoPath}
+                      source={{ kind: "commit", commit: selectedCommit.hash }}
+                      tool={diffTool}
+                      height="100%"
+                    />
+                  ) : (
+                    <div style={{ opacity: 0.7 }}>No repository selected.</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

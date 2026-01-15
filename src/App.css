@@ -86,6 +86,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 *,
@@ -138,6 +139,8 @@ button:disabled {
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -253,6 +256,9 @@ button:disabled {
   min-height: 0;
   display: grid;
   grid-template-columns: 280px 1fr;
+  grid-template-rows: 1fr;
+  height: 100%;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -298,20 +304,38 @@ button:disabled {
 
 .stashRow {
   justify-content: space-between;
+  position: relative;
 }
 
 .branchRow {
   justify-content: space-between;
+  position: relative;
 }
 
 .stashMain {
   flex: 1;
   min-width: 0;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  transition: padding-right 0.12s ease-out;
 }
 
 .branchMain {
   flex: 1;
   min-width: 0;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  transition: padding-right 0.12s ease-out;
 }
 
 .stashLabel {
@@ -335,6 +359,10 @@ button:disabled {
   gap: 6px;
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .branchActions {
@@ -342,16 +370,32 @@ button:disabled {
   gap: 6px;
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
-.stashRow:hover .stashActions {
+.stashRow:hover .stashActions,
+.stashRow:focus-within .stashActions {
   opacity: 1;
   pointer-events: auto;
 }
 
-.branchRow:hover .branchActions {
+.stashRow:hover .stashMain,
+.stashRow:focus-within .stashMain {
+  padding-right: 210px;
+}
+
+.branchRow:hover .branchActions,
+.branchRow:focus-within .branchActions {
   opacity: 1;
   pointer-events: auto;
+}
+
+.branchRow:hover .branchMain,
+.branchRow:focus-within .branchMain {
+  padding-right: 86px;
 }
 
 .stashActionBtn {
@@ -385,7 +429,8 @@ button:disabled {
 .main {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr 220px;
+  grid-template-rows: auto 1fr 280px;
+  overflow: hidden;
 }
 
 .mainHeader {
@@ -720,7 +765,10 @@ button:disabled {
   border-top: 1px solid var(--border);
   background: var(--panel);
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .detailsTitle {
@@ -729,6 +777,12 @@ button:disabled {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 8px;
+}
+
+.detailsBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .detailsTitle h3 {
