@@ -1909,46 +1909,33 @@ fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChange
     }
 
     let mut out: Vec<GitChangeEntry> = Vec::new();
-    let b = out_bytes.stdout.as_slice();
+    let mut tokens: Vec<String> = Vec::new();
+    for t in out_bytes.stdout.split(|c| *c == 0) {
+        if t.is_empty() {
+            continue;
+        }
+        let s = String::from_utf8_lossy(t).to_string();
+        if !s.is_empty() {
+            tokens.push(s);
+        }
+    }
+
     let mut i: usize = 0;
-    while i < b.len() {
-        let start = i;
-        while i < b.len() && b[i] != 0 {
-            i += 1;
-        }
-        let rec = &b[start..i];
+    while i < tokens.len() {
+        let status = tokens[i].trim().to_string();
         i += 1;
-        if rec.is_empty() {
-            continue;
-        }
-
-        let tab = rec.iter().position(|c| *c == b'\t');
-        let Some(tab_pos) = tab else {
-            continue;
-        };
-
-        let status_bytes = &rec[0..tab_pos];
-        let status = String::from_utf8_lossy(status_bytes).trim().to_string();
         if status.is_empty() {
             continue;
         }
 
-        let path_bytes = &rec[tab_pos + 1..];
-        if path_bytes.is_empty() {
-            continue;
-        }
-
-        let has_rename = status_bytes.starts_with(b"R") || status_bytes.starts_with(b"C");
+        let has_rename = status.starts_with('R') || status.starts_with('C');
         if has_rename {
-            let old_path = String::from_utf8_lossy(path_bytes).to_string();
-
-            let start2 = i;
-            while i < b.len() && b[i] != 0 {
-                i += 1;
+            if i + 1 >= tokens.len() {
+                break;
             }
-            let new_path_bytes = &b[start2..i];
-            i += 1;
-            let new_path = String::from_utf8_lossy(new_path_bytes).to_string();
+            let old_path = tokens[i].to_string();
+            let new_path = tokens[i + 1].to_string();
+            i += 2;
 
             if !new_path.trim().is_empty() {
                 out.push(GitChangeEntry {
@@ -1958,7 +1945,11 @@ fn git_commit_changes(repo_path: String, commit: String) -> Result<Vec<GitChange
                 });
             }
         } else {
-            let path = String::from_utf8_lossy(path_bytes).to_string();
+            if i >= tokens.len() {
+                break;
+            }
+            let path = tokens[i].to_string();
+            i += 1;
             if !path.trim().is_empty() {
                 out.push(GitChangeEntry {
                     status,

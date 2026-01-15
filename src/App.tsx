@@ -5322,15 +5322,19 @@ function App() {
                 <div className="detailsValue mono">{selectedCommit.hash}</div>
 
                 <div className="detailsLabel">Subject</div>
-                <div className="detailsValue">{selectedCommit.subject}</div>
+              <div className="detailsValue">{selectedCommit.subject}</div>
 
-                <div className="detailsLabel">Author</div>
-                <div className="detailsValue">{selectedCommit.author}</div>
+              <div className="detailsLabel">Author</div>
+              <div className="detailsValue">
+                {selectedCommit.author_email?.trim()
+                  ? `${selectedCommit.author} (${selectedCommit.author_email.trim()})`
+                  : selectedCommit.author}
+              </div>
 
-                <div className="detailsLabel">Date</div>
-                <div className="detailsValue">{selectedCommit.date}</div>
+              <div className="detailsLabel">Date</div>
+              <div className="detailsValue">{selectedCommit.date}</div>
 
-                <div className="detailsLabel">Refs</div>
+              <div className="detailsLabel">Refs</div>
                 <div className="detailsValue mono">{selectedCommit.refs || "(none)"}</div>
               </div>
             ) : (
