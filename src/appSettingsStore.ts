@@ -10,12 +10,34 @@ export type EdgeDirection = "to_parent" | "to_child";
 
  export type TooltipMode = "custom" | "native";
 
- export type TooltipSettings = {
+export type TooltipSettings = {
   enabled: boolean;
   mode: TooltipMode;
   showDelayMs: number;
   autoHideMs: number;
- };
+};
+
+export type TerminalPlatform = "windows" | "macos" | "linux";
+
+export type TerminalProfileKind =
+  | "builtin_default"
+  | "builtin_git_bash"
+  | "builtin_cmd"
+  | "builtin_powershell"
+  | "custom";
+
+export type TerminalProfile = {
+  id: string;
+  name: string;
+  kind: TerminalProfileKind;
+  command: string;
+  args: string[];
+};
+
+export type TerminalSettings = {
+  profiles: TerminalProfile[];
+  defaultProfileId: string;
+};
 
 export type GeneralSettings = {
   openOnStartup: boolean;
@@ -68,6 +90,7 @@ export type AppSettingsState = {
   viewMode: ViewMode;
   graph: GraphSettings;
   layout: LayoutSettings;
+  terminal: TerminalSettings;
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -76,7 +99,9 @@ export type AppSettingsState = {
   setGit: (patch: Partial<GitSettings>) => void;
   setGraph: (patch: Partial<GraphSettings>) => void;
   setLayout: (patch: Partial<LayoutSettings>) => void;
+  setTerminal: (patch: Partial<TerminalSettings>) => void;
   resetLayout: () => void;
+  resetTerminal: () => void;
   resetSettings: () => void;
 };
 
@@ -127,6 +152,33 @@ export const defaultLayoutSettings: LayoutSettings = {
   detailsHeightPx: 280,
 };
 
+function detectTerminalPlatform(): TerminalPlatform {
+  const ua = (typeof navigator !== "undefined" ? navigator.userAgent : "").toLowerCase();
+  if (ua.includes("windows")) return "windows";
+  const isAppleMobile = ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod");
+  if (!isAppleMobile && (ua.includes("mac os") || ua.includes("macintosh"))) return "macos";
+  return "linux";
+}
+
+export const defaultTerminalSettings: TerminalSettings = (() => {
+  const platform = detectTerminalPlatform();
+  if (platform === "windows") {
+    return {
+      profiles: [
+        { id: "git-bash", name: "Git Bash", kind: "builtin_git_bash", command: "", args: [] },
+        { id: "cmd", name: "Command Prompt", kind: "builtin_cmd", command: "", args: [] },
+        { id: "powershell", name: "PowerShell", kind: "builtin_powershell", command: "", args: [] },
+      ],
+      defaultProfileId: "git-bash",
+    };
+  }
+
+  return {
+    profiles: [{ id: "terminal", name: "Terminal", kind: "builtin_default", command: "", args: [] }],
+    defaultProfileId: "terminal",
+  };
+})();
+
 export const useAppSettings = create<AppSettingsState>()(
   persist(
     (set) => ({
@@ -136,6 +188,7 @@ export const useAppSettings = create<AppSettingsState>()(
       viewMode: "graph",
       graph: defaultGraphSettings,
       layout: defaultLayoutSettings,
+      terminal: defaultTerminalSettings,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -150,7 +203,9 @@ export const useAppSettings = create<AppSettingsState>()(
       setGit: (patch) => set((s) => ({ git: { ...s.git, ...patch } })),
       setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
       setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
+      setTerminal: (patch) => set((s) => ({ terminal: { ...s.terminal, ...patch } })),
       resetLayout: () => set({ layout: defaultLayoutSettings }),
+      resetTerminal: () => set({ terminal: defaultTerminalSettings }),
       resetSettings: () =>
         set({
           general: defaultGeneralSettings,
@@ -159,11 +214,12 @@ export const useAppSettings = create<AppSettingsState>()(
           viewMode: "graph",
           graph: defaultGraphSettings,
           layout: defaultLayoutSettings,
+          terminal: defaultTerminalSettings,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 10,
+      version: 11,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -224,6 +280,16 @@ export const useAppSettings = create<AppSettingsState>()(
           }
           if (!Number.isFinite(s.layout.detailsHeightPx)) {
             s.layout.detailsHeightPx = defaultLayoutSettings.detailsHeightPx;
+          }
+        }
+        if (!s.terminal || typeof s.terminal !== "object") {
+          s.terminal = defaultTerminalSettings;
+        } else {
+          if (!Array.isArray(s.terminal.profiles) || s.terminal.profiles.length === 0) {
+            s.terminal.profiles = defaultTerminalSettings.profiles;
+          }
+          if (typeof s.terminal.defaultProfileId !== "string" || !s.terminal.defaultProfileId.trim()) {
+            s.terminal.defaultProfileId = defaultTerminalSettings.defaultProfileId;
           }
         }
         return s;

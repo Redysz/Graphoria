@@ -676,6 +676,8 @@ async function copyText(text: string) {
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
+  const [tabDragPath, setTabDragPath] = useState<string>("");
+  const [tabDragOverPath, setTabDragOverPath] = useState<string>("");
   const [viewModeByRepo, setViewModeByRepo] = useState<Record<string, "graph" | "commits">>({});
   const [tagsExpandedByRepo, setTagsExpandedByRepo] = useState<Record<string, boolean>>({});
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
@@ -687,7 +689,8 @@ function App() {
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
   const [indicatorsUpdatingByRepo, setIndicatorsUpdatingByRepo] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [globalError, setGlobalError] = useState<string>("");
+  const [errorByRepo, setErrorByRepo] = useState<Record<string, string>>({});
   const [gitTrustOpen, setGitTrustOpen] = useState(false);
   const [gitTrustRepoPath, setGitTrustRepoPath] = useState<string>("");
   const [gitTrustDetails, setGitTrustDetails] = useState<string>("");
@@ -826,7 +829,9 @@ function App() {
 
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
   const [pullBusy, setPullBusy] = useState(false);
-  const [pullError, setPullError] = useState("");
+  const [pullErrorByRepo, setPullErrorByRepo] = useState<Record<string, string>>({});
+
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
 
   const [pullConflictOpen, setPullConflictOpen] = useState(false);
   const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
@@ -885,6 +890,14 @@ function App() {
   const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
+  const terminalSettings = useAppSettings((s) => s.terminal);
+  const setTerminal = useAppSettings((s) => s.setTerminal);
+
+  const isMacOS = useMemo(() => {
+    const ua = (navigator?.userAgent ?? "").toLowerCase();
+    const isAppleMobile = ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod");
+    return !isAppleMobile && (ua.includes("mac os") || ua.includes("macintosh"));
+  }, []);
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
@@ -897,6 +910,23 @@ function App() {
   const [detailsTab, setDetailsTab] = useState<"details" | "changes">("details");
   const [showChangesOpen, setShowChangesOpen] = useState(false);
   const [showChangesCommit, setShowChangesCommit] = useState("");
+
+  const error = activeRepoPath ? ((errorByRepo[activeRepoPath] ?? "") || globalError) : globalError;
+  function setError(msg: string) {
+    const m = msg ?? "";
+    if (activeRepoPath) {
+      setErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
+      return;
+    }
+    setGlobalError(m);
+  }
+
+  const pullError = activeRepoPath ? (pullErrorByRepo[activeRepoPath] ?? "") : "";
+  function setPullError(msg: string) {
+    if (!activeRepoPath) return;
+    const m = msg ?? "";
+    setPullErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
+  }
 
   function startSidebarResize(e: ReactMouseEvent) {
     e.preventDefault();
@@ -2143,11 +2173,27 @@ function App() {
     }
   }
 
-  async function openTerminal() {
-    if (!activeRepoPath) return;
+  async function openTerminalProfile(profileId?: string, repoPathOverride?: string) {
+    const repoPath = repoPathOverride ?? activeRepoPath;
+    if (!repoPath) return;
+
+    const profiles = terminalSettings.profiles ?? [];
+    const selected = (profileId ? profiles.find((p) => p.id === profileId) : null) ??
+      profiles.find((p) => p.id === terminalSettings.defaultProfileId) ??
+      profiles[0];
+    if (!selected) {
+      setError("No terminal profiles configured.");
+      return;
+    }
+
     setError("");
     try {
-      await invoke<void>("open_terminal", { repoPath: activeRepoPath });
+      await invoke<void>("open_terminal_profile", {
+        repoPath,
+        kind: selected.kind,
+        command: selected.command,
+        args: selected.args,
+      });
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     }
@@ -3085,7 +3131,7 @@ function App() {
       elements: [...elements.nodes, ...elements.edges],
       minZoom: 0.1,
       maxZoom: 5,
-      wheelSensitivity: 0.6,
+      wheelSensitivity: isMacOS ? 0.14 : 0.6,
       layout: { name: "preset" } as any,
       style: [
         {
@@ -3548,7 +3594,7 @@ function App() {
   }
 
   async function pickRepository() {
-    setError("");
+    setGlobalError("");
 
     const selected = await open({
       directory: true,
@@ -3561,7 +3607,7 @@ function App() {
   }
 
   async function initializeProject() {
-    setError("");
+    setGlobalError("");
     const selected = await open({
       directory: true,
       multiple: false,
@@ -3575,7 +3621,7 @@ function App() {
       await invoke<string>("init_repo", { repoPath: selected });
       await openRepository(selected);
     } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
+      setGlobalError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
     }
@@ -4246,7 +4292,9 @@ function App() {
   }
 
   async function openRepository(path: string) {
-    setError("");
+    setGlobalError("");
+    setErrorByRepo((prev) => ({ ...prev, [path]: "" }));
+    setPullErrorByRepo((prev) => ({ ...prev, [path]: "" }));
     setSelectedHash("");
     setLoading(true);
 
@@ -4264,7 +4312,7 @@ function App() {
         setLoading(false);
         return;
       }
-      setError(msg);
+      setGlobalError(msg);
       setLoading(false);
       return;
     }
@@ -4311,6 +4359,17 @@ function App() {
       return next;
     });
     setAheadBehindByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+
+    setErrorByRepo((prev) => {
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    setPullErrorByRepo((prev) => {
       const next = { ...prev };
       delete next[path];
       return next;
@@ -4483,8 +4542,7 @@ function App() {
     setGitTrustBusy(true);
     setGitTrustActionError("");
     try {
-      await invoke<void>("open_terminal", { repoPath: gitTrustRepoPath });
-      setGitTrustOpen(false);
+      await openTerminalProfile(undefined, gitTrustRepoPath);
     } catch (e) {
       setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -4928,9 +4986,64 @@ function App() {
               {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
             </span>
           </button>
-          <button type="button" onClick={() => void openTerminal()} disabled={!activeRepoPath} title="Open terminal in repository">
-            Git Bash
-          </button>
+          <div style={{ position: "relative", display: "flex", alignItems: "stretch" }}>
+            <button
+              type="button"
+              onClick={() => void openTerminalProfile()}
+              disabled={!activeRepoPath}
+              title="Open terminal in repository"
+              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            >
+              Terminal
+            </button>
+            <button
+              type="button"
+              onClick={() => setTerminalMenuOpen((v) => !v)}
+              disabled={!activeRepoPath}
+              title="Choose terminal profile"
+              style={{
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+                borderLeft: "0",
+                paddingLeft: 8,
+                paddingRight: 8,
+              }}
+            >
+              ▾
+            </button>
+
+            {terminalMenuOpen ? (
+              <div className="menuDropdown" style={{ left: 0, top: "calc(100% + 6px)", minWidth: 260 }}>
+                {(terminalSettings.profiles ?? []).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setTerminalMenuOpen(false);
+                      setTerminal({ defaultProfileId: p.id });
+                      void openTerminalProfile(p.id);
+                    }}
+                    disabled={!activeRepoPath}
+                    title={p.kind === "custom" ? (p.command?.trim() ? p.command.trim() : "Custom") : undefined}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+                {(terminalSettings.profiles ?? []).length === 0 ? (
+                  <div style={{ opacity: 0.75, padding: "6px 8px" }}>No terminal profiles.</div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTerminalMenuOpen(false);
+                    setSettingsOpen(true);
+                  }}
+                >
+                  Terminal settings…
+                </button>
+              </div>
+            ) : null}
+          </div>
           <div style={{ flex: 1 }} />
           {indicatorsUpdating ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.75 }} title="Updating remote status">
@@ -4952,10 +5065,47 @@ function App() {
           {repos.map((p) => (
             <div
               key={p}
-              className={`tab ${p === activeRepoPath ? "tabActive" : ""}`}
+              draggable
+              className={`tab ${p === activeRepoPath ? "tabActive" : ""}${tabDragPath === p ? " tabDragging" : ""}${tabDragOverPath === p && tabDragPath && tabDragPath !== p ? " tabDragOver" : ""}`}
               onClick={() => {
                 setActiveRepoPath(p);
                 setSelectedHash("");
+              }}
+              onDragStart={(e) => {
+                setTabDragPath(p);
+                setTabDragOverPath("");
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", p);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (tabDragPath && tabDragPath !== p) setTabDragOverPath(p);
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDragLeave={() => {
+                if (tabDragOverPath === p) setTabDragOverPath("");
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = tabDragPath || e.dataTransfer.getData("text/plain");
+                const to = p;
+                setTabDragOverPath("");
+                setTabDragPath("");
+                if (!from || from === to) return;
+                setRepos((prev) => {
+                  const next = prev.slice();
+                  const fromIdx = next.indexOf(from);
+                  const toIdx = next.indexOf(to);
+                  if (fromIdx < 0 || toIdx < 0) return prev;
+                  next.splice(fromIdx, 1);
+                  const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx;
+                  next.splice(insertAt, 0, from);
+                  return next;
+                });
+              }}
+              onDragEnd={() => {
+                setTabDragOverPath("");
+                setTabDragPath("");
               }}
             >
               <div style={{ fontWeight: 900 }}>{repoNameFromPath(p)}</div>
@@ -6443,7 +6593,7 @@ function App() {
                   <div>
                     <div className="recoveryOptionTitle">I'll handle it myself — open terminal</div>
                     <div className="recoveryOptionDesc">Opens a terminal in the repository folder (Git Bash on Windows if available).</div>
-                    <button type="button" onClick={() => void openTerminal()} disabled={detachedBusy || !activeRepoPath}>
+                    <button type="button" onClick={() => void openTerminalProfile()} disabled={detachedBusy || !activeRepoPath}>
                       Open terminal
                     </button>
                   </div>

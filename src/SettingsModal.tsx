@@ -8,9 +8,10 @@ import {
   type EdgeDirection,
   type GitHistoryOrder,
   type TooltipMode,
+  type TerminalProfileKind,
 } from "./appSettingsStore";
 
-type SettingsSection = "general" | "appearance" | "graph" | "git";
+type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal";
 
 export default function SettingsModal(props: { open: boolean; activeRepoPath: string; onClose: () => void }) {
   const { open, activeRepoPath, onClose } = props;
@@ -19,6 +20,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const appearance = useAppSettings((s) => s.appearance);
   const graph = useAppSettings((s) => s.graph);
   const git = useAppSettings((s) => s.git);
+  const terminal = useAppSettings((s) => s.terminal);
 
   const viewMode = useAppSettings((s) => s.viewMode);
 
@@ -27,9 +29,11 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const setAppearance = useAppSettings((s) => s.setAppearance);
   const setGit = useAppSettings((s) => s.setGit);
   const setGraph = useAppSettings((s) => s.setGraph);
+  const setTerminal = useAppSettings((s) => s.setTerminal);
   const setViewMode = useAppSettings((s) => s.setViewMode);
   const resetSettings = useAppSettings((s) => s.resetSettings);
   const resetLayout = useAppSettings((s) => s.resetLayout);
+  const resetTerminal = useAppSettings((s) => s.resetTerminal);
 
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -51,6 +55,8 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
         return "Graph";
       case "git":
         return "Git";
+      case "terminal":
+        return "Terminal";
     }
   }, [section]);
 
@@ -137,6 +143,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
               {sectionButton("appearance", "Appearance")}
               {sectionButton("graph", "Graph")}
               {sectionButton("git", "Git")}
+              {sectionButton("terminal", "Terminal")}
             </div>
 
             <div className="settingsContent">
@@ -553,6 +560,180 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       )}
                     </>
                   ) : null}
+                </div>
+              ) : null}
+
+              {section === "terminal" ? (
+                <div className="settingsContentBody">
+                  {(() => {
+                    const profiles = terminal.profiles ?? [];
+                    const defaultId = terminal.defaultProfileId;
+
+                    const normalizeArgs = (text: string) => {
+                      const out: string[] = [];
+                      const re = /"([^"]*)"|(\S+)/g;
+                      let m: RegExpExecArray | null;
+                      while ((m = re.exec(text)) !== null) {
+                        const v = (m[1] ?? m[2] ?? "").trim();
+                        if (v) out.push(v);
+                      }
+                      return out;
+                    };
+
+                    const updateProfiles = (next: typeof profiles, nextDefault?: string) => {
+                      const safeNext = next.length ? next : profiles;
+                      const desiredDefault = (nextDefault ?? defaultId).trim();
+                      const hasDefault = safeNext.some((p) => p.id === desiredDefault);
+                      setTerminal({
+                        profiles: safeNext,
+                        defaultProfileId: hasDefault ? desiredDefault : (safeNext[0]?.id ?? desiredDefault),
+                      });
+                    };
+
+                    return (
+                      <>
+                        {field(
+                          "Default profile",
+                          <select
+                            value={defaultId}
+                            onChange={(e) => {
+                              updateProfiles(profiles, e.target.value);
+                            }}
+                          >
+                            {profiles.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>,
+                        )}
+
+                        {field(
+                          "Profiles",
+                          <div style={{ display: "grid", gap: 10 }}>
+                            {profiles.map((p) => (
+                              <div key={p.id} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 10 }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                                  <div style={{ fontWeight: 900, opacity: 0.9 }}>{p.id}</div>
+                                  <button
+                                    type="button"
+                                    disabled={profiles.length <= 1}
+                                    onClick={() => {
+                                      const next = profiles.filter((x) => x.id !== p.id);
+                                      updateProfiles(next);
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+
+                                <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                                  <label style={{ display: "grid", gap: 4 }}>
+                                    <div style={{ fontWeight: 800, opacity: 0.85 }}>Name</div>
+                                    <input
+                                      className="modalInput"
+                                      value={p.name}
+                                      onChange={(e) => {
+                                        const next = profiles.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x));
+                                        updateProfiles(next);
+                                      }}
+                                    />
+                                  </label>
+
+                                  <label style={{ display: "grid", gap: 4 }}>
+                                    <div style={{ fontWeight: 800, opacity: 0.85 }}>Type</div>
+                                    <select
+                                      value={p.kind}
+                                      onChange={(e) => {
+                                        const kind = e.target.value as TerminalProfileKind;
+                                        const next = profiles.map((x) =>
+                                          x.id === p.id
+                                            ? {
+                                                ...x,
+                                                kind,
+                                                command: kind === "custom" ? x.command : "",
+                                                args: kind === "custom" ? x.args : [],
+                                              }
+                                            : x,
+                                        );
+                                        updateProfiles(next);
+                                      }}
+                                    >
+                                      <option value="builtin_default">System default</option>
+                                      <option value="builtin_git_bash">Git Bash (Windows)</option>
+                                      <option value="builtin_cmd">Command Prompt (Windows)</option>
+                                      <option value="builtin_powershell">PowerShell (Windows)</option>
+                                      <option value="custom">Custom</option>
+                                    </select>
+                                  </label>
+
+                                  <label style={{ display: "grid", gap: 4 }}>
+                                    <div style={{ fontWeight: 800, opacity: 0.85 }}>Command</div>
+                                    <input
+                                      className="modalInput"
+                                      value={p.command}
+                                      disabled={p.kind !== "custom"}
+                                      onChange={(e) => {
+                                        const next = profiles.map((x) => (x.id === p.id ? { ...x, command: e.target.value } : x));
+                                        updateProfiles(next);
+                                      }}
+                                      placeholder={p.kind === "custom" ? "zsh" : "(built-in)"}
+                                    />
+                                  </label>
+
+                                  <label style={{ display: "grid", gap: 4 }}>
+                                    <div style={{ fontWeight: 800, opacity: 0.85 }}>Args</div>
+                                    <input
+                                      className="modalInput"
+                                      value={(p.args ?? []).join(" ")}
+                                      disabled={p.kind !== "custom"}
+                                      onChange={(e) => {
+                                        const nextArgs = normalizeArgs(e.target.value);
+                                        const next = profiles.map((x) => (x.id === p.id ? { ...x, args: nextArgs } : x));
+                                        updateProfiles(next);
+                                      }}
+                                      placeholder={p.kind === "custom" ? "-l" : "(built-in)"}
+                                    />
+                                  </label>
+
+                                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateProfiles(profiles, p.id);
+                                      }}
+                                    >
+                                      Set as default
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const id = `custom-${Date.now().toString(36)}`;
+                                  const next = [
+                                    ...profiles,
+                                    { id, name: "Custom", kind: "custom" as const, command: "", args: [] },
+                                  ];
+                                  updateProfiles(next);
+                                }}
+                              >
+                                Add profile
+                              </button>
+                              <button type="button" onClick={() => resetTerminal()}>
+                                Reset terminal profiles
+                              </button>
+                            </div>
+                          </div>,
+                          "You must keep at least one profile. For custom args, you can use quotes (e.g. \"--login\").",
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               ) : null}
             </div>

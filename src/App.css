@@ -240,6 +240,15 @@ button:disabled {
   border-color: rgba(47, 111, 237, 0.35);
 }
 
+.tabDragging {
+  opacity: 0.6;
+}
+
+.tabDragOver {
+  border-color: rgba(47, 111, 237, 0.75);
+  background: rgba(47, 111, 237, 0.16);
+}
+
 .tabClose {
   width: 22px;
   height: 22px;
