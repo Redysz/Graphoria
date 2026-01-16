@@ -233,6 +233,7 @@ button:disabled {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  transition: transform 140ms ease-out;
 }
 
 .tabActive {
@@ -242,11 +243,9 @@ button:disabled {
 
 .tabDragging {
   opacity: 0.6;
-}
-
-.tabDragOver {
+  border-style: dashed;
   border-color: rgba(47, 111, 237, 0.75);
-  background: rgba(47, 111, 237, 0.16);
+  background: rgba(47, 111, 237, 0.08);
 }
 
 .tabClose {

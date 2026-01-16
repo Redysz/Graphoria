@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -677,7 +677,6 @@ function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
   const [tabDragPath, setTabDragPath] = useState<string>("");
-  const [tabDragOverPath, setTabDragOverPath] = useState<string>("");
   const [viewModeByRepo, setViewModeByRepo] = useState<Record<string, "graph" | "commits">>({});
   const [tagsExpandedByRepo, setTagsExpandedByRepo] = useState<Record<string, boolean>>({});
   const [overviewByRepo, setOverviewByRepo] = useState<Record<string, RepoOverview | undefined>>({});
@@ -712,6 +711,52 @@ function App() {
   const [confirmCancelLabel, setConfirmCancelLabel] = useState("Cancel");
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null);
   const [autoCenterToken, setAutoCenterToken] = useState(0);
+
+  const tabSuppressClickRef = useRef(false);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const reposRef = useRef<string[]>([]);
+  const tabFlipRectsRef = useRef<Map<string, DOMRect>>(new Map());
+
+  useEffect(() => {
+    reposRef.current = repos;
+  }, [repos]);
+
+  const captureTabRects = () => {
+    const tabsEl = tabsRef.current;
+    if (!tabsEl) return;
+    const map = tabFlipRectsRef.current;
+    map.clear();
+    const nodes = tabsEl.querySelectorAll<HTMLElement>(".tab");
+    for (const n of nodes) {
+      const key = n.getAttribute("data-repo-path") ?? "";
+      if (!key) continue;
+      map.set(key, n.getBoundingClientRect());
+    }
+  };
+
+  useLayoutEffect(() => {
+    const tabsEl = tabsRef.current;
+    if (!tabsEl) return;
+    const prev = tabFlipRectsRef.current;
+    if (prev.size === 0) return;
+
+    const nodes = tabsEl.querySelectorAll<HTMLElement>(".tab");
+    for (const n of nodes) {
+      const key = n.getAttribute("data-repo-path") ?? "";
+      if (!key) continue;
+      const from = prev.get(key);
+      if (!from) continue;
+      const to = n.getBoundingClientRect();
+      const dx = from.left - to.left;
+      const dy = from.top - to.top;
+      if (dx === 0 && dy === 0) continue;
+      n.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0px, 0px)" }],
+        { duration: 140, easing: "ease-out" }
+      );
+    }
+    prev.clear();
+  }, [repos]);
 
   const gitTrustCopyTimeoutRef = useRef<number | null>(null);
 
@@ -5060,52 +5105,91 @@ function App() {
           {pullError ? <div className="error">{pullError}</div> : null}
         </div>
 
-        <div className="tabs">
+        <div className="tabs" ref={tabsRef}>
           {repos.length === 0 ? <div style={{ opacity: 0.7, padding: "8px 4px" }}>No repository opened</div> : null}
           {repos.map((p) => (
             <div
               key={p}
-              draggable
-              className={`tab ${p === activeRepoPath ? "tabActive" : ""}${tabDragPath === p ? " tabDragging" : ""}${tabDragOverPath === p && tabDragPath && tabDragPath !== p ? " tabDragOver" : ""}`}
+              data-repo-path={p}
+              className={`tab ${p === activeRepoPath ? "tabActive" : ""}${tabDragPath === p ? " tabDragging" : ""}`}
               onClick={() => {
+                if (tabSuppressClickRef.current) {
+                  tabSuppressClickRef.current = false;
+                  return;
+                }
                 setActiveRepoPath(p);
                 setSelectedHash("");
               }}
-              onDragStart={(e) => {
-                setTabDragPath(p);
-                setTabDragOverPath("");
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", p);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (tabDragPath && tabDragPath !== p) setTabDragOverPath(p);
-                e.dataTransfer.dropEffect = "move";
-              }}
-              onDragLeave={() => {
-                if (tabDragOverPath === p) setTabDragOverPath("");
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const from = tabDragPath || e.dataTransfer.getData("text/plain");
-                const to = p;
-                setTabDragOverPath("");
-                setTabDragPath("");
-                if (!from || from === to) return;
-                setRepos((prev) => {
-                  const next = prev.slice();
-                  const fromIdx = next.indexOf(from);
-                  const toIdx = next.indexOf(to);
-                  if (fromIdx < 0 || toIdx < 0) return prev;
-                  next.splice(fromIdx, 1);
-                  const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx;
-                  next.splice(insertAt, 0, from);
-                  return next;
-                });
-              }}
-              onDragEnd={() => {
-                setTabDragOverPath("");
-                setTabDragPath("");
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                const target = e.target;
+                const el = target instanceof HTMLElement ? target : null;
+                if (el?.closest?.(".tabClose")) return;
+
+                const from = p;
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const prevUserSelect = document.body.style.userSelect;
+                let dragging = false;
+
+                tabSuppressClickRef.current = false;
+
+                const getInsertIndexFromPointer = (clientX: number) => {
+                  const tabsEl = tabsRef.current;
+                  if (!tabsEl) return -1;
+                  const nodes = Array.from(tabsEl.querySelectorAll<HTMLElement>(".tab"));
+                  if (nodes.length === 0) return 0;
+                  for (let i = 0; i < nodes.length; i++) {
+                    const r = nodes[i].getBoundingClientRect();
+                    const mid = r.left + r.width / 2;
+                    if (clientX < mid) return i;
+                  }
+                  return nodes.length;
+                };
+
+                const onMove = (ev: MouseEvent) => {
+                  const dx = ev.clientX - startX;
+                  const dy = ev.clientY - startY;
+                  if (!dragging) {
+                    if (Math.hypot(dx, dy) < 4) return;
+                    dragging = true;
+                    tabSuppressClickRef.current = true;
+                    document.body.style.userSelect = "none";
+                    setTabDragPath(from);
+                  }
+
+                  const rawInsert = getInsertIndexFromPointer(ev.clientX);
+                  if (rawInsert < 0) return;
+
+                  captureTabRects();
+                  setRepos((prev) => {
+                    const curFromIdx = prev.indexOf(from);
+                    if (curFromIdx < 0) return prev;
+
+                    let insertAt = rawInsert;
+                    if (rawInsert > curFromIdx) insertAt -= 1;
+
+                    const next = prev.slice();
+                    next.splice(curFromIdx, 1);
+                    insertAt = Math.max(0, Math.min(next.length, insertAt));
+                    if (insertAt === curFromIdx) return prev;
+                    next.splice(insertAt, 0, from);
+                    return next;
+                  });
+                };
+
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                  document.body.style.userSelect = prevUserSelect;
+
+                  if (!dragging) return;
+
+                  setTabDragPath("");
+                };
+
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
               }}
             >
               <div style={{ fontWeight: 900 }}>{repoNameFromPath(p)}</div>
