@@ -204,6 +204,91 @@ button:disabled {
   white-space: nowrap;
 }
 
+ .menuToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+ }
+
+ .menuToggle:hover {
+  border-color: rgba(47, 111, 237, 0.55);
+ }
+
+ .menuToggle:active {
+  background-color: rgba(47, 111, 237, 0.08);
+ }
+
+ .menuToggleDisabled {
+  opacity: 0.55;
+  cursor: default;
+ }
+
+ .menuToggleLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+ }
+
+ .menuSwitch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex: 0 0 auto;
+ }
+
+ .menuSwitch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+ }
+
+ .menuSwitchSlider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(15, 15, 15, 0.18);
+  transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
+ }
+
+ :root[data-theme="dark"] .menuSwitchSlider {
+  background: rgba(242, 244, 248, 0.22);
+ }
+
+ .menuSwitchSlider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 1px;
+  top: 1px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  transition: transform 0.12s ease-out;
+ }
+
+ .menuSwitch input:checked + .menuSwitchSlider {
+  background: rgba(47, 111, 237, 0.85);
+  border-color: rgba(47, 111, 237, 0.65);
+ }
+
+ .menuSwitch input:checked + .menuSwitchSlider::before {
+  transform: translateX(18px);
+ }
+
 .toolbar {
   display: flex;
   align-items: center;

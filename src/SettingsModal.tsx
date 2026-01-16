@@ -302,6 +302,15 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
+                    "Show tags on graph",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input type="checkbox" checked={graph.showTags} onChange={(e) => setGraph({ showTags: e.target.checked })} />
+                      Enable
+                    </label>,
+                    "When disabled, tag badges are hidden.",
+                  )}
+
+                  {field(
                     "Show remote branches on graph",
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
                       <input

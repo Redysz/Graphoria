@@ -76,6 +76,7 @@ export type GraphSettings = {
   canvasBackground: string;
   showStashesOnGraph: boolean;
   showRemoteBranchesOnGraph: boolean;
+  showTags: boolean;
 };
 
 export type LayoutSettings = {
@@ -145,6 +146,7 @@ export const defaultGraphSettings: GraphSettings = {
   canvasBackground: "",
   showStashesOnGraph: false,
   showRemoteBranchesOnGraph: true,
+  showTags: true,
 };
 
 export const defaultLayoutSettings: LayoutSettings = {
@@ -219,7 +221,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 11,
+      version: 12,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -271,6 +273,9 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (s.graph && typeof s.graph.showRemoteBranchesOnGraph !== "boolean") {
           s.graph.showRemoteBranchesOnGraph = true;
+        }
+        if (s.graph && typeof s.graph.showTags !== "boolean") {
+          s.graph.showTags = true;
         }
         if (!s.layout || typeof s.layout !== "object") {
           s.layout = defaultLayoutSettings;
