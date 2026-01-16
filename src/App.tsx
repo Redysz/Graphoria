@@ -699,11 +699,19 @@ function App() {
   const [gitTrustCopied, setGitTrustCopied] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string>("");
   const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
+  const [navigateMenuOpen, setNavigateMenuOpen] = useState(false);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
   const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [goToOpen, setGoToOpen] = useState(false);
+  const [goToKind, setGoToKind] = useState<"commit" | "tag">("commit");
+  const [goToText, setGoToText] = useState<string>("");
+  const [goToTargetView, setGoToTargetView] = useState<"graph" | "commits">("graph");
+  const [goToError, setGoToError] = useState<string>("");
+  const [graphButtonsVisible, setGraphButtonsVisible] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("Confirm");
   const [confirmMessage, setConfirmMessage] = useState("");
@@ -929,10 +937,14 @@ function App() {
   const fontSizePx = useAppSettings((s) => s.appearance.fontSizePx);
   const modalClosePosition = useAppSettings((s) => s.appearance.modalClosePosition);
   const graphSettings = useAppSettings((s) => s.graph);
+  const setGraph = useAppSettings((s) => s.setGraph);
   const diffTool = useAppSettings((s) => s.git.diffTool);
   const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
   const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
   const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
+  const setGit = useAppSettings((s) => s.setGit);
+  const tooltipSettings = useAppSettings((s) => s.general.tooltips);
+  const setGeneral = useAppSettings((s) => s.setGeneral);
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
   const terminalSettings = useAppSettings((s) => s.terminal);
@@ -971,6 +983,33 @@ function App() {
     if (!activeRepoPath) return;
     const m = msg ?? "";
     setPullErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
+  }
+
+  const lastSidebarWidthRef = useRef<number>(280);
+  const lastDetailsHeightRef = useRef<number>(280);
+
+  function setSidebarVisible(visible: boolean) {
+    if (visible) {
+      const w = Number.isFinite(lastSidebarWidthRef.current) ? lastSidebarWidthRef.current : 280;
+      setLayout({ sidebarWidthPx: Math.max(200, Math.round(w || 280)) });
+      return;
+    }
+    if (layout.sidebarWidthPx > 0) {
+      lastSidebarWidthRef.current = layout.sidebarWidthPx;
+    }
+    setLayout({ sidebarWidthPx: 0 });
+  }
+
+  function setDetailsVisible(visible: boolean) {
+    if (visible) {
+      const h = Number.isFinite(lastDetailsHeightRef.current) ? lastDetailsHeightRef.current : 280;
+      setLayout({ detailsHeightPx: Math.max(160, Math.round(h || 280)) });
+      return;
+    }
+    if (layout.detailsHeightPx > 0) {
+      lastDetailsHeightRef.current = layout.detailsHeightPx;
+    }
+    setLayout({ detailsHeightPx: 0 });
   }
 
   function startSidebarResize(e: ReactMouseEvent) {
@@ -2459,6 +2498,112 @@ function App() {
     setViewMode("commits");
   }
 
+  function focusHashOnGraph(hash: string) {
+    const h = hash.trim();
+    if (!h) return;
+    setSelectedHash(h);
+    setViewMode("graph");
+    requestAutoCenter();
+  }
+
+  function focusHashOnCommits(hash: string) {
+    const h = hash.trim();
+    if (!h) return;
+    setSelectedHash(h);
+    setViewMode("commits");
+  }
+
+  async function goToReference(reference: string, targetView: "graph" | "commits") {
+    const hash = await resolveReferenceToHash(reference);
+    const h = (hash ?? "").trim();
+    if (!h) return false;
+    if (targetView === "graph") {
+      focusHashOnGraph(h);
+      return true;
+    }
+    focusHashOnCommits(h);
+    return true;
+  }
+
+  function moveActiveRepoBy(delta: number) {
+    if (!activeRepoPath) return;
+    if (repos.length < 2) return;
+    const idx = repos.indexOf(activeRepoPath);
+    if (idx < 0) return;
+    const next = (idx + delta + repos.length) % repos.length;
+    const p = repos[next];
+    if (!p) return;
+    setActiveRepoPath(p);
+    setSelectedHash("");
+  }
+
+  function goToParentCommit() {
+    const cur = (selectedHash || headHash).trim();
+    if (!cur) return;
+    const byHash = new Map(commitsAll.map((c) => [c.hash, c] as const));
+    const c = byHash.get(cur);
+    const p = (c?.parents ?? [])[0] ?? "";
+    if (!p) return;
+    if (viewMode === "graph") {
+      focusHashOnGraph(p);
+      return;
+    }
+    focusHashOnCommits(p);
+  }
+
+  function goToChildCommit() {
+    const cur = (selectedHash || headHash).trim();
+    if (!cur) return;
+    const child = commitsAll.find((c) => (c.parents ?? []).includes(cur))?.hash ?? "";
+    if (!child) return;
+    if (viewMode === "graph") {
+      focusHashOnGraph(child);
+      return;
+    }
+    focusHashOnCommits(child);
+  }
+
+  function goToFirstCommitInBranch() {
+    const start = (selectedHash || headHash).trim();
+    if (!start) return;
+    const byHash = new Map(commitsAll.map((c) => [c.hash, c] as const));
+    let cur = start;
+    for (let i = 0; i < 100000; i++) {
+      const c = byHash.get(cur);
+      const p = (c?.parents ?? [])[0] ?? "";
+      if (!p) break;
+      if (!byHash.has(p)) break;
+      cur = p;
+    }
+    if (!cur) return;
+    if (viewMode === "graph") {
+      focusHashOnGraph(cur);
+      return;
+    }
+    focusHashOnCommits(cur);
+  }
+
+  function goToFirstCommitInRepo() {
+    if (commitsAll.length === 0) return;
+    const present = new Set(commitsAll.map((c) => c.hash));
+    let root = "";
+    for (let i = commitsAll.length - 1; i >= 0; i--) {
+      const c = commitsAll[i];
+      const parents = c.parents ?? [];
+      if (parents.length === 0 || parents.every((p) => !present.has(p))) {
+        root = c.hash;
+        break;
+      }
+    }
+    if (!root) root = commitsAll[commitsAll.length - 1]?.hash ?? "";
+    if (!root) return;
+    if (viewMode === "graph") {
+      focusHashOnGraph(root);
+      return;
+    }
+    focusHashOnCommits(root);
+  }
+
   function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
     const cy = cyRef.current;
     if (!cy) return;
@@ -2804,16 +2949,12 @@ function App() {
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
-    const dir = graphSettings.rankDir;
 
     const rowForCommitIndex = (idx: number) => {
       return idx;
     };
 
     const posFor = (lane: number, row: number) => {
-      if (dir === "LR") {
-        return { x: row * rowStep, y: lane * laneStep };
-      }
       return { x: lane * laneStep, y: row * rowStep };
     };
 
@@ -2856,7 +2997,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankSep]);
 
   function parseRefs(
     refs: string,
@@ -3018,7 +3159,13 @@ function App() {
       const parsed = parseRefs(refs, overview?.remotes ?? []);
       if (parsed.length === 0) continue;
 
-      const filtered = graphSettings.showRemoteBranchesOnGraph ? parsed : parsed.filter((r) => r.kind !== "remote");
+      let filtered = parsed;
+      if (!graphSettings.showRemoteBranchesOnGraph) {
+        filtered = filtered.filter((r) => r.kind !== "remote");
+      }
+      if (!graphSettings.showTags) {
+        filtered = filtered.filter((r) => r.kind !== "tag");
+      }
       if (filtered.length === 0) continue;
 
       const pos = n.position();
@@ -4640,6 +4787,38 @@ function App() {
     }
   }
 
+  const menuToggle = (opts: { label: string; checked: boolean; disabled?: boolean; onChange: (next: boolean) => void }) => {
+    const { label, checked, disabled, onChange } = opts;
+    return (
+      <button
+        type="button"
+        className={disabled ? "menuToggle menuToggleDisabled" : "menuToggle"}
+        onClick={() => {
+          if (disabled) return;
+          onChange(!checked);
+        }}
+        disabled={disabled}
+      >
+        <span className="menuToggleLabel">{label}</span>
+        <label
+          className="menuSwitch"
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => onChange(e.target.checked)}
+          />
+          <span className="menuSwitchSlider" />
+        </label>
+      </button>
+    );
+  };
+
   return (
     <div className="app">
       <TooltipLayer />
@@ -4652,6 +4831,8 @@ function App() {
                 onClick={() => {
                   setCommandsMenuOpen(false);
                   setToolsMenuOpen(false);
+                  setNavigateMenuOpen(false);
+                  setViewMenuOpen(false);
                   setRepositoryMenuOpen((v) => !v);
                 }}
                 style={{ cursor: "pointer", userSelect: "none" }}
@@ -4724,14 +4905,224 @@ function App() {
                 </div>
               ) : null}
             </div>
-            <div className="menuitem">Navigate</div>
-            <div className="menuitem">View</div>
+
+            <div style={{ position: "relative" }}>
+              <div
+                className="menuitem"
+                onClick={() => {
+                  setRepositoryMenuOpen(false);
+                  setCommandsMenuOpen(false);
+                  setToolsMenuOpen(false);
+                  setViewMenuOpen(false);
+                  setNavigateMenuOpen((v) => !v);
+                }}
+                style={{ cursor: "pointer", userSelect: "none" }}
+              >
+                Navigate
+              </div>
+              {navigateMenuOpen ? (
+                <div className="menuDropdown" style={{ minWidth: 280 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      moveActiveRepoBy(1);
+                    }}
+                    disabled={repos.length < 2 || !activeRepoPath}
+                    title={repos.length < 2 ? "Open at least 2 repositories" : undefined}
+                  >
+                    Next repository
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      moveActiveRepoBy(-1);
+                    }}
+                    disabled={repos.length < 2 || !activeRepoPath}
+                    title={repos.length < 2 ? "Open at least 2 repositories" : undefined}
+                  >
+                    Previous repository
+                  </button>
+                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      setViewMode("graph");
+                    }}
+                    disabled={!activeRepoPath}
+                  >
+                    Go to graph view
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      setViewMode("commits");
+                    }}
+                    disabled={!activeRepoPath}
+                  >
+                    Go to commits view
+                  </button>
+                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      setGoToError("");
+                      setGoToKind("commit");
+                      setGoToText("");
+                      setGoToTargetView(viewMode);
+                      setGoToOpen(true);
+                    }}
+                    disabled={!activeRepoPath}
+                  >
+                    Go to commit…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      setGoToError("");
+                      setGoToKind("tag");
+                      setGoToText("");
+                      setGoToTargetView(viewMode);
+                      setGoToOpen(true);
+                    }}
+                    disabled={!activeRepoPath}
+                  >
+                    Go to tag…
+                  </button>
+                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      goToChildCommit();
+                    }}
+                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
+                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
+                  >
+                    Go to child commit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      goToParentCommit();
+                    }}
+                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
+                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
+                  >
+                    Go to parent commit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      goToFirstCommitInBranch();
+                    }}
+                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
+                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
+                  >
+                    Go to first commit in branch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNavigateMenuOpen(false);
+                      goToFirstCommitInRepo();
+                    }}
+                    disabled={!activeRepoPath || commitsAll.length === 0}
+                    title={commitsAll.length === 0 ? "No commits" : undefined}
+                  >
+                    Go to first commit in repo
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ position: "relative" }}>
+              <div
+                className="menuitem"
+                onClick={() => {
+                  setRepositoryMenuOpen(false);
+                  setCommandsMenuOpen(false);
+                  setToolsMenuOpen(false);
+                  setNavigateMenuOpen(false);
+                  setViewMenuOpen((v) => !v);
+                }}
+                style={{ cursor: "pointer", userSelect: "none" }}
+              >
+                View
+              </div>
+              {viewMenuOpen ? (
+                <div className="menuDropdown" style={{ minWidth: 320 }}>
+                  {menuToggle({
+                    label: "Show stashes on graph",
+                    checked: graphSettings.showStashesOnGraph,
+                    onChange: (v) => setGraph({ showStashesOnGraph: v }),
+                  })}
+                  {menuToggle({
+                    label: "Show tags",
+                    checked: graphSettings.showTags,
+                    onChange: (v) => setGraph({ showTags: v }),
+                  })}
+                  {menuToggle({
+                    label: "Show remote branches",
+                    checked: graphSettings.showRemoteBranchesOnGraph,
+                    onChange: (v) => setGraph({ showRemoteBranchesOnGraph: v }),
+                  })}
+                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                  {menuToggle({
+                    label: "Show details window",
+                    checked: layout.detailsHeightPx > 0,
+                    onChange: (v) => setDetailsVisible(v),
+                  })}
+                  {menuToggle({
+                    label: "Show branches window",
+                    checked: layout.sidebarWidthPx > 0,
+                    onChange: (v) => setSidebarVisible(v),
+                  })}
+                  {menuToggle({
+                    label: "Show buttons on graph",
+                    checked: graphButtonsVisible,
+                    onChange: (v) => setGraphButtonsVisible(v),
+                  })}
+                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+                  {menuToggle({
+                    label: "Show online avatars (Gravatar)",
+                    checked: showOnlineAvatars,
+                    onChange: (v) => setGit({ showOnlineAvatars: v }),
+                  })}
+                  {menuToggle({
+                    label: "Show only commits reachable from HEAD",
+                    checked: commitsOnlyHead,
+                    onChange: (v) => setGit({ commitsOnlyHead: v }),
+                  })}
+                  {menuToggle({
+                    label: "Layout direction from top to bottom",
+                    checked: graphSettings.edgeDirection === "to_parent",
+                    onChange: (v) => setGraph({ edgeDirection: v ? "to_parent" : "to_child" }),
+                  })}
+                  {menuToggle({
+                    label: "Show tooltips",
+                    checked: tooltipSettings.enabled,
+                    onChange: (v) => setGeneral({ tooltips: { ...tooltipSettings, enabled: v } }),
+                  })}
+                </div>
+              ) : null}
+            </div>
+
             <div style={{ position: "relative" }}>
               <div
                 className="menuitem"
                 onClick={() => {
                   setRepositoryMenuOpen(false);
                   setToolsMenuOpen(false);
+                  setNavigateMenuOpen(false);
+                  setViewMenuOpen(false);
                   setCommandsMenuOpen((v) => !v);
                 }}
                 style={{ cursor: "pointer", userSelect: "none" }}
@@ -4829,6 +5220,8 @@ function App() {
                 onClick={() => {
                   setRepositoryMenuOpen(false);
                   setCommandsMenuOpen(false);
+                  setNavigateMenuOpen(false);
+                  setViewMenuOpen(false);
                   setToolsMenuOpen((v) => !v);
                 }}
                 style={{ cursor: "pointer", userSelect: "none" }}
@@ -5206,65 +5599,82 @@ function App() {
             </div>
           ))}
         </div>
+
       </div>
 
-      <div className="content" style={{ gridTemplateColumns: `${layout.sidebarWidthPx}px 6px 1fr` }}>
-        <aside className="sidebar">
-          <div className="sidebarSection">
-            <div className="sidebarTitle">Branches</div>
-            <div className="sidebarList">
-              {(overview?.branches ?? []).slice(0, 30).map((b) => (
-                <div key={b} className="sidebarItem branchRow" title={b}>
-                  <button
-                    type="button"
-                    className="branchMain"
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      openBranchContextMenu(b, e.clientX, e.clientY);
-                    }}
-                  >
-                    <span
-                      className="branchLabel"
-                      style={normalizeBranchName(b) === normalizeBranchName(activeBranchName) ? { fontWeight: 900 } : undefined}
+        <div
+          className="content"
+          style={{
+            gridTemplateColumns: layout.sidebarWidthPx > 0 ? `${layout.sidebarWidthPx}px 6px 1fr` : `0px 0px 1fr`,
+          }}
+        >
+          <aside
+            className="sidebar"
+            style={
+              layout.sidebarWidthPx > 0
+                ? undefined
+                : {
+                    overflow: "hidden",
+                    borderRight: "none",
+                    pointerEvents: "none",
+                  }
+            }
+          >
+            <div className="sidebarSection">
+              <div className="sidebarTitle">Branches</div>
+              <div className="sidebarList">
+                {(overview?.branches ?? []).slice(0, 30).map((b) => (
+                  <div key={b} className="sidebarItem branchRow" title={b}>
+                    <button
+                      type="button"
+                      className="branchMain"
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openBranchContextMenu(b, e.clientX, e.clientY);
+                      }}
                     >
-                      {b}
-                    </span>
-                  </button>
+                      <span
+                        className="branchLabel"
+                        style={normalizeBranchName(b) === normalizeBranchName(activeBranchName) ? { fontWeight: 900 } : undefined}
+                      >
+                        {b}
+                      </span>
+                    </button>
 
-                  <span className="branchActions">
-                    <button
-                      type="button"
-                      className="branchActionBtn"
-                      onClick={() => void checkoutBranch(b)}
-                      title="Checkout (Switch) to this branch"
-                      disabled={!activeRepoPath || loading}
-                    >
-                      C
-                    </button>
-                    <button
-                      type="button"
-                      className="branchActionBtn"
-                      onClick={() => openRenameBranchDialog(b)}
-                      title="Rename branch"
-                      disabled={!activeRepoPath || loading}
-                    >
-                      R
-                    </button>
-                    <button
-                      type="button"
-                      className="branchActionBtn"
-                      onClick={() => void deleteBranch(b)}
-                      title="Delete branch"
-                      disabled={!activeRepoPath || loading}
-                    >
-                      D
-                    </button>
-                  </span>
-                </div>
-              ))}
+                    <span className="branchActions">
+                      <button
+                        type="button"
+                        className="branchActionBtn"
+                        onClick={() => void checkoutBranch(b)}
+                        title="Checkout (Switch) to this branch"
+                        disabled={!activeRepoPath || loading}
+                      >
+                        C
+                      </button>
+                      <button
+                        type="button"
+                        className="branchActionBtn"
+                        onClick={() => openRenameBranchDialog(b)}
+                        title="Rename branch"
+                        disabled={!activeRepoPath || loading}
+                      >
+                        R
+                      </button>
+                      <button
+                        type="button"
+                        className="branchActionBtn"
+                        onClick={() => void deleteBranch(b)}
+                        title="Delete branch"
+                        disabled={!activeRepoPath || loading}
+                      >
+                        D
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
 
           <div className="sidebarSection">
             <div className="sidebarTitle">Remotes</div>
@@ -5379,9 +5789,19 @@ function App() {
           </div>
         </aside>
 
-        <div className="splitterV" onMouseDown={startSidebarResize} title="Drag to resize sidebar" />
+        <div
+          className="splitterV"
+          onMouseDown={startSidebarResize}
+          title="Drag to resize sidebar"
+          style={layout.sidebarWidthPx > 0 ? undefined : { pointerEvents: "none" }}
+        />
 
-        <div className="main" style={{ gridTemplateRows: `auto 1fr 6px ${layout.detailsHeightPx}px` }}>
+        <div
+          className="main"
+          style={{
+            gridTemplateRows: layout.detailsHeightPx > 0 ? `auto 1fr 6px ${layout.detailsHeightPx}px` : `auto 1fr 0px 0px`,
+          }}
+        >
           <div className="mainHeader">
             <div className="repoTitle">
               <div className="repoName">{activeRepoPath ? repoNameFromPath(activeRepoPath) : "Graphoria"}</div>
@@ -5436,47 +5856,49 @@ function App() {
                       </button>
                     </div>
                   ) : null}
-                  <div className="zoomControls">
-                    <div className="zoomIndicator">{zoomPct}%</div>
-                    <button
-                      type="button"
-                      onClick={() => void openRemoteDialog()}
-                      disabled={!activeRepoPath}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-                      title={remoteUrl ? remoteUrl : "No remote origin"}
-                    >
-                      <span
-                        className="statusDot"
-                        style={{ backgroundColor: remoteUrl ? "rgba(0, 140, 0, 0.85)" : "rgba(176, 0, 32, 0.85)" }}
-                      />
-                      Remote
-                    </button>
-                    <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
-                      +
-                    </button>
-                    <button type="button" onClick={() => zoomBy(1 / 1.2)} disabled={!activeRepoPath}>
-                      -
-                    </button>
-                    <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1, 0.22)} disabled={!activeRepoPath}>
-                      Reset focus
-                    </button>
-                    <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
-                      Focus on HEAD
-                    </button>
-                    <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commitsAll.length === 0}>
-                      Focus on newest
-                    </button>
-                    {!activeRepoPath || commitsFullByRepo[activeRepoPath] ? null : (
+                  {graphButtonsVisible ? (
+                    <div className="zoomControls">
+                      <div className="zoomIndicator">{zoomPct}%</div>
                       <button
                         type="button"
-                        onClick={() => void loadFullHistory()}
-                        disabled={loading || commitsFullLoadingByRepo[activeRepoPath]}
-                        title="Load the full git history (may take a while for large repositories)."
+                        onClick={() => void openRemoteDialog()}
+                        disabled={!activeRepoPath}
+                        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                        title={remoteUrl ? remoteUrl : "No remote origin"}
                       >
-                        {commitsFullLoadingByRepo[activeRepoPath] ? "Loading full history…" : "Get full history"}
+                        <span
+                          className="statusDot"
+                          style={{ backgroundColor: remoteUrl ? "rgba(0, 140, 0, 0.85)" : "rgba(176, 0, 32, 0.85)" }}
+                        />
+                        Remote
                       </button>
-                    )}
-                  </div>
+                      <button type="button" onClick={() => zoomBy(1.2)} disabled={!activeRepoPath}>
+                        +
+                      </button>
+                      <button type="button" onClick={() => zoomBy(1 / 1.2)} disabled={!activeRepoPath}>
+                        -
+                      </button>
+                      <button type="button" onClick={() => focusOnHash(selectedHash || headHash, 1, 0.22)} disabled={!activeRepoPath}>
+                        Reset focus
+                      </button>
+                      <button type="button" onClick={focusOnHead} disabled={!activeRepoPath || !headHash}>
+                        Focus on HEAD
+                      </button>
+                      <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commitsAll.length === 0}>
+                        Focus on newest
+                      </button>
+                      {!activeRepoPath || commitsFullByRepo[activeRepoPath] ? null : (
+                        <button
+                          type="button"
+                          onClick={() => void loadFullHistory()}
+                          disabled={loading || commitsFullLoadingByRepo[activeRepoPath]}
+                          title="Load the full git history (may take a while for large repositories)."
+                        >
+                          {commitsFullLoadingByRepo[activeRepoPath] ? "Loading full history…" : "Get full history"}
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -5589,7 +6011,19 @@ function App() {
 
           <div className="splitterH" onMouseDown={startDetailsResize} title="Drag to resize details panel" />
 
-          <div className="details">
+          <div
+            className="details"
+            style={
+              layout.detailsHeightPx > 0
+                ? undefined
+                : {
+                    padding: 0,
+                    borderTop: "none",
+                    overflow: "hidden",
+                    pointerEvents: "none",
+                  }
+            }
+          >
             <div className="detailsTitle">
               <div className="segmented small">
                 <button type="button" className={detailsTab === "details" ? "active" : ""} onClick={() => setDetailsTab("details")}> 
@@ -5654,7 +6088,7 @@ function App() {
             </div>
           </div>
         </div>
-      </div>
+        </div>
 
       {commitContextMenu ? (
         <div
@@ -5881,6 +6315,81 @@ function App() {
           >
             Add to .gitignore
           </button>
+        </div>
+      ) : null}
+
+      {goToOpen ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true">
+          <div className="modal" style={{ width: "min(560px, 96vw)", maxHeight: "min(84vh, 560px)" }}>
+            <div className="modalHeader">
+              <div style={{ fontWeight: 900 }}>{goToKind === "commit" ? "Go to commit" : "Go to tag"}</div>
+              <button type="button" onClick={() => setGoToOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="modalBody" style={{ display: "grid", gap: 12 }}>
+              {goToError ? <div className="error">{goToError}</div> : null}
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 900, opacity: 0.75 }}>{goToKind === "commit" ? "Commit hash / ref" : "Tag name"}</div>
+                <input
+                  className="modalInput"
+                  value={goToText}
+                  onChange={(e) => setGoToText(e.target.value)}
+                  placeholder={goToKind === "commit" ? "e.g. a1b2c3d or HEAD~3" : "e.g. v1.2.3"}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setGoToOpen(false);
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      void (async () => {
+                        if (!activeRepoPath) return;
+                        const ref = goToText.trim();
+                        if (!ref) {
+                          setGoToError("Enter a value.");
+                          return;
+                        }
+                        setGoToError("");
+                        const ok = await goToReference(ref, goToTargetView);
+                        if (ok) setGoToOpen(false);
+                      })();
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 900, opacity: 0.75 }}>Target view</div>
+                <select value={goToTargetView} onChange={(e) => setGoToTargetView(e.target.value as "graph" | "commits")}>
+                  <option value="graph">Graph</option>
+                  <option value="commits">Commits</option>
+                </select>
+              </div>
+            </div>
+            <div className="modalFooter">
+              <button
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    if (!activeRepoPath) return;
+                    const ref = goToText.trim();
+                    if (!ref) {
+                      setGoToError("Enter a value.");
+                      return;
+                    }
+                    setGoToError("");
+                    const ok = await goToReference(ref, goToTargetView);
+                    if (ok) setGoToOpen(false);
+                  })();
+                }}
+                disabled={!activeRepoPath}
+              >
+                Go
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
