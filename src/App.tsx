@@ -2949,16 +2949,12 @@ function App() {
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
-    const dir = graphSettings.rankDir;
 
     const rowForCommitIndex = (idx: number) => {
       return idx;
     };
 
     const posFor = (lane: number, row: number) => {
-      if (dir === "LR") {
-        return { x: row * rowStep, y: lane * laneStep };
-      }
       return { x: lane * laneStep, y: row * rowStep };
     };
 
@@ -3001,7 +2997,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankSep]);
 
   function parseRefs(
     refs: string,
@@ -5107,8 +5103,8 @@ function App() {
                   })}
                   {menuToggle({
                     label: "Layout direction from top to bottom",
-                    checked: graphSettings.rankDir === "TB",
-                    onChange: (v) => setGraph({ rankDir: v ? "TB" : "LR" }),
+                    checked: graphSettings.edgeDirection === "to_parent",
+                    onChange: (v) => setGraph({ edgeDirection: v ? "to_parent" : "to_child" }),
                   })}
                   {menuToggle({
                     label: "Show tooltips",
@@ -5604,6 +5600,8 @@ function App() {
           ))}
         </div>
 
+      </div>
+
         <div
           className="content"
           style={{
@@ -6091,7 +6089,6 @@ function App() {
           </div>
         </div>
         </div>
-      </div>
 
       {commitContextMenu ? (
         <div
