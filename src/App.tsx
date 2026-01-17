@@ -10,6 +10,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
@@ -904,6 +905,7 @@ function App() {
   const terminalMenuRef = useRef<HTMLDivElement | null>(null);
   const [terminalMenuIndex, setTerminalMenuIndex] = useState(0);
   const shortcutRuntimeRef = useRef<any>({});
+  const fullscreenRestoreRef = useRef<{ pos: PhysicalPosition; size: PhysicalSize } | null>(null);
 
   const [pullConflictOpen, setPullConflictOpen] = useState(false);
   const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
@@ -963,6 +965,7 @@ function App() {
   const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
   const setGit = useAppSettings((s) => s.setGit);
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
+  const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
   const setGeneral = useAppSettings((s) => s.setGeneral);
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
@@ -1370,6 +1373,9 @@ function App() {
     shortcutRuntimeRef.current = {
       shortcutBindings,
       activeRepoPath,
+      remoteUrl,
+      loading,
+      pullBusy,
       viewMode,
       selectedHash,
       headHash,
@@ -1425,6 +1431,7 @@ function App() {
       setViewMode,
       setTerminalMenuOpen,
       setTerminalMenuIndex,
+      setPullMenuOpen,
       setTerminal,
       setDiffToolModalOpen,
       setGraph,
@@ -1461,10 +1468,59 @@ function App() {
       return !!el.closest("input,textarea,select,[contenteditable='true']");
     };
 
+    const isShortcutCaptureTarget = (t: EventTarget | null) => {
+      const el = t instanceof HTMLElement ? t : null;
+      if (!el) return false;
+      return !!el.closest("[data-shortcut-capture='true']");
+    };
+
+    const isBrowserShortcut = (e: KeyboardEvent) => {
+      const key = (e.key || "").toLowerCase();
+      const primary = e.ctrlKey || e.metaKey;
+
+      if (e.key === "F5") return true;
+      if (e.key === "F11") return true;
+      if (primary && !e.altKey && (key === "r" || key === "p" || key === "f" || key === "g")) return true;
+      if (primary && !e.altKey && (key === "t" || key === "n" || key === "w" || key === "o" || key === "s")) return true;
+      if (primary && !e.altKey && (key === "l" || key === "k" || key === "u")) return true;
+      if (primary && e.shiftKey && !e.altKey && (key === "i" || key === "j" || key === "c")) return true;
+      return false;
+    };
+
+    const toggleFullscreen = async () => {
+      const win = getCurrentWindow();
+      const isFs = await win.isFullscreen();
+      if (!isFs) {
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        fullscreenRestoreRef.current = { pos, size };
+        await win.setFullscreen(true);
+        return;
+      }
+
+      await win.setFullscreen(false);
+      const restore = fullscreenRestoreRef.current;
+      if (!restore) return;
+      await win.setSize(new PhysicalSize(restore.size.width, restore.size.height)).catch(() => undefined);
+      await win.setPosition(new PhysicalPosition(restore.pos.x, restore.pos.y)).catch(() => undefined);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       const s = shortcutRuntimeRef.current;
 
-      if (e.key === "F5") {
+      const inShortcutCapture = isShortcutCaptureTarget(e.target) || isShortcutCaptureTarget(document.activeElement);
+      if (inShortcutCapture) return;
+
+      if (e.key === "F12") {
+        e.preventDefault();
+        e.stopPropagation();
+        void toggleFullscreen();
+        return;
+      }
+
+      const inTextEntry = isTextEntryTarget(e.target) || isTextEntryTarget(document.activeElement);
+      const blockedByBrowser = isBrowserShortcut(e);
+      if (blockedByBrowser) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -1528,7 +1584,7 @@ function App() {
       }
 
       if (anyModalOpen) return;
-      if (isTextEntryTarget(e.target) || isTextEntryTarget(document.activeElement)) return;
+      if (inTextEntry) return;
 
       const spec = eventToShortcutSpec(e);
       if (!spec) return;
@@ -1547,6 +1603,7 @@ function App() {
       e.stopPropagation();
 
       if (actionId === "cmd.terminalMenu" && !s.activeRepoPath) return;
+      if (actionId === "cmd.pullMenu" && !s.activeRepoPath) return;
       if (actionId === "repo.fetch" && !s.activeRepoPath) return;
       if (actionId === "cmd.commit" && !s.activeRepoPath) return;
       if (actionId === "cmd.push" && !s.activeRepoPath) return;
@@ -1625,6 +1682,10 @@ function App() {
           return;
         case "cmd.terminalMenu":
           s.setTerminalMenuOpen((v: boolean) => !v);
+          return;
+        case "cmd.pullMenu":
+          if (!s.activeRepoPath || s.loading || s.pullBusy || !s.remoteUrl) return;
+          s.setPullMenuOpen((v: boolean) => !v);
           return;
         case "repo.fetch":
           s.runFetch();
@@ -5188,7 +5249,7 @@ function App() {
   const toolbarItem = (left: ReactNode, shortcutText?: string) => (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
       <span>{left}</span>
-      {shortcutText ? <span className="menuShortcut">{shortcutText}</span> : null}
+      {showToolbarShortcutHints && shortcutText ? <span className="menuShortcut">{shortcutText}</span> : null}
     </span>
   );
 
@@ -5759,7 +5820,7 @@ function App() {
                 paddingRight: 8,
               }}
             >
-              ▾
+              {toolbarItem("▾", shortcutLabel("cmd.pullMenu"))}
             </button>
 
             {pullMenuOpen ? (
@@ -5826,7 +5887,7 @@ function App() {
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span>Commit…</span>
               {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
-              {shortcutLabel("cmd.commit") ? <span className="menuShortcut">{shortcutLabel("cmd.commit")}</span> : null}
+              {showToolbarShortcutHints && shortcutLabel("cmd.commit") ? <span className="menuShortcut">{shortcutLabel("cmd.commit")}</span> : null}
             </span>
           </button>
           <button
@@ -5838,7 +5899,7 @@ function App() {
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span>Push…</span>
               {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
-              {shortcutLabel("cmd.push") ? <span className="menuShortcut">{shortcutLabel("cmd.push")}</span> : null}
+              {showToolbarShortcutHints && shortcutLabel("cmd.push") ? <span className="menuShortcut">{shortcutLabel("cmd.push")}</span> : null}
             </span>
           </button>
           <div style={{ position: "relative", display: "flex", alignItems: "stretch" }}>

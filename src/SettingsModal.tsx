@@ -192,7 +192,20 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       />
                       Enable
                     </label>,
-                    "Not implemented yet at OS level; currently only stored in Graphoria settings.",
+                    "May require additional OS permissions.",
+                  )}
+
+                  {field(
+                    "Toolbar shortcut hints",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={general.showToolbarShortcutHints}
+                        onChange={(e) => setGeneral({ showToolbarShortcutHints: e.target.checked })}
+                      />
+                      Show shortcuts on top toolbar buttons
+                    </label>,
+                    "Shows keyboard shortcuts next to buttons like Refresh/Fetch/Commit on the top toolbar.",
                   )}
 
                   {field(
@@ -205,7 +218,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       />
                       Enable
                     </label>,
-                    "Shows help bubbles on hover for buttons/options.",
+                    "Can make the UI feel faster (less motion).",
                   )}
 
                   {field(
@@ -798,6 +811,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                         <div style={{ fontWeight: 900, color: "var(--muted)", minWidth: 0 }}>{a.label}</div>
                         <input
                           className="modalInput"
+                          data-shortcut-capture="true"
                           value={capturingId === a.id ? "" : shortcutDisplay(a.id)}
                           placeholder={capturingId === a.id ? "Press keys…" : "(none)"}
                           readOnly

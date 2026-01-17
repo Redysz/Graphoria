@@ -31,6 +31,7 @@ export type ShortcutActionId =
   | "repo.refresh"
   | "repo.initialize"
   | "cmd.terminalMenu"
+  | "cmd.pullMenu"
   | "repo.fetch"
   | "tool.diffTool";
 
@@ -67,6 +68,7 @@ export const shortcutActions: Array<{ id: ShortcutActionId; label: string }> = [
   { id: "repo.refresh", label: "Refresh" },
   { id: "repo.initialize", label: "Initialize project" },
   { id: "cmd.terminalMenu", label: "Terminal" },
+  { id: "cmd.pullMenu", label: "Pull menu" },
   { id: "repo.fetch", label: "Fetch" },
   { id: "tool.diffTool", label: "Diff tool" },
 ];

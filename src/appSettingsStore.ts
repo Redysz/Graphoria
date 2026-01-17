@@ -42,6 +42,7 @@ export type TerminalSettings = {
 
 export type GeneralSettings = {
   openOnStartup: boolean;
+  showToolbarShortcutHints: boolean;
   tooltips: TooltipSettings;
 };
 
@@ -117,13 +118,14 @@ export type AppSettingsState = {
 function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutActionId, ShortcutSpec> {
   const goToCommit = platform === "macos" ? "Meta+Shift+C" : "Ctrl+C";
   const goToTag = platform === "macos" ? "Meta+Shift+T" : "Ctrl+T";
+  const pullMenu = platform === "macos" ? "Meta+P" : "Ctrl+P";
 
   return {
     "repo.prev": "<",
     "repo.next": ">",
 
-    "panel.branches.show": "ArrowLeft",
-    "panel.branches.hide": "ArrowRight",
+    "panel.branches.show": "ArrowRight",
+    "panel.branches.hide": "ArrowLeft",
     "panel.details.show": "ArrowUp",
     "panel.details.hide": "ArrowDown",
 
@@ -155,6 +157,7 @@ function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutAct
     "repo.refresh": "F5",
     "repo.initialize": "Alt+I",
     "cmd.terminalMenu": "Alt+T",
+    "cmd.pullMenu": pullMenu,
     "repo.fetch": "Alt+F",
     "tool.diffTool": "Alt+D",
   };
@@ -166,6 +169,7 @@ const defaultShortcutsSettings: ShortcutsSettings = {
 
 export const defaultGeneralSettings: GeneralSettings = {
   openOnStartup: false,
+  showToolbarShortcutHints: false,
   tooltips: {
     enabled: true,
     mode: "custom",
@@ -293,7 +297,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 13,
+      version: 14,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -302,6 +306,9 @@ export const useAppSettings = create<AppSettingsState>()(
         } else {
           if (typeof s.general.openOnStartup !== "boolean") {
             s.general.openOnStartup = defaultGeneralSettings.openOnStartup;
+          }
+          if (typeof s.general.showToolbarShortcutHints !== "boolean") {
+            s.general.showToolbarShortcutHints = defaultGeneralSettings.showToolbarShortcutHints;
           }
           if (!s.general.tooltips || typeof s.general.tooltips !== "object") {
             s.general.tooltips = defaultGeneralSettings.tooltips;
@@ -380,6 +387,11 @@ export const useAppSettings = create<AppSettingsState>()(
           if (typeof s.shortcuts.bindings[k] !== "string") {
             s.shortcuts.bindings[k] = v;
           }
+        }
+
+        if (s.shortcuts?.bindings?.["panel.branches.show"] === "ArrowLeft" && s.shortcuts?.bindings?.["panel.branches.hide"] === "ArrowRight") {
+          s.shortcuts.bindings["panel.branches.show"] = "ArrowRight";
+          s.shortcuts.bindings["panel.branches.hide"] = "ArrowLeft";
         }
         return s;
       },
