@@ -10,8 +10,15 @@ import {
   type TooltipMode,
   type TerminalProfileKind,
 } from "./appSettingsStore";
+import {
+  detectAppPlatform,
+  eventToShortcutSpec,
+  formatShortcutSpecForDisplay,
+  shortcutActions,
+  type ShortcutActionId,
+} from "./shortcuts";
 
-type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal";
+type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal" | "shortcuts";
 
 export default function SettingsModal(props: { open: boolean; activeRepoPath: string; onClose: () => void }) {
   const { open, activeRepoPath, onClose } = props;
@@ -21,6 +28,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const graph = useAppSettings((s) => s.graph);
   const git = useAppSettings((s) => s.git);
   const terminal = useAppSettings((s) => s.terminal);
+  const shortcuts = useAppSettings((s) => s.shortcuts);
 
   const viewMode = useAppSettings((s) => s.viewMode);
 
@@ -30,10 +38,12 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const setGit = useAppSettings((s) => s.setGit);
   const setGraph = useAppSettings((s) => s.setGraph);
   const setTerminal = useAppSettings((s) => s.setTerminal);
+  const setShortcuts = useAppSettings((s) => s.setShortcuts);
   const setViewMode = useAppSettings((s) => s.setViewMode);
   const resetSettings = useAppSettings((s) => s.resetSettings);
   const resetLayout = useAppSettings((s) => s.resetLayout);
   const resetTerminal = useAppSettings((s) => s.resetTerminal);
+  const resetShortcuts = useAppSettings((s) => s.resetShortcuts);
 
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -41,6 +51,9 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState<string>("");
   const [applyOk, setApplyOk] = useState(false);
+
+  const platform = useMemo(() => detectAppPlatform(), []);
+  const [capturingId, setCapturingId] = useState<ShortcutActionId | null>(null);
 
   const diffTool = git.diffTool;
   const tooltips = general.tooltips;
@@ -57,6 +70,8 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
         return "Git";
       case "terminal":
         return "Terminal";
+      case "shortcuts":
+        return "Shortcuts";
     }
   }, [section]);
 
@@ -79,6 +94,11 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
       {label}
     </button>
   );
+
+  const shortcutDisplay = (id: ShortcutActionId) => {
+    const spec = shortcuts.bindings?.[id] ?? "";
+    return formatShortcutSpecForDisplay(spec, platform);
+  };
 
   const field = (label: string, control: ReactNode, hint?: string) => (
     <div className="settingsField">
@@ -143,6 +163,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
               {sectionButton("appearance", "Appearance")}
               {sectionButton("graph", "Graph")}
               {sectionButton("git", "Git")}
+              {sectionButton("shortcuts", "Shortcuts")}
               {sectionButton("terminal", "Terminal")}
             </div>
 
@@ -171,7 +192,20 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       />
                       Enable
                     </label>,
-                    "Not implemented yet at OS level; currently only stored in Graphoria settings.",
+                    "May require additional OS permissions.",
+                  )}
+
+                  {field(
+                    "Toolbar shortcut hints",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={general.showToolbarShortcutHints}
+                        onChange={(e) => setGeneral({ showToolbarShortcutHints: e.target.checked })}
+                      />
+                      Show shortcuts on top toolbar buttons
+                    </label>,
+                    "Shows keyboard shortcuts next to buttons like Refresh/Fetch/Commit on the top toolbar.",
                   )}
 
                   {field(
@@ -184,7 +218,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       />
                       Enable
                     </label>,
-                    "Shows help bubbles on hover for buttons/options.",
+                    "Can make the UI feel faster (less motion).",
                   )}
 
                   {field(
@@ -743,6 +777,80 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       </>
                     );
                   })()}
+                </div>
+              ) : null}
+
+              {section === "shortcuts" ? (
+                <div className="settingsContentBody">
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>
+                      Click a field and press a shortcut. Backspace/Delete clears. Esc cancels.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetShortcuts();
+                        setCapturingId(null);
+                      }}
+                    >
+                      Reset shortcuts
+                    </button>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {shortcutActions.map((a) => (
+                      <div
+                        key={a.id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr min(320px, 46vw) auto",
+                          gap: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, color: "var(--muted)", minWidth: 0 }}>{a.label}</div>
+                        <input
+                          className="modalInput"
+                          data-shortcut-capture="true"
+                          value={capturingId === a.id ? "" : shortcutDisplay(a.id)}
+                          placeholder={capturingId === a.id ? "Press keys…" : "(none)"}
+                          readOnly
+                          onFocus={() => setCapturingId(a.id)}
+                          onBlur={() => {
+                            setCapturingId((cur) => (cur === a.id ? null : cur));
+                          }}
+                          onKeyDown={(e) => {
+                            if (capturingId !== a.id) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (e.key === "Escape") {
+                              setCapturingId(null);
+                              return;
+                            }
+                            if (e.key === "Backspace" || e.key === "Delete") {
+                              setShortcuts({ bindings: { [a.id]: "" } as any });
+                              setCapturingId(null);
+                              return;
+                            }
+                            const spec = eventToShortcutSpec(e.nativeEvent);
+                            if (!spec) return;
+                            setShortcuts({ bindings: { [a.id]: spec } as any });
+                            setCapturingId(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShortcuts({ bindings: { [a.id]: "" } as any });
+                            if (capturingId === a.id) setCapturingId(null);
+                          }}
+                          disabled={!shortcuts.bindings?.[a.id]?.trim()}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
