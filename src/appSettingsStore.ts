@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { detectAppPlatform, type AppPlatform, type ShortcutActionId, type ShortcutSpec } from "./shortcuts";
 
 export type ThemeName = "light" | "dark" | "blue" | "sepia";
 export type ViewMode = "graph" | "commits";
@@ -84,6 +85,10 @@ export type LayoutSettings = {
   detailsHeightPx: number;
 };
 
+export type ShortcutsSettings = {
+  bindings: Record<ShortcutActionId, ShortcutSpec>;
+};
+
 export type AppSettingsState = {
   general: GeneralSettings;
   appearance: AppearanceSettings;
@@ -92,6 +97,7 @@ export type AppSettingsState = {
   graph: GraphSettings;
   layout: LayoutSettings;
   terminal: TerminalSettings;
+  shortcuts: ShortcutsSettings;
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -101,9 +107,61 @@ export type AppSettingsState = {
   setGraph: (patch: Partial<GraphSettings>) => void;
   setLayout: (patch: Partial<LayoutSettings>) => void;
   setTerminal: (patch: Partial<TerminalSettings>) => void;
+  setShortcuts: (patch: Partial<ShortcutsSettings>) => void;
   resetLayout: () => void;
   resetTerminal: () => void;
+  resetShortcuts: () => void;
   resetSettings: () => void;
+};
+
+function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutActionId, ShortcutSpec> {
+  const goToCommit = platform === "macos" ? "Meta+Shift+C" : "Ctrl+C";
+  const goToTag = platform === "macos" ? "Meta+Shift+T" : "Ctrl+T";
+
+  return {
+    "repo.prev": "<",
+    "repo.next": ">",
+
+    "panel.branches.show": "ArrowLeft",
+    "panel.branches.hide": "ArrowRight",
+    "panel.details.show": "ArrowUp",
+    "panel.details.hide": "ArrowDown",
+
+    "view.graph": "G",
+    "view.commits": "C",
+
+    "view.toggleStashesOnGraph": "",
+    "view.toggleTags": "",
+    "view.toggleRemoteBranches": "",
+    "view.toggleDetailsWindow": "",
+    "view.toggleBranchesWindow": "",
+    "view.toggleGraphButtons": "",
+    "view.toggleOnlineAvatars": "",
+    "view.toggleCommitsOnlyHead": "",
+    "view.toggleLayoutDirection": "",
+    "view.toggleTooltips": "",
+
+    "nav.goToCommit": goToCommit,
+    "nav.goToTag": goToTag,
+
+    "cmd.commit": "Alt+C",
+    "cmd.push": "Alt+P",
+    "cmd.stash": "Alt+S",
+    "cmd.createBranch": "Alt+B",
+    "cmd.checkoutBranch": "Alt+Shift+B",
+    "cmd.reset": "Alt+R",
+
+    "repo.open": "Alt+O",
+    "repo.refresh": "F5",
+    "repo.initialize": "Alt+I",
+    "cmd.terminalMenu": "Alt+T",
+    "repo.fetch": "Alt+F",
+    "tool.diffTool": "Alt+D",
+  };
+}
+
+const defaultShortcutsSettings: ShortcutsSettings = {
+  bindings: buildDefaultShortcutBindings(detectAppPlatform()),
 };
 
 export const defaultGeneralSettings: GeneralSettings = {
@@ -191,6 +249,7 @@ export const useAppSettings = create<AppSettingsState>()(
       graph: defaultGraphSettings,
       layout: defaultLayoutSettings,
       terminal: defaultTerminalSettings,
+      shortcuts: defaultShortcutsSettings,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -206,8 +265,20 @@ export const useAppSettings = create<AppSettingsState>()(
       setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
       setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
       setTerminal: (patch) => set((s) => ({ terminal: { ...s.terminal, ...patch } })),
+      setShortcuts: (patch) =>
+        set((s) => ({
+          shortcuts: {
+            ...s.shortcuts,
+            ...patch,
+            bindings: {
+              ...s.shortcuts.bindings,
+              ...((patch as any)?.bindings ?? {}),
+            },
+          },
+        })),
       resetLayout: () => set({ layout: defaultLayoutSettings }),
       resetTerminal: () => set({ terminal: defaultTerminalSettings }),
+      resetShortcuts: () => set({ shortcuts: defaultShortcutsSettings }),
       resetSettings: () =>
         set({
           general: defaultGeneralSettings,
@@ -217,11 +288,12 @@ export const useAppSettings = create<AppSettingsState>()(
           graph: defaultGraphSettings,
           layout: defaultLayoutSettings,
           terminal: defaultTerminalSettings,
+          shortcuts: defaultShortcutsSettings,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 12,
+      version: 13,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -295,6 +367,18 @@ export const useAppSettings = create<AppSettingsState>()(
           }
           if (typeof s.terminal.defaultProfileId !== "string" || !s.terminal.defaultProfileId.trim()) {
             s.terminal.defaultProfileId = defaultTerminalSettings.defaultProfileId;
+          }
+        }
+
+        if (!s.shortcuts || typeof s.shortcuts !== "object") {
+          s.shortcuts = defaultShortcutsSettings;
+        }
+        if (!s.shortcuts.bindings || typeof s.shortcuts.bindings !== "object") {
+          s.shortcuts.bindings = { ...defaultShortcutsSettings.bindings };
+        }
+        for (const [k, v] of Object.entries(defaultShortcutsSettings.bindings)) {
+          if (typeof s.shortcuts.bindings[k] !== "string") {
+            s.shortcuts.bindings[k] = v;
           }
         }
         return s;

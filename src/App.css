@@ -6,6 +6,7 @@
   --text: #0f0f0f;
   --muted: rgba(15, 15, 15, 0.65);
   --menubar-text: rgba(8, 8, 8, 0.82);
+  --menu-shortcut: rgba(120, 120, 120, 0.95);
   --accent: #2f6fed;
   --accent-2: #1f56c6;
   --danger: #b00020;
@@ -38,6 +39,7 @@
   --text: #f2f4f8;
   --muted: rgba(242, 244, 248, 0.70);
   --menubar-text: rgba(249, 250, 252, 0.85);
+  --menu-shortcut: rgba(220, 225, 235, 0.75);
   --accent: #4b8bff;
   --accent-2: #80b3ff;
 
@@ -55,6 +57,7 @@
   --text: #0a2346;
   --muted: rgba(10, 35, 70, 0.70);
   --menubar-text: rgba(5, 18, 35, 0.85);
+  --menu-shortcut: rgba(60, 90, 130, 0.75);
   --accent: #1f6feb;
   --accent-2: #0f4fb4;
 
@@ -72,6 +75,7 @@
   --text: #3d2b1f;
   --muted: rgba(61, 43, 31, 0.70);
   --menubar-text: rgba(31, 22, 16, 0.85);
+  --menu-shortcut: rgba(100, 90, 80, 0.78);
   --accent: #a35b1d;
   --accent-2: #7d4212;
 
@@ -202,6 +206,15 @@ button:disabled {
   width: 100%;
   text-align: left;
   white-space: nowrap;
+}
+
+.menuShortcut {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--menu-shortcut);
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
  .menuToggle {
