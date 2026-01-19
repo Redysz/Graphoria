@@ -14,7 +14,7 @@ import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/ap
 import { open } from "@tauri-apps/plugin-dialog";
 import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
-import { getCyPalette, useAppSettings, type CyPalette, type ThemeName, type GitHistoryOrder } from "./appSettingsStore";
+import { getCyPalette, useAppSettings } from "./appSettingsStore";
 import {
   detectAppPlatform,
   eventToShortcutSpec,
@@ -22,96 +22,48 @@ import {
   joinShortcutDisplay,
   type ShortcutActionId,
 } from "./shortcuts";
+import { copyText } from "./utils/clipboard";
+import { computeHunkRanges, buildPatchFromUnselectedHunks } from "./utils/diffPatch";
+import { fileExtLower, imageMimeFromExt, isDocTextPreviewExt, isImageExt } from "./utils/filePreview";
+import { normalizeGitPath } from "./utils/gitPath";
+import { fnv1a32, md5Hex } from "./utils/hash";
+import { parseGitDubiousOwnershipError } from "./utils/gitTrust";
+import { authorInitials, shortHash, statusBadge, truncate } from "./utils/text";
+import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
+import {
+  computeCommitLaneRows,
+  computeCompactLaneByHashForGraph,
+  type CommitLaneRow,
+} from "./features/commits/lanes";
+import { RepoTabs } from "./components/RepoTabs";
+import { TopToolbar } from "./components/TopToolbar";
+import { MainHeader } from "./components/MainHeader";
+import { Sidebar } from "./components/Sidebar";
+import { DetailsPanel } from "./components/DetailsPanel";
+import { RepositoryMenu } from "./components/menus/RepositoryMenu";
+import { NavigateMenu } from "./components/menus/NavigateMenu";
+import { ViewMenu } from "./components/menus/ViewMenu";
+import { CommandsMenu } from "./components/menus/CommandsMenu";
+import { ToolsMenu } from "./components/menus/ToolsMenu";
+import { MenubarRight } from "./components/menus/MenubarRight";
 import DiffView, { parseUnifiedDiff } from "./DiffView";
 import DiffToolModal from "./DiffToolModal";
 import TooltipLayer from "./TooltipLayer";
+import type {
+  GitAheadBehind,
+  GitBranchInfo,
+  GitCloneProgressEvent,
+  GitCommit,
+  GitCommitSummary,
+  GitStatusEntry,
+  GitStatusSummary,
+  GitStashEntry,
+  PullPredictResult,
+  PullResult,
+  RepoOverview,
+} from "./types/git";
+
 import "./App.css";
-
-type GitCommit = {
-  hash: string;
-  parents: string[];
-  author: string;
-  author_email: string;
-  date: string;
-  subject: string;
-  refs: string;
-  is_head: boolean;
-};
-
-type CommitLaneRow = {
-  hash: string;
-  lane: number;
-  activeTop: number[];
-  activeBottom: number[];
-  parentLanes: number[];
-  joinLanes: number[];
-};
-
-type RepoOverview = {
-  head: string;
-  head_name: string;
-  branches: string[];
-  tags: string[];
-  remotes: string[];
-};
-
-type GitStatusEntry = {
-  status: string;
-  path: string;
-};
-
-type GitStashEntry = {
-  index: number;
-  reference: string;
-  message: string;
-};
-
-type GitStatusSummary = {
-  changed: number;
-};
-
-type GitAheadBehind = {
-  ahead: number;
-  behind: number;
-  upstream?: string | null;
-};
-
-type PullResult = {
-  status: string;
-  operation: string;
-  message: string;
-  conflict_files: string[];
-};
-
-type PullPredictResult = {
-  upstream?: string | null;
-  ahead: number;
-  behind: number;
-  action: string;
-  conflict_files: string[];
-};
-
-type GitCloneProgressEvent = {
-  destination_path: string;
-  phase?: string | null;
-  percent?: number | null;
-  message: string;
-};
-
-type GitCommitSummary = {
-  hash: string;
-  author: string;
-  date: string;
-  subject: string;
-  refs: string;
-};
-
-type GitBranchInfo = {
-  name: string;
-  kind: "local" | "remote" | string;
-  target: string;
-  committer_date: string;
-};
 
 type GitResetMode = "soft" | "mixed" | "hard";
 
@@ -119,576 +71,6 @@ type ViewportState = {
   zoom: number;
   pan: { x: number; y: number };
 };
-
-function shortHash(hash: string) {
-  return hash.slice(0, 8);
-}
-
-function repoNameFromPath(p: string) {
-  const normalized = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const parts = normalized.split("/");
-  return parts.length > 0 ? parts[parts.length - 1] : normalized;
-}
-
-function truncate(s: string, max: number) {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
-}
-
-function fileExtLower(path: string) {
-  const p = path.trim().toLowerCase();
-  const idx = p.lastIndexOf(".");
-  if (idx < 0) return "";
-  return p.slice(idx + 1);
-}
-
-function isImageExt(ext: string) {
-  return ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "webp" || ext === "gif" || ext === "bmp";
-}
-
-function imageMimeFromExt(ext: string) {
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
-  if (ext === "png") return "image/png";
-  if (ext === "webp") return "image/webp";
-  if (ext === "gif") return "image/gif";
-  if (ext === "bmp") return "image/bmp";
-  return "application/octet-stream";
-}
-
-function isDocTextPreviewExt(ext: string) {
-  return ext === "docx" || ext === "pdf" || ext === "xlsx" || ext === "xlsm" || ext === "xltx" || ext === "xltm";
-}
-
-function statusBadge(status: string) {
-  const s = status.replace(/\s+/g, "");
-  if (!s) return "?";
-  if (s.includes("?")) return "A";
-  if (s.includes("U")) return "U";
-  if (s.includes("D")) return "D";
-  if (s.includes("R")) return "R";
-  if (s.includes("C")) return "C";
-  if (s.includes("A")) return "A";
-  if (s.includes("M")) return "M";
-  if (s.includes("T")) return "T";
-  return (s[0] ?? "?").toUpperCase();
-}
-
-function fnv1a32(input: string) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-function md5Hex(input: string): string {
-  const s = unescape(encodeURIComponent(input));
-  const bytes = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
-
-  const origLenBits = bytes.length * 8;
-  const withOneLen = bytes.length + 1;
-  const padLen = (56 - (withOneLen % 64) + 64) % 64;
-  const totalLen = withOneLen + padLen + 8;
-
-  const buf = new Uint8Array(totalLen);
-  buf.set(bytes);
-  buf[bytes.length] = 0x80;
-
-  const dv = new DataView(buf.buffer);
-  dv.setUint32(totalLen - 8, origLenBits >>> 0, true);
-  dv.setUint32(totalLen - 4, Math.floor(origLenBits / 0x100000000) >>> 0, true);
-
-  let a0 = 0x67452301;
-  let b0 = 0xefcdab89;
-  let c0 = 0x98badcfe;
-  let d0 = 0x10325476;
-
-  const rotl = (x: number, n: number) => (x << n) | (x >>> (32 - n));
-
-  const T = new Int32Array(64);
-  for (let i = 0; i < 64; i++) T[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) | 0;
-
-  const S = [
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-  ];
-
-  for (let off = 0; off < buf.length; off += 64) {
-    const M = new Int32Array(16);
-    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true);
-
-    let A = a0;
-    let B = b0;
-    let C = c0;
-    let D = d0;
-
-    for (let i = 0; i < 64; i++) {
-      let F = 0;
-      let g = 0;
-
-      if (i < 16) {
-        F = (B & C) | (~B & D);
-        g = i;
-      } else if (i < 32) {
-        F = (D & B) | (~D & C);
-        g = (5 * i + 1) % 16;
-      } else if (i < 48) {
-        F = B ^ C ^ D;
-        g = (3 * i + 5) % 16;
-      } else {
-        F = C ^ (B | ~D);
-        g = (7 * i) % 16;
-      }
-
-      const tmp = D;
-      D = C;
-      C = B;
-      const sum = (A + F + T[i] + M[g]) | 0;
-      B = (B + rotl(sum, S[i])) | 0;
-      A = tmp;
-    }
-
-    a0 = (a0 + A) | 0;
-    b0 = (b0 + B) | 0;
-    c0 = (c0 + C) | 0;
-    d0 = (d0 + D) | 0;
-  }
-
-  const toHexLe = (x: number) => {
-    let out = "";
-    for (let i = 0; i < 4; i++) {
-      const b = (x >>> (i * 8)) & 0xff;
-      out += b.toString(16).padStart(2, "0");
-    }
-    return out;
-  };
-
-  return `${toHexLe(a0)}${toHexLe(b0)}${toHexLe(c0)}${toHexLe(d0)}`;
-}
-
-function authorInitials(author: string) {
-  const parts = author
-    .trim()
-    .split(/\s+/g)
-    .filter((p) => p.length > 0);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
-
-function laneStrokeColor(lane: number, theme: ThemeName) {
-  const hue = (lane * 47) % 360;
-  const sat = theme === "dark" ? 72 : 66;
-  const light = theme === "dark" ? 62 : 44;
-  return `hsl(${hue} ${sat}% ${light}%)`;
-}
-
-function computeCommitLaneRows(commits: GitCommit[], historyOrder: GitHistoryOrder): { rows: CommitLaneRow[]; maxLanes: number } {
-  const cols: Array<string | null> = [];
-  const rows: CommitLaneRow[] = [];
-  let maxLanes = 0;
-
-  const present = new Set(commits.map((c) => c.hash));
-
-  const activeLaneIndices = () => {
-    const out: number[] = [];
-    for (let i = 0; i < cols.length; i++) {
-      if (cols[i] !== null) out.push(i);
-    }
-    return out;
-  };
-
-  const ensureLaneForCommit = (hash: string) => {
-    let lane = cols.indexOf(hash);
-    if (lane >= 0) return lane;
-    lane = cols.indexOf(null);
-    if (lane >= 0) {
-      cols[lane] = hash;
-      return lane;
-    }
-    cols.push(hash);
-    return cols.length - 1;
-  };
-
-  const allocLaneAfter = (afterLane: number) => {
-    for (let i = afterLane + 1; i < cols.length; i++) {
-      if (cols[i] === null) return i;
-    }
-    cols.push(null);
-    return cols.length - 1;
-  };
-
-  for (const c of commits) {
-    const activeTop = activeLaneIndices();
-
-    const lane = ensureLaneForCommit(c.hash);
-
-    const joinLanes: number[] = [];
-    for (let i = 0; i < cols.length; i++) {
-      if (i === lane) continue;
-      if (cols[i] === c.hash) {
-        joinLanes.push(i);
-        cols[i] = null;
-      }
-    }
-
-    const p0 = c.parents[0] ?? null;
-    cols[lane] = p0 && present.has(p0) ? p0 : null;
-
-    const parentLanes: number[] = [];
-    const parents = historyOrder === "first_parent" ? [] : c.parents;
-    for (let i = 1; i < parents.length; i++) {
-      const p = parents[i];
-      if (!p) continue;
-      if (!present.has(p)) continue;
-      const existing = cols.indexOf(p);
-      if (existing >= 0) {
-        parentLanes.push(existing);
-        continue;
-      }
-      const pLane = allocLaneAfter(lane);
-      cols[pLane] = p;
-      parentLanes.push(pLane);
-    }
-
-    while (cols.length > 0 && cols[cols.length - 1] === null) {
-      cols.pop();
-    }
-
-    maxLanes = Math.max(maxLanes, cols.length);
-    const activeBottom = activeLaneIndices();
-
-    rows.push({
-      hash: c.hash,
-      lane,
-      activeTop,
-      activeBottom,
-      parentLanes,
-      joinLanes,
-    });
-  }
-
-  return { rows, maxLanes };
-}
-
-function computeCompactLaneByHashForGraph(commits: GitCommit[], historyOrder: GitHistoryOrder): Map<string, number> {
-  const present = new Set(commits.map((c) => c.hash));
-  const cols: string[] = [];
-  const laneByHash = new Map<string, number>();
-
-  const removeDuplicatesKeep = (hash: string, keepIdx: number) => {
-    for (let i = cols.length - 1; i >= 0; i--) {
-      if (i === keepIdx) continue;
-      if (cols[i] !== hash) continue;
-      cols.splice(i, 1);
-      if (i < keepIdx) keepIdx--;
-    }
-    return keepIdx;
-  };
-
-  for (const c of commits) {
-    let lane = cols.indexOf(c.hash);
-    if (lane < 0) {
-      lane = cols.length;
-      cols.push(c.hash);
-    }
-    lane = removeDuplicatesKeep(c.hash, lane);
-    laneByHash.set(c.hash, lane);
-
-    const p0 = c.parents[0] ?? null;
-    const primary = p0 && present.has(p0) ? p0 : null;
-
-    if (primary) {
-      cols[lane] = primary;
-    } else {
-      cols.splice(lane, 1);
-    }
-
-    const insertBase = primary ? lane + 1 : lane;
-    let insertAt = Math.min(insertBase, cols.length);
-
-    const parents = historyOrder === "first_parent" ? [] : c.parents;
-    for (let i = 1; i < parents.length; i++) {
-      const p = parents[i];
-      if (!p) continue;
-      if (!present.has(p)) continue;
-      if (cols.includes(p)) continue;
-      cols.splice(insertAt, 0, p);
-      insertAt++;
-    }
-  }
-
-  return laneByHash;
-}
-
-function CommitLaneSvg(props: {
-  row: CommitLaneRow;
-  maxLanes: number;
-  theme: ThemeName;
-  selected: boolean;
-  isHead: boolean;
-  showMergeStub: boolean;
-  mergeParentCount: number;
-  nodeBg: string;
-  palette: CyPalette;
-  refMarkers: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>;
-}) {
-  const { row, maxLanes, theme, selected, isHead, showMergeStub, mergeParentCount, nodeBg, palette, refMarkers } = props;
-
-  const laneStep = 12;
-  const lanePad = 10;
-  const h = 64;
-  const yMid = h / 2;
-  const yTop = 0;
-  const yBottom = h;
-
-  const extraW = 56;
-  const w = Math.max(28, lanePad * 2 + Math.max(1, Math.min(maxLanes, 10)) * laneStep + extraW);
-
-  const xForLane = (lane: number) => lanePad + lane * laneStep;
-
-  const strokeWidth = selected ? 2.25 : 2;
-
-  const paths: Array<{ d: string; color: string }> = [];
-  const joinPaths: Array<{ d: string; color: string }> = [];
-
-  const parentLaneSet = new Set(row.parentLanes);
-  const joinLaneSet = new Set(row.joinLanes);
-
-  for (const lane of row.parentLanes) {
-    const x0 = xForLane(row.lane);
-    const x1 = xForLane(lane);
-    const c0y = yMid + 18;
-    const d = `M ${x0} ${yMid} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yBottom}`;
-    paths.push({ d, color: laneStrokeColor(lane, theme) });
-  }
-
-  for (const lane of row.joinLanes) {
-    const x0 = xForLane(lane);
-    const x1 = xForLane(row.lane);
-    const c0y = yMid - 18;
-    const d = `M ${x0} ${yTop} C ${x0} ${c0y}, ${x1} ${c0y}, ${x1} ${yMid}`;
-    joinPaths.push({ d, color: laneStrokeColor(lane, theme) });
-  }
-
-  const nodeX = xForLane(row.lane);
-  const nodeColor = laneStrokeColor(row.lane, theme);
-
-  const markerSize = 10;
-  const markerGap = 4;
-  const maxMarkers = 3;
-  const markersShown = refMarkers.slice(0, maxMarkers);
-  const markersX0 = nodeX + 12;
-  const markersY0 = yMid - markerSize / 2;
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      style={{ display: "block" }}
-      aria-hidden="true"
-      focusable={false}
-    >
-      {row.activeTop.map((lane) => {
-        if (joinLaneSet.has(lane)) return null;
-        const x = xForLane(lane);
-        const color = laneStrokeColor(lane, theme);
-        return <line key={`t-${lane}`} x1={x} y1={yTop} x2={x} y2={yMid} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
-      })}
-      {row.activeBottom.map((lane) => {
-        if (parentLaneSet.has(lane)) return null;
-        const x = xForLane(lane);
-        const color = laneStrokeColor(lane, theme);
-        return <line key={`b-${lane}`} x1={x} y1={yMid} x2={x} y2={yBottom} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
-      })}
-      {paths.map((p, idx) => (
-        <path key={`p-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      ))}
-      {joinPaths.map((p, idx) => (
-        <path key={`j-${idx}`} d={p.d} fill="none" stroke={p.color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      ))}
-      <circle
-        cx={nodeX}
-        cy={yMid}
-        r={selected ? 6 : 5.4}
-        fill={isHead ? nodeColor : nodeBg}
-        stroke={nodeColor}
-        strokeWidth={selected ? 2.6 : isHead ? 2.3 : 2}
-      />
-      {showMergeStub ? (
-        <g>
-          <title>{`Merge commit (${mergeParentCount} parents)`}</title>
-          <path
-            d={`M ${nodeX + 10} ${yMid - 7} L ${nodeX + 5} ${yMid} L ${nodeX + 10} ${yMid + 7}`}
-            fill="none"
-            stroke={nodeColor}
-            strokeWidth={selected ? 2.2 : 2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.9}
-          />
-        </g>
-      ) : null}
-      {markersShown.map((m, idx) => {
-        const x = markersX0 + idx * (markerSize + markerGap);
-        const y = markersY0;
-        const fill =
-          m.kind === "head"
-            ? palette.refHeadBg
-            : m.kind === "tag"
-              ? palette.refTagBg
-              : m.kind === "remote"
-                ? palette.refRemoteBg
-                : palette.refBranchBg;
-        const stroke =
-          m.kind === "head"
-            ? palette.refHeadBorder
-            : m.kind === "tag"
-              ? palette.refTagBorder
-              : m.kind === "remote"
-                ? palette.refRemoteBorder
-                : palette.refBranchBorder;
-
-        if (m.kind === "remote") {
-          const isRemoteHead = /\/HEAD$/.test(m.label);
-          const remoteFill = isRemoteHead ? palette.refHeadBg : fill;
-          const remoteStroke = isRemoteHead ? palette.refHeadBorder : stroke;
-          return (
-            <g key={`m-${idx}`}>
-              <title>{m.label}</title>
-              <circle
-                cx={x + markerSize / 2}
-                cy={y + markerSize / 2}
-                r={markerSize / 2}
-                fill={remoteFill}
-                stroke={remoteStroke}
-                strokeWidth={1}
-              />
-              <circle cx={x + markerSize / 2} cy={y + markerSize / 2} r={2} fill={palette.refRemoteText} opacity={0.7} />
-            </g>
-          );
-        }
-
-        if (m.kind === "tag") {
-          const p1 = `${x + markerSize / 2} ${y}`;
-          const p2 = `${x + markerSize} ${y + markerSize}`;
-          const p3 = `${x} ${y + markerSize}`;
-          return (
-            <g key={`m-${idx}`}>
-              <title>{m.label}</title>
-              <polygon points={`${p1}, ${p2}, ${p3}`} fill={fill} stroke={stroke} strokeWidth={1} />
-            </g>
-          );
-        }
-
-        if (m.kind === "head") {
-          return (
-            <g key={`m-${idx}`}>
-              <title>{m.label}</title>
-              <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
-              <path d={`M ${x + 5} ${y + 2} L ${x + 7} ${y + 6} L ${x + 11} ${y + 6} L ${x + 8} ${y + 8} L ${x + 9} ${y + 12} L ${x + 5} ${y + 10} L ${x + 1} ${y + 12} L ${x + 2} ${y + 8} L ${x - 1} ${y + 6} L ${x + 3} ${y + 6} Z`} fill={stroke} opacity={0.55} />
-            </g>
-          );
-        }
-
-        return (
-          <g key={`m-${idx}`}>
-            <title>{m.label}</title>
-            <rect x={x} y={y} width={markerSize} height={markerSize} rx={3} fill={fill} stroke={stroke} strokeWidth={1} />
-          </g>
-        );
-      })}
-      {refMarkers.length > maxMarkers ? (
-        <text
-          x={markersX0 + maxMarkers * (markerSize + markerGap)}
-          y={yMid + 4}
-          fontSize={10}
-          fill={theme === "dark" ? "rgba(242, 244, 248, 0.75)" : "rgba(15, 15, 15, 0.65)"}
-        >
-          +{refMarkers.length - maxMarkers}
-        </text>
-      ) : null}
-    </svg>
-  );
-}
-
-function parseGitDubiousOwnershipError(raw: string): string | null {
-  const prefix = "GIT_DUBIOUS_OWNERSHIP\n";
-  if (!raw.startsWith(prefix)) return null;
-  return raw.slice(prefix.length).trim();
-}
-
-function normalizeGitPath(p: string) {
-  return p.replace(/\\/g, "/").replace(/\/+$/g, "");
-}
-
-function normalizeLf(s: string) {
-  return s.replace(/\r\n/g, "\n");
-}
-
-function computeHunkRanges(diffText: string) {
-  const lines = normalizeLf(diffText).split("\n");
-  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-  const starts: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith("@@")) starts.push(i);
-  }
-
-  const ranges = starts.map((start, idx) => {
-    const end = (starts[idx + 1] ?? lines.length) - 1;
-    return { index: idx, header: lines[start], start, end };
-  });
-  const headerEnd = starts[0] ?? lines.length;
-  return { lines, ranges, headerEnd };
-}
-
-function buildPatchFromSelectedHunks(diffText: string, selected: Set<number>) {
-  const { lines, ranges, headerEnd } = computeHunkRanges(diffText);
-  if (ranges.length === 0) return "";
-  if (selected.size === 0) return "";
-
-  const out: string[] = [];
-  out.push(...lines.slice(0, headerEnd));
-  for (const r of ranges) {
-    if (!selected.has(r.index)) continue;
-    out.push(...lines.slice(r.start, r.end + 1));
-  }
-
-  const joined = out.join("\n");
-  return joined.endsWith("\n") ? joined : `${joined}\n`;
-}
-
-function buildPatchFromUnselectedHunks(diffText: string, selected: Set<number>) {
-  const { ranges } = computeHunkRanges(diffText);
-  if (ranges.length === 0) return "";
-
-  const keep = new Set<number>();
-  for (const r of ranges) {
-    if (!selected.has(r.index)) keep.add(r.index);
-  }
-  return buildPatchFromSelectedHunks(diffText, keep);
-}
-
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
-}
 
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
@@ -5259,825 +4641,229 @@ function App() {
       <div className="topbar">
         <div className="menubar">
           <div className="menubarLeft">
-            <div style={{ position: "relative" }}>
-              <div
-                className="menuitem"
-                onClick={() => {
-                  setCommandsMenuOpen(false);
-                  setToolsMenuOpen(false);
-                  setNavigateMenuOpen(false);
-                  setViewMenuOpen(false);
-                  setRepositoryMenuOpen((v) => !v);
-                }}
-                style={{ cursor: "pointer", userSelect: "none" }}
-              >
-                Repository
-              </div>
-              {repositoryMenuOpen ? (
-                <div className="menuDropdown">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      openCloneDialog();
-                    }}
-                    disabled={loading || cloneBusy}
-                  >
-                    Clone repository…
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void pickRepository();
-                    }}
-                    disabled={loading || cloneBusy}
-                  >
-                    {menuItem("Open repository…", shortcutLabel("repo.open"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void initializeProject();
-                    }}
-                    disabled={loading || cloneBusy}
-                  >
-                    {menuItem("Initialize project…", shortcutLabel("repo.initialize"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void openRemoteDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                    title={!activeRepoPath ? "No repository" : undefined}
-                  >
-                    Remote…
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void loadRepo(activeRepoPath);
-                    }}
-                    disabled={!activeRepoPath || loading}
-                  >
-                    {menuItem("Refresh", shortcutLabel("repo.refresh"))}
-                  </button>
+            <RepositoryMenu
+              repositoryMenuOpen={repositoryMenuOpen}
+              setRepositoryMenuOpen={setRepositoryMenuOpen}
+              closeOtherMenus={() => {
+                setCommandsMenuOpen(false);
+                setToolsMenuOpen(false);
+                setNavigateMenuOpen(false);
+                setViewMenuOpen(false);
+              }}
+              loading={loading}
+              cloneBusy={cloneBusy}
+              activeRepoPath={activeRepoPath}
+              remoteUrl={remoteUrl}
+              openCloneDialog={openCloneDialog}
+              pickRepository={pickRepository}
+              initializeProject={initializeProject}
+              openRemoteDialog={openRemoteDialog}
+              loadRepo={loadRepo}
+              runFetch={runFetch}
+              openActiveRepoInExplorer={openActiveRepoInExplorer}
+              menuItem={menuItem}
+              shortcutLabel={shortcutLabel}
+            />
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void runFetch();
-                    }}
-                    disabled={!activeRepoPath || loading || !remoteUrl}
-                    title={!remoteUrl ? "No remote origin" : "git fetch origin"}
-                  >
-                    {menuItem("Fetch", shortcutLabel("repo.fetch"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRepositoryMenuOpen(false);
-                      void openActiveRepoInExplorer();
-                    }}
-                    disabled={!activeRepoPath}
-                  >
-                    Open in file explorer
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <NavigateMenu
+              navigateMenuOpen={navigateMenuOpen}
+              setNavigateMenuOpen={setNavigateMenuOpen}
+              closeOtherMenus={() => {
+                setRepositoryMenuOpen(false);
+                setCommandsMenuOpen(false);
+                setToolsMenuOpen(false);
+                setViewMenuOpen(false);
+              }}
+              repos={repos}
+              activeRepoPath={activeRepoPath}
+              selectedHash={selectedHash}
+              headHash={headHash}
+              commitsCount={commitsAll.length}
+              moveActiveRepoBy={moveActiveRepoBy}
+              setViewMode={setViewMode}
+              openGoToCommit={() => {
+                setGoToError("");
+                setGoToKind("commit");
+                setGoToText("");
+                setGoToTargetView(viewMode);
+                setGoToOpen(true);
+              }}
+              openGoToTag={() => {
+                setGoToError("");
+                setGoToKind("tag");
+                setGoToText("");
+                setGoToTargetView(viewMode);
+                setGoToOpen(true);
+              }}
+              goToChildCommit={goToChildCommit}
+              goToParentCommit={goToParentCommit}
+              goToFirstCommitInBranch={goToFirstCommitInBranch}
+              goToFirstCommitInRepo={goToFirstCommitInRepo}
+              menuItem={menuItem}
+              shortcutLabel={shortcutLabel}
+            />
 
-            <div style={{ position: "relative" }}>
-              <div
-                className="menuitem"
-                onClick={() => {
-                  setRepositoryMenuOpen(false);
-                  setCommandsMenuOpen(false);
-                  setToolsMenuOpen(false);
-                  setViewMenuOpen(false);
-                  setNavigateMenuOpen((v) => !v);
-                }}
-                style={{ cursor: "pointer", userSelect: "none" }}
-              >
-                Navigate
-              </div>
-              {navigateMenuOpen ? (
-                <div className="menuDropdown" style={{ minWidth: 280 }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      moveActiveRepoBy(1);
-                    }}
-                    disabled={repos.length < 2 || !activeRepoPath}
-                    title={repos.length < 2 ? "Open at least 2 repositories" : undefined}
-                  >
-                    {menuItem("Next repository", shortcutLabel("repo.next"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      moveActiveRepoBy(-1);
-                    }}
-                    disabled={repos.length < 2 || !activeRepoPath}
-                    title={repos.length < 2 ? "Open at least 2 repositories" : undefined}
-                  >
-                    {menuItem("Previous repository", shortcutLabel("repo.prev"))}
-                  </button>
-                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      setViewMode("graph");
-                    }}
-                    disabled={!activeRepoPath}
-                  >
-                    {menuItem("Go to graph view", shortcutLabel("view.graph"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      setViewMode("commits");
-                    }}
-                    disabled={!activeRepoPath}
-                  >
-                    {menuItem("Go to commits view", shortcutLabel("view.commits"))}
-                  </button>
-                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      setGoToError("");
-                      setGoToKind("commit");
-                      setGoToText("");
-                      setGoToTargetView(viewMode);
-                      setGoToOpen(true);
-                    }}
-                    disabled={!activeRepoPath}
-                  >
-                    {menuItem("Go to commit…", shortcutLabel("nav.goToCommit"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      setGoToError("");
-                      setGoToKind("tag");
-                      setGoToText("");
-                      setGoToTargetView(viewMode);
-                      setGoToOpen(true);
-                    }}
-                    disabled={!activeRepoPath}
-                  >
-                    {menuItem("Go to tag…", shortcutLabel("nav.goToTag"))}
-                  </button>
-                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      goToChildCommit();
-                    }}
-                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
-                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
-                  >
-                    Go to child commit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      goToParentCommit();
-                    }}
-                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
-                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
-                  >
-                    Go to parent commit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      goToFirstCommitInBranch();
-                    }}
-                    disabled={!activeRepoPath || (!selectedHash.trim() && !headHash.trim())}
-                    title={!selectedHash.trim() && !headHash.trim() ? "Select a commit" : undefined}
-                  >
-                    Go to first commit in branch
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNavigateMenuOpen(false);
-                      goToFirstCommitInRepo();
-                    }}
-                    disabled={!activeRepoPath || commitsAll.length === 0}
-                    title={commitsAll.length === 0 ? "No commits" : undefined}
-                  >
-                    Go to first commit in repo
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <ViewMenu
+              viewMenuOpen={viewMenuOpen}
+              setViewMenuOpen={setViewMenuOpen}
+              closeOtherMenus={() => {
+                setRepositoryMenuOpen(false);
+                setCommandsMenuOpen(false);
+                setToolsMenuOpen(false);
+                setNavigateMenuOpen(false);
+              }}
+              menuToggle={menuToggle}
+              showStashesOnGraph={graphSettings.showStashesOnGraph}
+              showTags={graphSettings.showTags}
+              showRemoteBranchesOnGraph={graphSettings.showRemoteBranchesOnGraph}
+              detailsVisible={layout.detailsHeightPx > 0}
+              sidebarVisible={layout.sidebarWidthPx > 0}
+              graphButtonsVisible={graphButtonsVisible}
+              showOnlineAvatars={showOnlineAvatars}
+              commitsOnlyHead={commitsOnlyHead}
+              layoutDirectionTopToBottom={graphSettings.edgeDirection === "to_parent"}
+              tooltipsEnabled={tooltipSettings.enabled}
+              onChangeShowStashesOnGraph={(v) => setGraph({ showStashesOnGraph: v })}
+              onChangeShowTags={(v) => setGraph({ showTags: v })}
+              onChangeShowRemoteBranchesOnGraph={(v) => setGraph({ showRemoteBranchesOnGraph: v })}
+              onChangeDetailsVisible={(v) => setDetailsVisible(v)}
+              onChangeSidebarVisible={(v) => setSidebarVisible(v)}
+              onChangeGraphButtonsVisible={(v) => setGraphButtonsVisible(v)}
+              onChangeShowOnlineAvatars={(v) => setGit({ showOnlineAvatars: v })}
+              onChangeCommitsOnlyHead={(v) => setGit({ commitsOnlyHead: v })}
+              onChangeLayoutDirectionTopToBottom={(v) => setGraph({ edgeDirection: v ? "to_parent" : "to_child" })}
+              onChangeTooltipsEnabled={(v) => setGeneral({ tooltips: { ...tooltipSettings, enabled: v } })}
+              shortcutShowStashesOnGraph={shortcutLabel("view.toggleStashesOnGraph")}
+              shortcutShowTags={shortcutLabel("view.toggleTags")}
+              shortcutShowRemoteBranches={shortcutLabel("view.toggleRemoteBranches")}
+              shortcutDetailsWindow={shortcutPairLabel("panel.details.show", "panel.details.hide")}
+              shortcutBranchesWindow={shortcutPairLabel("panel.branches.show", "panel.branches.hide")}
+              shortcutGraphButtons={shortcutLabel("view.toggleGraphButtons")}
+              shortcutOnlineAvatars={shortcutLabel("view.toggleOnlineAvatars")}
+              shortcutCommitsOnlyHead={shortcutLabel("view.toggleCommitsOnlyHead")}
+              shortcutLayoutDirection={shortcutLabel("view.toggleLayoutDirection")}
+              shortcutTooltips={shortcutLabel("view.toggleTooltips")}
+            />
 
-            <div style={{ position: "relative" }}>
-              <div
-                className="menuitem"
-                onClick={() => {
-                  setRepositoryMenuOpen(false);
-                  setCommandsMenuOpen(false);
-                  setToolsMenuOpen(false);
-                  setNavigateMenuOpen(false);
-                  setViewMenuOpen((v) => !v);
-                }}
-                style={{ cursor: "pointer", userSelect: "none" }}
-              >
-                View
-              </div>
-              {viewMenuOpen ? (
-                <div className="menuDropdown" style={{ minWidth: 320 }}>
-                  {menuToggle({
-                    label: "Show stashes on graph",
-                    shortcutText: shortcutLabel("view.toggleStashesOnGraph"),
-                    checked: graphSettings.showStashesOnGraph,
-                    onChange: (v) => setGraph({ showStashesOnGraph: v }),
-                  })}
-                  {menuToggle({
-                    label: "Show tags",
-                    shortcutText: shortcutLabel("view.toggleTags"),
-                    checked: graphSettings.showTags,
-                    onChange: (v) => setGraph({ showTags: v }),
-                  })}
-                  {menuToggle({
-                    label: "Show remote branches",
-                    shortcutText: shortcutLabel("view.toggleRemoteBranches"),
-                    checked: graphSettings.showRemoteBranchesOnGraph,
-                    onChange: (v) => setGraph({ showRemoteBranchesOnGraph: v }),
-                  })}
-                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                  {menuToggle({
-                    label: "Show details window",
-                    shortcutText: shortcutPairLabel("panel.details.show", "panel.details.hide"),
-                    checked: layout.detailsHeightPx > 0,
-                    onChange: (v) => setDetailsVisible(v),
-                  })}
-                  {menuToggle({
-                    label: "Show branches window",
-                    shortcutText: shortcutPairLabel("panel.branches.show", "panel.branches.hide"),
-                    checked: layout.sidebarWidthPx > 0,
-                    onChange: (v) => setSidebarVisible(v),
-                  })}
-                  {menuToggle({
-                    label: "Show buttons on graph",
-                    shortcutText: shortcutLabel("view.toggleGraphButtons"),
-                    checked: graphButtonsVisible,
-                    onChange: (v) => setGraphButtonsVisible(v),
-                  })}
-                  <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                  {menuToggle({
-                    label: "Show online avatars (Gravatar)",
-                    shortcutText: shortcutLabel("view.toggleOnlineAvatars"),
-                    checked: showOnlineAvatars,
-                    onChange: (v) => setGit({ showOnlineAvatars: v }),
-                  })}
-                  {menuToggle({
-                    label: "Show only commits reachable from HEAD",
-                    shortcutText: shortcutLabel("view.toggleCommitsOnlyHead"),
-                    checked: commitsOnlyHead,
-                    onChange: (v) => setGit({ commitsOnlyHead: v }),
-                  })}
-                  {menuToggle({
-                    label: "Layout direction from top to bottom",
-                    shortcutText: shortcutLabel("view.toggleLayoutDirection"),
-                    checked: graphSettings.edgeDirection === "to_parent",
-                    onChange: (v) => setGraph({ edgeDirection: v ? "to_parent" : "to_child" }),
-                  })}
-                  {menuToggle({
-                    label: "Show tooltips",
-                    shortcutText: shortcutLabel("view.toggleTooltips"),
-                    checked: tooltipSettings.enabled,
-                    onChange: (v) => setGeneral({ tooltips: { ...tooltipSettings, enabled: v } }),
-                  })}
-                </div>
-              ) : null}
-            </div>
+            <CommandsMenu
+              commandsMenuOpen={commandsMenuOpen}
+              setCommandsMenuOpen={setCommandsMenuOpen}
+              closeOtherMenus={() => {
+                setRepositoryMenuOpen(false);
+                setToolsMenuOpen(false);
+                setNavigateMenuOpen(false);
+                setViewMenuOpen(false);
+              }}
+              activeRepoPath={activeRepoPath}
+              loading={loading}
+              remoteUrl={remoteUrl}
+              changedCount={changedCount}
+              aheadCount={aheadCount}
+              stashesCount={stashes.length}
+              selectedHash={selectedHash}
+              headHash={headHash}
+              openCommitDialog={openCommitDialog}
+              openPushDialog={openPushDialog}
+              openStashDialog={openStashDialog}
+              openCreateBranchDialog={openCreateBranchDialog}
+              openSwitchBranchDialog={openSwitchBranchDialog}
+              openResetDialog={openResetDialog}
+              menuItem={menuItem}
+              shortcutLabel={shortcutLabel}
+            />
 
-            <div style={{ position: "relative" }}>
-              <div
-                className="menuitem"
-                onClick={() => {
-                  setRepositoryMenuOpen(false);
-                  setToolsMenuOpen(false);
-                  setNavigateMenuOpen(false);
-                  setViewMenuOpen(false);
-                  setCommandsMenuOpen((v) => !v);
-                }}
-                style={{ cursor: "pointer", userSelect: "none" }}
-              >
-                Commands
-              </div>
-              {commandsMenuOpen ? (
-                <div className="menuDropdown">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      void openCommitDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                  >
-                    {menuItem(
-                      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                        <span>Commit…</span>
-                        {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
-                      </span>,
-                      shortcutLabel("cmd.commit"),
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      void openPushDialog();
-                    }}
-                    disabled={!activeRepoPath || loading || !remoteUrl}
-                    title={!remoteUrl ? "No remote origin" : undefined}
-                  >
-                    {menuItem(
-                      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                        <span>Push…</span>
-                        {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
-                      </span>,
-                      shortcutLabel("cmd.push"),
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      void openStashDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                  >
-                    {menuItem(
-                      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                        <span>Stash…</span>
-                        {stashes.length > 0 ? <span className="badge">{stashes.length}</span> : null}
-                      </span>,
-                      shortcutLabel("cmd.stash"),
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
-                      setCommandsMenuOpen(false);
-                      if (!at) return;
-                      openCreateBranchDialog(at);
-                    }}
-                    disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
-                    title={!activeRepoPath ? "No repository" : "Create a new branch"}
-                  >
-                    {menuItem("Create branch…", shortcutLabel("cmd.createBranch"))}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      void openSwitchBranchDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                    title={!activeRepoPath ? "No repository" : "Switch branches (git switch)"}
-                  >
-                    {menuItem("Checkout branch…", shortcutLabel("cmd.checkoutBranch"))}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommandsMenuOpen(false);
-                      openResetDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                    title={!activeRepoPath ? "No repository" : "Reset (soft/hard)"}
-                  >
-                    {menuItem("Reset (soft/hard)…", shortcutLabel("cmd.reset"))}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            <div style={{ position: "relative" }}>
-              <div
-                className="menuitem"
-                onClick={() => {
-                  setRepositoryMenuOpen(false);
-                  setCommandsMenuOpen(false);
-                  setNavigateMenuOpen(false);
-                  setViewMenuOpen(false);
-                  setToolsMenuOpen((v) => !v);
-                }}
-                style={{ cursor: "pointer", userSelect: "none" }}
-              >
-                Tools
-              </div>
-              {toolsMenuOpen ? (
-                <div className="menuDropdown">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setToolsMenuOpen(false);
-                      setTerminalMenuOpen(true);
-                    }}
-                    disabled={!activeRepoPath}
-                    title={!activeRepoPath ? "No repository" : "Open terminal profiles"}
-                  >
-                    {menuItem("Terminal…", shortcutLabel("cmd.terminalMenu"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setToolsMenuOpen(false);
-                      setDiffToolModalOpen(true);
-                    }}
-                  >
-                    {menuItem("Diff tool…", shortcutLabel("tool.diffTool"))}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setToolsMenuOpen(false);
-                      void openCleanOldBranchesDialog();
-                    }}
-                    disabled={!activeRepoPath || loading}
-                    title={!activeRepoPath ? "No repository" : undefined}
-                  >
-                    Clean old branches…
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setToolsMenuOpen(false);
-                      void (async () => {
-                        const ok = await confirmDialog({
-                          title: "Clear all stashes",
-                          message: "This will delete all stashes in the current repository. Continue?",
-                          okLabel: "Clear",
-                          cancelLabel: "Cancel",
-                        });
-                        if (!ok) return;
-                        await clearAllStashes();
-                      })();
-                    }}
-                    disabled={!activeRepoPath || loading || stashes.length === 0}
-                    title={!activeRepoPath ? "No repository" : stashes.length === 0 ? "No stashes" : undefined}
-                  >
-                    Clear all stashes
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <ToolsMenu
+              toolsMenuOpen={toolsMenuOpen}
+              setToolsMenuOpen={setToolsMenuOpen}
+              closeOtherMenus={() => {
+                setRepositoryMenuOpen(false);
+                setCommandsMenuOpen(false);
+                setNavigateMenuOpen(false);
+                setViewMenuOpen(false);
+              }}
+              activeRepoPath={activeRepoPath}
+              loading={loading}
+              stashesCount={stashes.length}
+              setTerminalMenuOpen={setTerminalMenuOpen}
+              setDiffToolModalOpen={setDiffToolModalOpen}
+              openCleanOldBranchesDialog={openCleanOldBranchesDialog}
+              confirmClearAllStashes={async () => {
+                const ok = await confirmDialog({
+                  title: "Clear all stashes",
+                  message: "This will delete all stashes in the current repository. Continue?",
+                  okLabel: "Clear",
+                  cancelLabel: "Cancel",
+                });
+                if (!ok) return;
+                await clearAllStashes();
+              }}
+              menuItem={menuItem}
+              shortcutLabel={shortcutLabel}
+            />
 
             <div className="menuitem">Help</div>
           </div>
 
-          <div className="menubarRight">
-            <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeName)} title="Theme">
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="blue">Blue</option>
-              <option value="sepia">Sepia</option>
-            </select>
-
-            <button type="button" onClick={() => setSettingsOpen(true)} title="Settings">
-              ⚙️Settings
-            </button>
-          </div>
+          <MenubarRight theme={theme} setTheme={setTheme} openSettings={() => setSettingsOpen(true)} />
         </div>
 
-        <div className="toolbar">
-          {repos.length === 0 ? (
-            <button
-              type="button"
-              onClick={() => {
-                setRepositoryMenuOpen(false);
-                setCommandsMenuOpen(false);
-                setToolsMenuOpen(false);
-                void pickRepository();
-              }}
-              disabled={loading || cloneBusy}
-              title="Open repository"
-            >
-              {toolbarItem("Open", shortcutLabel("repo.open"))}
-            </button>
-          ) : null}
-          <button type="button" onClick={() => void loadRepo()} disabled={!activeRepoPath || loading}>
-            {toolbarItem("Refresh", shortcutLabel("repo.refresh"))}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runFetch()}
-            disabled={!activeRepoPath || loading || !remoteUrl}
-            title={!remoteUrl ? "No remote origin" : "git fetch origin"}
-          >
-            {toolbarItem("Fetch", shortcutLabel("repo.fetch"))}
-          </button>
-          <div style={{ position: "relative", display: "flex", alignItems: "stretch" }}>
-            <button
-              type="button"
-              onClick={() => void startPull("merge")}
-              disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
-              title={!remoteUrl ? "No remote origin" : "git pull (merge)"}
-              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-            >
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span>Pull</span>
-                {behindCount > 0 ? <span className="badge">↓{behindCount}</span> : null}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setPullMenuOpen((v) => !v)}
-              disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
-              title="More pull options"
-              style={{
-                borderTopLeftRadius: 0,
-                borderBottomLeftRadius: 0,
-                borderLeft: "0",
-                paddingLeft: 8,
-                paddingRight: 8,
-              }}
-            >
-              {toolbarItem("▾", shortcutLabel("cmd.pullMenu"))}
-            </button>
+        <TopToolbar
+          repos={repos}
+          activeRepoPath={activeRepoPath}
+          loading={loading}
+          cloneBusy={cloneBusy}
+          remoteUrl={remoteUrl}
+          changedCount={changedCount}
+          aheadCount={aheadCount}
+          behindCount={behindCount}
+          pullBusy={pullBusy}
+          pullMenuOpen={pullMenuOpen}
+          setPullMenuOpen={setPullMenuOpen}
+          pullPredictBusy={pullPredictBusy}
+          startPull={startPull}
+          predictPull={predictPull}
+          pullAutoChoose={pullAutoChoose}
+          openCommitDialog={openCommitDialog}
+          openPushDialog={openPushDialog}
+          openRepoPicker={() => {
+            setRepositoryMenuOpen(false);
+            setCommandsMenuOpen(false);
+            setToolsMenuOpen(false);
+            void pickRepository();
+          }}
+          refreshRepo={() => void loadRepo()}
+          runFetch={runFetch}
+          showToolbarShortcutHints={showToolbarShortcutHints}
+          toolbarItem={toolbarItem}
+          shortcutLabel={shortcutLabel}
+          terminalMenuOpen={terminalMenuOpen}
+          setTerminalMenuOpen={setTerminalMenuOpen}
+          terminalMenuRef={terminalMenuRef}
+          terminalSettings={terminalSettings}
+          chooseTerminalProfile={(id) => {
+            setTerminal({ defaultProfileId: id });
+            return openTerminalProfile(id);
+          }}
+          openTerminalDefault={openTerminalProfile}
+          openTerminalSettings={() => setSettingsOpen(true)}
+          indicatorsUpdating={indicatorsUpdating}
+          error={error}
+          pullError={pullError}
+        />
 
-            {pullMenuOpen ? (
-              <div className="menuDropdown" style={{ left: 0, top: "calc(100% + 6px)", minWidth: 260 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPullMenuOpen(false);
-                    void startPull("merge");
-                  }}
-                  disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
-                  title="git pull --merge"
-                >
-                  Pull --merge
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPullMenuOpen(false);
-                    void startPull("rebase");
-                  }}
-                  disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
-                  title="git pull --rebase"
-                >
-                  Pull --rebase
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPullMenuOpen(false);
-                    void predictPull(false);
-                  }}
-                  disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
-                  title="Predict if git pull will create merge commit and whether there may be conflicts"
-                >
-                  Pull --merge predict
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPullMenuOpen(false);
-                    void predictPull(true);
-                  }}
-                  disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
-                  title="Predict if git pull --rebase will have conflicts"
-                >
-                  Pull --rebase predict
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPullMenuOpen(false);
-                    void pullAutoChoose();
-                  }}
-                  disabled={!activeRepoPath || loading || pullBusy || pullPredictBusy || !remoteUrl}
-                  title="Tries pull --rebase; if conflicts predicted, falls back to normal pull (merge)."
-                >
-                  Pull rebase/merge autochoose
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <button type="button" onClick={() => void openCommitDialog()} disabled={!activeRepoPath || loading}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span>Commit…</span>
-              {changedCount > 0 ? <span className="badge">{changedCount}</span> : null}
-              {showToolbarShortcutHints && shortcutLabel("cmd.commit") ? <span className="menuShortcut">{shortcutLabel("cmd.commit")}</span> : null}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void openPushDialog()}
-            disabled={!activeRepoPath || loading || !remoteUrl}
-            title={!remoteUrl ? "No remote origin" : undefined}
-          >
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span>Push…</span>
-              {aheadCount > 0 ? <span className="badge">↑{aheadCount}</span> : null}
-              {showToolbarShortcutHints && shortcutLabel("cmd.push") ? <span className="menuShortcut">{shortcutLabel("cmd.push")}</span> : null}
-            </span>
-          </button>
-          <div style={{ position: "relative", display: "flex", alignItems: "stretch" }}>
-            <button
-              type="button"
-              onClick={() => void openTerminalProfile()}
-              disabled={!activeRepoPath}
-              title="Open terminal in repository"
-              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-            >
-              Terminal
-            </button>
-            <button
-              type="button"
-              onClick={() => setTerminalMenuOpen((v) => !v)}
-              disabled={!activeRepoPath}
-              title="Choose terminal profile"
-              style={{
-                borderTopLeftRadius: 0,
-                borderBottomLeftRadius: 0,
-                borderLeft: "0",
-                paddingLeft: 8,
-                paddingRight: 8,
-              }}
-            >
-              {toolbarItem("▾", shortcutLabel("cmd.terminalMenu"))}
-            </button>
-
-            {terminalMenuOpen ? (
-              <div ref={terminalMenuRef} className="menuDropdown" style={{ left: 0, top: "calc(100% + 6px)", minWidth: 260 }}>
-                {(terminalSettings.profiles ?? []).map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    data-terminal-profile-id={p.id}
-                    onClick={() => {
-                      setTerminalMenuOpen(false);
-                      setTerminal({ defaultProfileId: p.id });
-                      void openTerminalProfile(p.id);
-                    }}
-                    disabled={!activeRepoPath}
-                    title={p.kind === "custom" ? (p.command?.trim() ? p.command.trim() : "Custom") : undefined}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-                {(terminalSettings.profiles ?? []).length === 0 ? (
-                  <div style={{ opacity: 0.75, padding: "6px 8px" }}>No terminal profiles.</div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTerminalMenuOpen(false);
-                    setSettingsOpen(true);
-                  }}
-                >
-                  Terminal settings…
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <div style={{ flex: 1 }} />
-          {indicatorsUpdating ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.75 }} title="Updating remote status">
-              <span className="miniSpinner" />
-            </div>
-          ) : null}
-          {loading ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
-              <span className="miniSpinner" />
-              <span>Loading…</span>
-            </div>
-          ) : null}
-          {error ? <div className="error">{error}</div> : null}
-          {pullError ? <div className="error">{pullError}</div> : null}
-        </div>
-
-        <div className="tabs" ref={tabsRef}>
-          {repos.length === 0 ? <div style={{ opacity: 0.7, padding: "8px 4px" }}>No repository opened</div> : null}
-          {repos.map((p) => (
-            <div
-              key={p}
-              data-repo-path={p}
-              className={`tab ${p === activeRepoPath ? "tabActive" : ""}${tabDragPath === p ? " tabDragging" : ""}`}
-              onClick={() => {
-                if (tabSuppressClickRef.current) {
-                  tabSuppressClickRef.current = false;
-                  return;
-                }
-                setActiveRepoPath(p);
-                setSelectedHash("");
-              }}
-              onMouseDown={(e) => {
-                if (e.button !== 0) return;
-                const target = e.target;
-                const el = target instanceof HTMLElement ? target : null;
-                if (el?.closest?.(".tabClose")) return;
-
-                const from = p;
-                const startX = e.clientX;
-                const startY = e.clientY;
-                const prevUserSelect = document.body.style.userSelect;
-                let dragging = false;
-
-                tabSuppressClickRef.current = false;
-
-                const getInsertIndexFromPointer = (clientX: number) => {
-                  const tabsEl = tabsRef.current;
-                  if (!tabsEl) return -1;
-                  const nodes = Array.from(tabsEl.querySelectorAll<HTMLElement>(".tab"));
-                  if (nodes.length === 0) return 0;
-                  for (let i = 0; i < nodes.length; i++) {
-                    const r = nodes[i].getBoundingClientRect();
-                    const mid = r.left + r.width / 2;
-                    if (clientX < mid) return i;
-                  }
-                  return nodes.length;
-                };
-
-                const onMove = (ev: MouseEvent) => {
-                  const dx = ev.clientX - startX;
-                  const dy = ev.clientY - startY;
-                  if (!dragging) {
-                    if (Math.hypot(dx, dy) < 4) return;
-                    dragging = true;
-                    tabSuppressClickRef.current = true;
-                    document.body.style.userSelect = "none";
-                    setTabDragPath(from);
-                  }
-
-                  const rawInsert = getInsertIndexFromPointer(ev.clientX);
-                  if (rawInsert < 0) return;
-
-                  captureTabRects();
-                  setRepos((prev) => {
-                    const curFromIdx = prev.indexOf(from);
-                    if (curFromIdx < 0) return prev;
-
-                    let insertAt = rawInsert;
-                    if (rawInsert > curFromIdx) insertAt -= 1;
-
-                    const next = prev.slice();
-                    next.splice(curFromIdx, 1);
-                    insertAt = Math.max(0, Math.min(next.length, insertAt));
-                    if (insertAt === curFromIdx) return prev;
-                    next.splice(insertAt, 0, from);
-                    return next;
-                  });
-                };
-
-                const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
-                  document.body.style.userSelect = prevUserSelect;
-
-                  if (!dragging) return;
-
-                  setTabDragPath("");
-                };
-
-                window.addEventListener("mousemove", onMove);
-                window.addEventListener("mouseup", onUp);
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>{repoNameFromPath(p)}</div>
-              <button
-                type="button"
-                className="tabClose"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void closeRepository(p);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
+        <RepoTabs
+          repos={repos}
+          activeRepoPath={activeRepoPath}
+          tabDragPath={tabDragPath}
+          setActiveRepoPath={setActiveRepoPath}
+          setSelectedHash={setSelectedHash}
+          setTabDragPath={setTabDragPath}
+          closeRepository={closeRepository}
+          setRepos={setRepos}
+          captureTabRects={captureTabRects}
+          tabsRef={tabsRef}
+          tabSuppressClickRef={tabSuppressClickRef}
+        />
 
       </div>
 
@@ -6087,186 +4873,36 @@ function App() {
             gridTemplateColumns: layout.sidebarWidthPx > 0 ? `${layout.sidebarWidthPx}px 6px 1fr` : `0px 0px 1fr`,
           }}
         >
-          <aside
-            className="sidebar"
-            style={
-              layout.sidebarWidthPx > 0
-                ? undefined
-                : {
-                    overflow: "hidden",
-                    borderRight: "none",
-                    pointerEvents: "none",
-                  }
-            }
-          >
-            <div className="sidebarSection">
-              <div className="sidebarTitle">Branches</div>
-              <div className="sidebarList">
-                {(overview?.branches ?? []).slice(0, 30).map((b) => (
-                  <div key={b} className="sidebarItem branchRow" title={b}>
-                    <button
-                      type="button"
-                      className="branchMain"
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openBranchContextMenu(b, e.clientX, e.clientY);
-                      }}
-                    >
-                      <span
-                        className="branchLabel"
-                        style={normalizeBranchName(b) === normalizeBranchName(activeBranchName) ? { fontWeight: 900 } : undefined}
-                      >
-                        {b}
-                      </span>
-                    </button>
-
-                    <span className="branchActions">
-                      <button
-                        type="button"
-                        className="branchActionBtn"
-                        onClick={() => void checkoutBranch(b)}
-                        title="Checkout (Switch) to this branch"
-                        disabled={!activeRepoPath || loading}
-                      >
-                        C
-                      </button>
-                      <button
-                        type="button"
-                        className="branchActionBtn"
-                        onClick={() => openRenameBranchDialog(b)}
-                        title="Rename branch"
-                        disabled={!activeRepoPath || loading}
-                      >
-                        R
-                      </button>
-                      <button
-                        type="button"
-                        className="branchActionBtn"
-                        onClick={() => void deleteBranch(b)}
-                        title="Delete branch"
-                        disabled={!activeRepoPath || loading}
-                      >
-                        D
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          <div className="sidebarSection">
-            <div className="sidebarTitle">Remotes</div>
-            <div className="sidebarList">
-              {(overview?.remotes ?? []).slice(0, 30).map((r) => (
-                <div key={r} className="sidebarItem">
-                  {r}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="sidebarSection">
-            <div className="sidebarTitle">Tags</div>
-            <div className="sidebarList">
-              {(tagsExpanded ? overview?.tags ?? [] : (overview?.tags ?? []).slice(0, 10)).map((t) => (
-                <div
-                  key={t}
-                  className="sidebarItem"
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openTagContextMenu(t, e.clientX, e.clientY);
-                  }}
-                >
-                  {t}
-                </div>
-              ))}
-              {!tagsExpanded && (overview?.tags ?? []).length > 10 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!activeRepoPath) return;
-                    setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
-                  }}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "6px 8px",
-                    border: "1px solid transparent",
-                    background: "transparent",
-                    color: "inherit",
-                  }}
-                  className="sidebarItem"
-                >
-                  Show all tags
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="sidebarSection">
-            <div className="sidebarTitle">Other</div>
-            <div className="sidebarList">
-              <div className="sidebarItem">Submodules</div>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div className="sidebarTitle" style={{ marginBottom: 0 }}>
-                  Stashes
-                </div>
-                {stashes.length === 0 ? (
-                  <div style={{ opacity: 0.7, fontSize: 12, padding: "0 8px" }}>No stashes.</div>
-                ) : (
-                  <div className="sidebarList" style={{ gap: 4 }}>
-                    {stashes.map((s) => (
-                      <div key={s.reference} className="sidebarItem stashRow" title={s.message || s.reference}>
-                        <button
-                          type="button"
-                          className="stashMain"
-                          onClick={() => void openStashView(s)}
-                        >
-                          <span className="stashLabel">{s.message || s.reference}</span>
-                        </button>
-
-                        <span className="stashActions">
-                          <button type="button" className="stashActionBtn" onClick={() => void openStashView(s)} title="View">
-                            👁
-                          </button>
-                          <button
-                            type="button"
-                            className="stashActionBtn"
-                            onClick={() => void applyStashByRef(s.reference)}
-                            title="Apply"
-                          >
-                            Apply
-                          </button>
-                          <button
-                            type="button"
-                            className="stashActionBtn"
-                            onClick={() => {
-                              void (async () => {
-                                const ok = await confirmDialog({
-                                  title: "Delete stash",
-                                  message: `Delete stash ${s.message?.trim() ? s.message.trim() : s.reference}?`,
-                                  okLabel: "Delete",
-                                  cancelLabel: "Cancel",
-                                });
-                                if (!ok) return;
-                                await dropStashByRef(s.reference);
-                              })();
-                            }}
-                            title="Delete"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </aside>
+          <Sidebar
+            visible={layout.sidebarWidthPx > 0}
+            overview={overview}
+            tagsExpanded={tagsExpanded}
+            activeRepoPath={activeRepoPath}
+            loading={loading}
+            isActiveBranch={(b) => normalizeBranchName(b) === normalizeBranchName(activeBranchName)}
+            openBranchContextMenu={openBranchContextMenu}
+            checkoutBranch={checkoutBranch}
+            openRenameBranchDialog={openRenameBranchDialog}
+            deleteBranch={deleteBranch}
+            openTagContextMenu={openTagContextMenu}
+            expandTags={() => {
+              if (!activeRepoPath) return;
+              setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
+            }}
+            stashes={stashes}
+            openStashView={openStashView}
+            applyStashByRef={applyStashByRef}
+            confirmDeleteStash={async (s) => {
+              const ok = await confirmDialog({
+                title: "Delete stash",
+                message: `Delete stash ${s.message?.trim() ? s.message.trim() : s.reference}?`,
+                okLabel: "Delete",
+                cancelLabel: "Cancel",
+              });
+              if (!ok) return;
+              await dropStashByRef(s.reference);
+            }}
+          />
 
         <div
           className="splitterV"
@@ -6281,34 +4917,7 @@ function App() {
             gridTemplateRows: layout.detailsHeightPx > 0 ? `auto 1fr 6px ${layout.detailsHeightPx}px` : `auto 1fr 0px 0px`,
           }}
         >
-          <div className="mainHeader">
-            <div className="repoTitle">
-              <div className="repoName">{activeRepoPath ? repoNameFromPath(activeRepoPath) : "Graphoria"}</div>
-              <div className="repoPath">
-                {activeRepoPath ? activeRepoPath : "Open a repository to start."}
-                {overview?.head_name ? ` — ${overview.head_name}` : ""}
-              </div>
-            </div>
-
-            <div className="segmented">
-              <button
-                type="button"
-                className={viewMode === "graph" ? "active" : ""}
-                onClick={() => setViewMode("graph")}
-                disabled={!activeRepoPath}
-              >
-                Graph
-              </button>
-              <button
-                type="button"
-                className={viewMode === "commits" ? "active" : ""}
-                onClick={() => setViewMode("commits")}
-                disabled={!activeRepoPath}
-              >
-                Commits
-              </button>
-            </div>
-          </div>
+          <MainHeader activeRepoPath={activeRepoPath} overview={overview} viewMode={viewMode} setViewMode={setViewMode} />
 
           <div className="mainCanvas">
             {viewMode === "graph" ? (
@@ -6490,82 +5099,17 @@ function App() {
 
           <div className="splitterH" onMouseDown={startDetailsResize} title="Drag to resize details panel" />
 
-          <div
-            className="details"
-            style={
-              layout.detailsHeightPx > 0
-                ? undefined
-                : {
-                    padding: 0,
-                    borderTop: "none",
-                    overflow: "hidden",
-                    pointerEvents: "none",
-                  }
-            }
-          >
-            <div className="detailsTitle">
-              <div className="segmented small">
-                <button type="button" className={detailsTab === "details" ? "active" : ""} onClick={() => setDetailsTab("details")}> 
-                  Details
-                </button>
-                <button type="button" className={detailsTab === "changes" ? "active" : ""} onClick={() => setDetailsTab("changes")}> 
-                  Changes
-                </button>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" disabled={!selectedCommit} onClick={() => void copyText(selectedHash)}>
-                  Copy hash
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedCommit || !activeRepoPath || loading}
-                  onClick={() => void checkoutCommit(selectedHash)}
-                >
-                  Checkout…
-                </button>
-              </div>
-            </div>
-
-            <div className="detailsBody">
-              {!selectedCommit ? (
-                <div style={{ opacity: 0.7 }}>Select a commit to see details.</div>
-              ) : detailsTab === "details" ? (
-                <div className="detailsGrid">
-                  <div className="detailsLabel">Hash</div>
-                  <div className="detailsValue mono">{selectedCommit.hash}</div>
-
-                  <div className="detailsLabel">Subject</div>
-                  <div className="detailsValue">{selectedCommit.subject}</div>
-
-                  <div className="detailsLabel">Author</div>
-                  <div className="detailsValue">
-                    {selectedCommit.author_email?.trim()
-                      ? `${selectedCommit.author} (${selectedCommit.author_email.trim()})`
-                      : selectedCommit.author}
-                  </div>
-
-                  <div className="detailsLabel">Date</div>
-                  <div className="detailsValue">{selectedCommit.date}</div>
-
-                  <div className="detailsLabel">Refs</div>
-                  <div className="detailsValue mono">{selectedCommit.refs || "(none)"}</div>
-                </div>
-              ) : (
-                <div style={{ height: "100%", minHeight: 0 }}>
-                  {activeRepoPath ? (
-                    <DiffView
-                      repoPath={activeRepoPath}
-                      source={{ kind: "commit", commit: selectedCommit.hash }}
-                      tool={diffTool}
-                      height="100%"
-                    />
-                  ) : (
-                    <div style={{ opacity: 0.7 }}>No repository selected.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <DetailsPanel
+            visible={layout.detailsHeightPx > 0}
+            detailsTab={detailsTab}
+            setDetailsTab={setDetailsTab}
+            selectedCommit={selectedCommit}
+            activeRepoPath={activeRepoPath}
+            loading={loading}
+            copyHash={() => void copyText(selectedHash)}
+            checkoutSelectedCommit={() => void checkoutCommit(selectedHash)}
+            diffTool={diffTool}
+          />
         </div>
         </div>
 
