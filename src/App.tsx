@@ -40,6 +40,12 @@ import { TopToolbar } from "./components/TopToolbar";
 import { MainHeader } from "./components/MainHeader";
 import { Sidebar } from "./components/Sidebar";
 import { DetailsPanel } from "./components/DetailsPanel";
+import { CommitContextMenu } from "./components/CommitContextMenu";
+import { WorkingFileContextMenu } from "./components/WorkingFileContextMenu";
+import { RefBadgeContextMenu } from "./components/RefBadgeContextMenu";
+import { BranchContextMenu } from "./components/BranchContextMenu";
+import { StashContextMenu } from "./components/StashContextMenu";
+import { TagContextMenu } from "./components/TagContextMenu";
 import { RepositoryMenu } from "./components/menus/RepositoryMenu";
 import { NavigateMenu } from "./components/menus/NavigateMenu";
 import { ViewMenu } from "./components/menus/ViewMenu";
@@ -5113,233 +5119,73 @@ function App() {
         </div>
         </div>
 
-      {commitContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={commitContextMenuRef}
-          style={{
-            position: "fixed",
-            left: commitContextMenu.x,
-            top: commitContextMenu.y,
-            zIndex: 200,
-            minWidth: 220,
-          }}
-        >
-          <button
-            type="button"
-            disabled={!activeRepoPath}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              setShowChangesCommit(hash);
-              setShowChangesOpen(true);
-              setDetailsTab("changes");
-              setSelectedHash(hash);
-            }}
-          >
-            Show changes
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void copyText(commitContextMenu.hash);
-              setCommitContextMenu(null);
-            }}
-          >
-            Copy hash
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              void checkoutCommit(hash);
-            }}
-          >
-            Checkout this commit
-          </button>
+      <CommitContextMenu
+        menu={commitContextMenu}
+        menuRef={commitContextMenuRef}
+        activeRepoPath={activeRepoPath}
+        loading={loading}
+        isDetached={isDetached}
+        commitContextBranchesLoading={commitContextBranchesLoading}
+        commitContextBranches={commitContextBranches}
+        changedCount={changedCount}
+        pickPreferredBranch={pickPreferredBranch}
+        onShowChanges={(hash) => {
+          setCommitContextMenu(null);
+          setShowChangesCommit(hash);
+          setShowChangesOpen(true);
+          setDetailsTab("changes");
+          setSelectedHash(hash);
+        }}
+        onCopyHash={(hash) => {
+          void copyText(hash);
+          setCommitContextMenu(null);
+        }}
+        onCheckoutCommit={(hash) => {
+          setCommitContextMenu(null);
+          void checkoutCommit(hash);
+        }}
+        onCreateBranch={(hash) => {
+          setCommitContextMenu(null);
+          openCreateBranchDialog(hash);
+        }}
+        onReset={(mode, hash) => {
+          setCommitContextMenu(null);
+          void runCommitContextReset(mode, hash);
+        }}
+        onCheckoutBranch={(branch) => {
+          setCommitContextMenu(null);
+          void checkoutBranch(branch);
+        }}
+        onResetHardAndCheckoutBranch={(branch) => {
+          setCommitContextMenu(null);
+          void resetHardAndCheckoutBranch(branch);
+        }}
+      />
 
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              openCreateBranchDialog(hash);
-            }}
-          >
-            Create branch…
-          </button>
-
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              void runCommitContextReset("soft", hash);
-            }}
-          >
-            git reset --soft here
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              void runCommitContextReset("mixed", hash);
-            }}
-          >
-            git reset --mixed here
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const hash = commitContextMenu.hash;
-              setCommitContextMenu(null);
-              void runCommitContextReset("hard", hash);
-            }}
-          >
-            git reset --hard here
-          </button>
-
-          {isDetached && commitContextBranchesLoading ? (
-            <button type="button" disabled title="Checking branches that point at this commit…">
-              Checking branches…
-            </button>
-          ) : null}
-
-          {(() => {
-            if (!isDetached) return null;
-            if (commitContextBranches.length === 0) return null;
-            const b = pickPreferredBranch(commitContextBranches);
-            if (!b) return null;
-
-            if (changedCount === 0) {
-              return (
-                <button
-                  type="button"
-                  title={`Re-attaches HEAD by checking out '${b}'.`}
-                  disabled={!activeRepoPath || loading}
-                  onClick={() => {
-                    setCommitContextMenu(null);
-                    void checkoutBranch(b);
-                  }}
-                >
-                  Checkout this commit and branch
-                </button>
-              );
-            }
-
-            return (
-              <button
-                type="button"
-                title={`Discards local changes (git reset --hard) and re-attaches HEAD by checking out '${b}'.`}
-                disabled={!activeRepoPath || loading}
-                onClick={() => {
-                  setCommitContextMenu(null);
-                  void resetHardAndCheckoutBranch(b);
-                }}
-              >
-                Reset hard my changes and checkout this commit
-              </button>
-            );
-          })()}
-        </div>
-      ) : null}
-
-      {workingFileContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={workingFileContextMenuRef}
-          style={{
-            position: "fixed",
-            left: workingFileContextMenu.x,
-            top: workingFileContextMenu.y,
-            zIndex: 200,
-            minWidth: 260,
-          }}
-        >
-          <button
-            type="button"
-            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m) return;
-              void discardWorkingFile(m.mode, m.path, m.status);
-            }}
-          >
-            Reset file / Discard changes…
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m) return;
-              void deleteWorkingFile(m.mode, m.path);
-            }}
-          >
-            Delete file…
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m) return;
-              void copyText(m.path);
-            }}
-          >
-            Copy path (relative)
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m || !activeRepoPath) return;
-              const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-              const abs = joinPath(activeRepoPath, m.path.replace(/[\\/]/g, sep));
-              void copyText(abs);
-            }}
-          >
-            Copy path (absolute)
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m || !activeRepoPath) return;
-              const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-              const abs = joinPath(activeRepoPath, m.path.replace(/[\\/]/g, sep));
-              void invoke<void>("reveal_in_file_explorer", { path: abs });
-            }}
-          >
-            Reveal in File Explorer
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || (workingFileContextMenu.mode === "commit" ? commitBusy : stashBusy)}
-            onClick={() => {
-              const m = workingFileContextMenu;
-              setWorkingFileContextMenu(null);
-              if (!m) return;
-              void addToGitignore(m.mode, m.path.replace(/\\/g, "/"));
-            }}
-          >
-            Add to .gitignore
-          </button>
-        </div>
-      ) : null}
+      <WorkingFileContextMenu
+        menu={workingFileContextMenu}
+        menuRef={workingFileContextMenuRef}
+        activeRepoPath={activeRepoPath}
+        commitBusy={commitBusy}
+        stashBusy={stashBusy}
+        onClose={() => setWorkingFileContextMenu(null)}
+        onDiscard={(mode, path, status) => {
+          void discardWorkingFile(mode, path, status);
+        }}
+        onDelete={(mode, path) => {
+          void deleteWorkingFile(mode, path);
+        }}
+        onCopyText={(text) => {
+          void copyText(text);
+        }}
+        joinPath={joinPath}
+        onRevealInExplorer={(absPath) => {
+          void invoke<void>("reveal_in_file_explorer", { path: absPath });
+        }}
+        onAddToGitignore={(mode, path) => {
+          void addToGitignore(mode, path);
+        }}
+      />
 
       {goToOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -5559,45 +5405,15 @@ function App() {
         </div>
       ) : null}
 
-      {refBadgeContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={refBadgeContextMenuRef}
-          style={{
-            position: "fixed",
-            left: refBadgeContextMenu.x,
-            top: refBadgeContextMenu.y,
-            zIndex: 200,
-            minWidth: 220,
-          }}
-        >
-          {refBadgeContextMenu.kind === "branch" ? (
-            <button
-              type="button"
-              disabled={!activeRepoPath || loading}
-              onClick={() => {
-                const b = refBadgeContextMenu.label;
-                setRefBadgeContextMenu(null);
-                void checkoutRefBadgeLocalBranch(b);
-              }}
-            >
-              Checkout branch
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!activeRepoPath || loading}
-              onClick={() => {
-                const r = refBadgeContextMenu.label;
-                setRefBadgeContextMenu(null);
-                void checkoutRefBadgeRemoteBranch(r);
-              }}
-            >
-              Checkout remote branch
-            </button>
-          )}
-        </div>
-      ) : null}
+      <RefBadgeContextMenu
+        menu={refBadgeContextMenu}
+        menuRef={refBadgeContextMenuRef}
+        activeRepoPath={activeRepoPath}
+        loading={loading}
+        onClose={() => setRefBadgeContextMenu(null)}
+        checkoutLocalBranch={(branch) => void checkoutRefBadgeLocalBranch(branch)}
+        checkoutRemoteBranch={(remoteBranch) => void checkoutRefBadgeRemoteBranch(remoteBranch)}
+      />
 
       {renameBranchOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -5853,145 +5669,48 @@ function App() {
         </div>
       ) : null}
 
-      {branchContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={branchContextMenuRef}
-          style={{
-            position: "fixed",
-            left: branchContextMenu.x,
-            top: branchContextMenu.y,
-            zIndex: 200,
-            minWidth: 220,
-          }}
-        >
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              if (!activeRepoPath) return;
-              const branch = branchContextMenu.branch;
-              setBranchContextMenu(null);
-              void (async () => {
-                try {
-                  const hash = await invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference: branch });
-                  const at = (hash ?? "").trim();
-                  if (!at) {
-                    setError(`Could not resolve branch '${branch}' to a commit.`);
-                    return;
-                  }
-                  openCreateBranchDialog(at);
-                } catch (e) {
-                  setError(typeof e === "string" ? e : JSON.stringify(e));
-                }
-              })();
-            }}
-          >
-            Create branch…
-          </button>
-        </div>
-      ) : null}
+      <BranchContextMenu
+        menu={branchContextMenu}
+        menuRef={branchContextMenuRef}
+        activeRepoPath={activeRepoPath}
+        loading={loading}
+        onClose={() => setBranchContextMenu(null)}
+        resolveRef={(reference) => invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference })}
+        setError={setError}
+        openCreateBranchDialog={openCreateBranchDialog}
+      />
 
-      {stashContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={stashContextMenuRef}
-          style={{
-            position: "fixed",
-            left: stashContextMenu.x,
-            top: stashContextMenu.y,
-            zIndex: 200,
-            minWidth: 220,
-          }}
-        >
-          <button
-            type="button"
-            disabled={!activeRepoPath}
-            onClick={() => {
-              if (!activeRepoPath) return;
-              const ref = stashContextMenu.stashRef;
-              setStashContextMenu(null);
-              const list = stashesByRepo[activeRepoPath] ?? [];
-              const entry = list.find((s) => s.reference === ref);
-              if (!entry) {
-                setError(`Stash not found: ${ref}`);
-                return;
-              }
-              void openStashView(entry);
-            }}
-          >
-            View stash
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              const ref = stashContextMenu.stashRef;
-              setStashContextMenu(null);
-              void applyStashByRef(ref);
-            }}
-          >
-            Apply stash
-          </button>
-          <button
-            type="button"
-            disabled={!activeRepoPath || loading}
-            onClick={() => {
-              if (!activeRepoPath) return;
-              const ref = stashContextMenu.stashRef;
-              const name = stashContextMenu.stashMessage?.trim() ? stashContextMenu.stashMessage.trim() : ref;
-              setStashContextMenu(null);
-              void (async () => {
-                const ok = await confirmDialog({
-                  title: "Delete stash",
-                  message: `Delete stash ${name}?`,
-                  okLabel: "Delete",
-                  cancelLabel: "Cancel",
-                });
-                if (!ok) return;
-                await dropStashByRef(ref);
-              })();
-            }}
-          >
-            Delete stash
-          </button>
-        </div>
-      ) : null}
+      <StashContextMenu
+        menu={stashContextMenu}
+        menuRef={stashContextMenuRef}
+        activeRepoPath={activeRepoPath}
+        loading={loading}
+        getStashesForActiveRepo={() => stashesByRepo[activeRepoPath] ?? []}
+        openStashView={(entry) => void openStashView(entry)}
+        applyStashByRef={(ref) => void applyStashByRef(ref)}
+        confirmDelete={(ref, name) => {
+          void (async () => {
+            const ok = await confirmDialog({
+              title: "Delete stash",
+              message: `Delete stash ${name}?`,
+              okLabel: "Delete",
+              cancelLabel: "Cancel",
+            });
+            if (!ok) return;
+            await dropStashByRef(ref);
+          })();
+        }}
+        onClose={() => setStashContextMenu(null)}
+        setError={setError}
+      />
 
-      {tagContextMenu ? (
-        <div
-          className="menuDropdown"
-          ref={tagContextMenuRef}
-          style={{
-            position: "fixed",
-            left: tagContextMenu.x,
-            top: tagContextMenu.y,
-            zIndex: 200,
-            minWidth: 220,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const tag = tagContextMenu.tag;
-              setTagContextMenu(null);
-              void focusTagOnGraph(tag);
-            }}
-          >
-            Focus on graph
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const tag = tagContextMenu.tag;
-              setTagContextMenu(null);
-              void focusTagOnCommits(tag);
-            }}
-          >
-            Focus on commits
-          </button>
-        </div>
-      ) : null}
+      <TagContextMenu
+        menu={tagContextMenu}
+        menuRef={tagContextMenuRef}
+        onClose={() => setTagContextMenu(null)}
+        focusTagOnGraph={(tag) => void focusTagOnGraph(tag)}
+        focusTagOnCommits={(tag) => void focusTagOnCommits(tag)}
+      />
 
       {detachedHelpOpen ? (
         <div className="modalOverlay" role="dialog" aria-modal="true">
