@@ -1,0 +1,29 @@
+#[tauri::command]
+pub(crate) fn git_reflog(repo_path: String, max_count: Option<u32>) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let max_count = max_count.unwrap_or(30).min(200);
+    let max_count_s = max_count.to_string();
+    crate::run_git(&repo_path, &["reflog", "-n", max_count_s.as_str()])
+}
+
+#[tauri::command]
+pub(crate) fn git_cherry_pick(repo_path: String, commits: Vec<String>) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let commits: Vec<String> = commits
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if commits.is_empty() {
+        return Err(String::from("No commits provided."));
+    }
+
+    let mut args: Vec<&str> = Vec::new();
+    args.push("cherry-pick");
+    for c in &commits {
+        args.push(c.as_str());
+    }
+    crate::run_git(&repo_path, args.as_slice())
+}

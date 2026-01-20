@@ -11,3 +11,7 @@ pub(crate) mod status;
 pub(crate) mod branches;
 
 pub(crate) mod stashes;
+
+pub(crate) mod diff;
+
+pub(crate) mod reflog;
