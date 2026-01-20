@@ -1,0 +1,113 @@
+.details {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.detailsTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.detailsBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.detailsTitle h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(15, 15, 15, 0.65);
+}
+
+.detailsGrid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px 12px;
+  align-items: center;
+}
+
+.detailsLabel {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.detailsValue {
+  font-size: 13px;
+}
+
+.detailsValue.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.graphoriaTooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg) 8%);
+  color: var(--text);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  contain: paint;
+  will-change: transform, opacity;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-50%, 0, 0) scale(0.98);
+  transition: opacity 0.10s ease-out, transform 0.10s ease-out;
+}
+
+.graphoriaTooltipVisible {
+  opacity: 1;
+  transform: translate3d(-50%, 0, 0) scale(1);
+}
+
+.graphoriaTooltipText {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 750;
+  opacity: 0.92;
+}
+
+.graphoriaTooltipProgress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+  transform-origin: left center;
+  animation-name: graphoriaTooltipProgress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes graphoriaTooltipProgress {
+  from {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scaleX(0);
+    opacity: 0.35;
+  }
+}
+

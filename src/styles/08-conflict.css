@@ -1,0 +1,53 @@
+ .conflictLegend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 15, 15, 0.10);
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 18px;
+ }
+
+ :root[data-theme="dark"] .conflictLegend {
+  border-color: rgba(255, 255, 255, 0.12);
+ }
+
+ .conflictLegend-ours {
+  background: rgba(0, 140, 0, 0.12);
+  border-color: rgba(0, 140, 0, 0.18);
+ }
+
+ .conflictLegend-base {
+  background: rgba(120, 185, 255, 0.14);
+  border-color: rgba(120, 185, 255, 0.18);
+ }
+
+ .conflictLegend-theirs {
+  background: rgba(255, 215, 130, 0.22);
+  border-color: rgba(255, 215, 130, 0.30);
+ }
+
+ .conflictLine {
+  padding: 0 8px;
+  border-radius: 6px;
+  width: max-content;
+  min-width: 100%;
+ }
+
+ .conflictLine-ours {
+  background: rgba(0, 140, 0, 0.12);
+  border: 1px solid rgba(0, 140, 0, 0.18);
+ }
+
+ .conflictLine-base {
+  background: rgba(120, 185, 255, 0.14);
+  border: 1px solid rgba(120, 185, 255, 0.18);
+ }
+
+ .conflictLine-theirs {
+  background: rgba(255, 215, 130, 0.22);
+  border: 1px solid rgba(255, 215, 130, 0.30);
+ }
+

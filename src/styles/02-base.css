@@ -1,0 +1,54 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--text);
+  background: var(--bg);
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--panel);
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+select {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--panel);
+}
+
+button:hover {
+  border-color: rgba(47, 111, 237, 0.55);
+}
+
+button:active {
+  background-color: rgba(47, 111, 237, 0.08);
+}
+
+button:disabled {
+  opacity: 0.55;
+}
+

@@ -89,7 +89,7 @@ import type {
   RepoOverview,
 } from "./types/git";
 
-import "./App.css";
+import "./styles/index.css";
 
 type GitResetMode = "soft" | "mixed" | "hard";
 
