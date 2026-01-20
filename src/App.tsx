@@ -52,7 +52,24 @@ import { ViewMenu } from "./components/menus/ViewMenu";
 import { CommandsMenu } from "./components/menus/CommandsMenu";
 import { ToolsMenu } from "./components/menus/ToolsMenu";
 import { MenubarRight } from "./components/menus/MenubarRight";
-import DiffView, { parseUnifiedDiff } from "./DiffView";
+import { GoToModal } from "./components/modals/GoToModal";
+import { ConfirmModal } from "./components/modals/ConfirmModal";
+import { ResetModal } from "./components/modals/ResetModal";
+import { CleanOldBranchesModal } from "./components/modals/CleanOldBranchesModal";
+import { RenameBranchModal } from "./components/modals/RenameBranchModal";
+import { SwitchBranchModal } from "./components/modals/SwitchBranchModal";
+import { PreviewZoomModal } from "./components/modals/PreviewZoomModal";
+import { PullConflictModal } from "./components/modals/PullConflictModal";
+import { CherryStepsModal } from "./components/modals/CherryStepsModal";
+import { PullPredictModal } from "./components/modals/PullPredictModal";
+import { CreateBranchModal } from "./components/modals/CreateBranchModal";
+import { FilePreviewModal } from "./components/modals/FilePreviewModal";
+import { ChangesModal } from "./components/modals/ChangesModal";
+import { RemoteModal } from "./components/modals/RemoteModal";
+import { PushModal } from "./components/modals/PushModal";
+import { StashModal } from "./components/modals/StashModal";
+import { StashViewModal } from "./components/modals/StashViewModal";
+import { parseUnifiedDiff } from "./DiffView";
 import DiffToolModal from "./DiffToolModal";
 import TooltipLayer from "./TooltipLayer";
 import type {
@@ -5188,78 +5205,18 @@ function App() {
       />
 
       {goToOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(560px, 96vw)", maxHeight: "min(84vh, 560px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>{goToKind === "commit" ? "Go to commit" : "Go to tag"}</div>
-              <button type="button" onClick={() => setGoToOpen(false)}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody" style={{ display: "grid", gap: 12 }}>
-              {goToError ? <div className="error">{goToError}</div> : null}
-
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 900, opacity: 0.75 }}>{goToKind === "commit" ? "Commit hash / ref" : "Tag name"}</div>
-                <input
-                  className="modalInput"
-                  value={goToText}
-                  onChange={(e) => setGoToText(e.target.value)}
-                  placeholder={goToKind === "commit" ? "e.g. a1b2c3d or HEAD~3" : "e.g. v1.2.3"}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      setGoToOpen(false);
-                      return;
-                    }
-                    if (e.key === "Enter") {
-                      void (async () => {
-                        if (!activeRepoPath) return;
-                        const ref = goToText.trim();
-                        if (!ref) {
-                          setGoToError("Enter a value.");
-                          return;
-                        }
-                        setGoToError("");
-                        const ok = await goToReference(ref, goToTargetView);
-                        if (ok) setGoToOpen(false);
-                      })();
-                    }
-                  }}
-                  autoFocus
-                />
-              </div>
-
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 900, opacity: 0.75 }}>Target view</div>
-                <select value={goToTargetView} onChange={(e) => setGoToTargetView(e.target.value as "graph" | "commits")}>
-                  <option value="graph">Graph</option>
-                  <option value="commits">Commits</option>
-                </select>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    if (!activeRepoPath) return;
-                    const ref = goToText.trim();
-                    if (!ref) {
-                      setGoToError("Enter a value.");
-                      return;
-                    }
-                    setGoToError("");
-                    const ok = await goToReference(ref, goToTargetView);
-                    if (ok) setGoToOpen(false);
-                  })();
-                }}
-                disabled={!activeRepoPath}
-              >
-                Go
-              </button>
-            </div>
-          </div>
-        </div>
+        <GoToModal
+          kind={goToKind}
+          text={goToText}
+          setText={setGoToText}
+          targetView={goToTargetView}
+          setTargetView={setGoToTargetView}
+          error={goToError}
+          setError={setGoToError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setGoToOpen(false)}
+          onGo={goToReference}
+        />
       ) : null}
 
       {diffToolModalOpen ? (
@@ -5267,142 +5224,19 @@ function App() {
       ) : null}
 
       {cleanOldBranchesOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(84vh, 900px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Clean old branches</div>
-              <button type="button" onClick={() => setCleanOldBranchesOpen(false)} disabled={cleanOldBranchesDeleting}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody" style={{ display: "grid", gap: 12, minHeight: 0 }}>
-              {cleanOldBranchesError ? <div className="error">{cleanOldBranchesError}</div> : null}
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 10, alignItems: "center" }}>
-                  <div style={{ fontWeight: 900, opacity: 0.75 }}>Stale if last commit older than</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <input
-                      className="modalInput"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={String(cleanOldBranchesDays)}
-                      disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting}
-                      onChange={(e) => {
-                        const n = parseInt(e.target.value, 10);
-                        setCleanOldBranchesDays(Number.isFinite(n) ? Math.max(0, n) : 0);
-                      }}
-                      style={{ width: 140 }}
-                    />
-                    <div style={{ fontWeight: 800, opacity: 0.75 }}>days</div>
-                    {cleanOldBranchesLoading ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
-                        <span className="miniSpinner" />
-                        <span>Scanning…</span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div style={{ opacity: 0.8, fontWeight: 800 }}>
-                  This tool only deletes local branches. It does NOT delete anything on remotes.
-                </div>
-              </div>
-
-              <div style={{ border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", background: "var(--panel)", minHeight: 0 }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "42px 1fr 200px 90px",
-                    gap: 10,
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    borderBottom: "1px solid rgba(15, 15, 15, 0.08)",
-                    background: "var(--panel)",
-                    fontWeight: 900,
-                    opacity: 0.8,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={cleanOldBranchesCandidates.length > 0 && cleanOldBranchesSelectedCount === cleanOldBranchesCandidates.length}
-                    ref={(el) => {
-                      if (!el) return;
-                      el.indeterminate =
-                        cleanOldBranchesSelectedCount > 0 && cleanOldBranchesSelectedCount < cleanOldBranchesCandidates.length;
-                    }}
-                    onChange={(e) => {
-                      const v = e.target.checked;
-                      setCleanOldBranchesSelected(() => {
-                        const next: Record<string, boolean> = {};
-                        for (const r of cleanOldBranchesCandidates) next[r.name] = v;
-                        return next;
-                      });
-                    }}
-                    disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting || cleanOldBranchesCandidates.length === 0}
-                    title="Select all"
-                  />
-                  <div>Branch</div>
-                  <div>Last commit</div>
-                  <div style={{ textAlign: "right" }}>Age</div>
-                </div>
-
-                <div style={{ overflow: "auto", maxHeight: "min(52vh, 520px)" }}>
-                  {cleanOldBranchesCandidates.length === 0 ? (
-                    <div style={{ padding: 12, opacity: 0.75 }}>
-                      {cleanOldBranchesLoading ? "Scanning…" : "No branches match the current criteria."}
-                    </div>
-                  ) : (
-                    cleanOldBranchesCandidates.map((r) => (
-                      <div
-                        key={r.name}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "42px 1fr 200px 90px",
-                          gap: 10,
-                          alignItems: "center",
-                          padding: "10px 12px",
-                          borderBottom: "1px solid rgba(15, 15, 15, 0.06)",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!cleanOldBranchesSelected[r.name]}
-                          onChange={(e) => setCleanOldBranchesSelected((prev) => ({ ...prev, [r.name]: e.target.checked }))}
-                          disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting}
-                        />
-                        <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
-                          {r.name}
-                        </div>
-                        <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, opacity: 0.85 }}>
-                          {r.committer_date}
-                        </div>
-                        <div style={{ textAlign: "right", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, opacity: 0.85 }}>
-                          {typeof r.daysOld === "number" ? `${r.daysOld}d` : ""}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => setCleanOldBranchesOpen(false)} disabled={cleanOldBranchesDeleting}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void runDeleteCleanOldBranches()}
-                disabled={cleanOldBranchesLoading || cleanOldBranchesDeleting || cleanOldBranchesSelectedCount === 0}
-                title={cleanOldBranchesSelectedCount === 0 ? "No branches selected" : undefined}
-              >
-                {cleanOldBranchesDeleting ? "Deleting…" : `Delete (${cleanOldBranchesSelectedCount})`}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CleanOldBranchesModal
+          days={cleanOldBranchesDays}
+          setDays={setCleanOldBranchesDays}
+          loading={cleanOldBranchesLoading}
+          deleting={cleanOldBranchesDeleting}
+          error={cleanOldBranchesError}
+          candidates={cleanOldBranchesCandidates}
+          selected={cleanOldBranchesSelected}
+          setSelected={setCleanOldBranchesSelected}
+          selectedCount={cleanOldBranchesSelectedCount}
+          onClose={() => setCleanOldBranchesOpen(false)}
+          onDelete={() => void runDeleteCleanOldBranches()}
+        />
       ) : null}
 
       <RefBadgeContextMenu
@@ -5416,257 +5250,54 @@ function App() {
       />
 
       {renameBranchOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(640px, 96vw)", maxHeight: "min(60vh, 520px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Rename branch</div>
-              <button type="button" onClick={() => setRenameBranchOpen(false)} disabled={renameBranchBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {renameBranchError ? <div className="error">{renameBranchError}</div> : null}
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Old name</div>
-                  <input value={renameBranchOld} className="modalInput" disabled />
-                </div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>New name</div>
-                  <input
-                    value={renameBranchNew}
-                    onChange={(e) => setRenameBranchNew(e.target.value)}
-                    className="modalInput"
-                    disabled={renameBranchBusy}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => setRenameBranchOpen(false)} disabled={renameBranchBusy}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void runRenameBranch()}
-                disabled={renameBranchBusy || !activeRepoPath || !renameBranchNew.trim() || renameBranchNew.trim() === renameBranchOld.trim()}
-              >
-                {renameBranchBusy ? "Renaming…" : "Rename"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <RenameBranchModal
+          oldName={renameBranchOld}
+          newName={renameBranchNew}
+          setNewName={setRenameBranchNew}
+          busy={renameBranchBusy}
+          error={renameBranchError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setRenameBranchOpen(false)}
+          onRename={() => void runRenameBranch()}
+        />
       ) : null}
 
       {filePreviewOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 320 }}>
-          <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(80vh, 900px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>File preview</div>
-              <button type="button" onClick={() => setFilePreviewOpen(false)} disabled={filePreviewLoading}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              <div className="mono" style={{ opacity: 0.85, wordBreak: "break-all", marginBottom: 10 }}>
-                {filePreviewPath}
-              </div>
-
-              {filePreviewError ? <div className="error">{filePreviewError}</div> : null}
-              {filePreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
-
-              {!filePreviewLoading && !filePreviewError ? (
-                diffTool.difftool !== "Graphoria builtin diff" ? (
-                  <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
-                ) : filePreviewImageBase64 ? (
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      maxHeight: "min(62vh, 720px)",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <img
-                      src={`data:${imageMimeFromExt(fileExtLower(filePreviewPath))};base64,${filePreviewImageBase64}`}
-                      style={{ width: "100%", height: "100%", maxHeight: "min(62vh, 720px)", objectFit: "contain", display: "block" }}
-                    />
-                  </div>
-                ) : filePreviewDiff ? (
-                  <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                    {parseUnifiedDiff(filePreviewDiff).map((l, i) => (
-                      <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                        {l.text}
-                      </div>
-                    ))}
-                  </pre>
-                ) : filePreviewContent ? (
-                  filePreviewMode === "pullPredict" ? (
-                    <div style={{ display: "grid", gap: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontWeight: 900, opacity: 0.75 }}>Legend:</span>
-                        <span className="conflictLegend conflictLegend-ours">ours</span>
-                        <span className="conflictLegend conflictLegend-base">base</span>
-                        <span className="conflictLegend conflictLegend-theirs">theirs</span>
-                      </div>
-                      <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                        {parsePullPredictConflictPreview(filePreviewContent).map((l, i) => (
-                          <div key={i} className={`conflictLine conflictLine-${l.kind}`}>
-                            {l.text}
-                          </div>
-                        ))}
-                      </pre>
-                    </div>
-                  ) : (
-                    <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                      {filePreviewContent.replace(/\r\n/g, "\n")}
-                    </pre>
-                  )
-                ) : (
-                  <div style={{ opacity: 0.75 }}>No preview.</div>
-                )
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <FilePreviewModal
+          path={filePreviewPath}
+          mode={filePreviewMode}
+          diffToolName={diffTool.difftool}
+          diff={filePreviewDiff}
+          content={filePreviewContent}
+          imageBase64={filePreviewImageBase64}
+          loading={filePreviewLoading}
+          error={filePreviewError}
+          onClose={() => setFilePreviewOpen(false)}
+          parsePullPredictConflictPreview={parsePullPredictConflictPreview}
+        />
       ) : null}
 
       {switchBranchOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 620px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Checkout (Switch) branch</div>
-              <button type="button" onClick={() => setSwitchBranchOpen(false)} disabled={switchBranchBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {switchBranchError ? <div className="error">{switchBranchError}</div> : null}
-              {switchBranchesError ? <div className="error">{switchBranchesError}</div> : null}
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 800 }}>
-                      <input
-                        type="radio"
-                        name="switchMode"
-                        checked={switchBranchMode === "local"}
-                        onChange={() => {
-                          setSwitchBranchMode("local");
-                          setSwitchBranchError("");
-                        }}
-                        disabled={switchBranchBusy}
-                      />
-                      Local branch
-                    </label>
-                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 800 }}>
-                      <input
-                        type="radio"
-                        name="switchMode"
-                        checked={switchBranchMode === "remote"}
-                        onChange={() => {
-                          setSwitchBranchMode("remote");
-                          setSwitchBranchError("");
-                        }}
-                        disabled={switchBranchBusy}
-                      />
-                      Remote branch
-                    </label>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void fetchSwitchBranches()}
-                    disabled={switchBranchBusy || switchBranchesLoading || !activeRepoPath}
-                    title="Fetch and refresh remote branches"
-                  >
-                    {switchBranchesLoading ? "Fetching…" : "Fetch"}
-                  </button>
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>
-                    {switchBranchMode === "local" ? "Branch" : "Remote branch"}
-                  </div>
-                  <input
-                    value={switchBranchName}
-                    onChange={(e) => setSwitchBranchName(e.target.value)}
-                    className="modalInput"
-                    disabled={switchBranchBusy}
-                    list={switchBranchMode === "local" ? "switchLocalBranches" : "switchRemoteBranches"}
-                    placeholder={switchBranchMode === "local" ? "main" : "origin/main"}
-                  />
-                  <datalist id="switchLocalBranches">
-                    {switchBranches
-                      .filter((b) => b.kind === "local")
-                      .slice()
-                      .sort((a, b) => (b.committer_date || "").localeCompare(a.committer_date || ""))
-                      .map((b) => (
-                        <option key={`l-${b.name}`} value={b.name} />
-                      ))}
-                  </datalist>
-                  <datalist id="switchRemoteBranches">
-                    {switchBranches
-                      .filter((b) => b.kind === "remote")
-                      .slice()
-                      .sort((a, b) => (b.committer_date || "").localeCompare(a.committer_date || ""))
-                      .map((b) => (
-                        <option key={`r-${b.name}`} value={b.name} />
-                      ))}
-                  </datalist>
-                </div>
-
-                {switchBranchMode === "remote" ? (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Local branch</div>
-                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <input
-                        type="radio"
-                        name="remoteLocalMode"
-                        checked={switchRemoteLocalMode === "same"}
-                        onChange={() => setSwitchRemoteLocalMode("same")}
-                        disabled={switchBranchBusy}
-                      />
-                      <div>
-                        <div style={{ fontWeight: 800 }}>Reset/Create local branch with the same name</div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>
-                          Uses <span className="mono">git switch --track -C</span>.
-                        </div>
-                      </div>
-                    </label>
-                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <input
-                        type="radio"
-                        name="remoteLocalMode"
-                        checked={switchRemoteLocalMode === "custom"}
-                        onChange={() => setSwitchRemoteLocalMode("custom")}
-                        disabled={switchBranchBusy}
-                      />
-                      <div style={{ display: "grid", gap: 6, flex: 1 }}>
-                        <div style={{ fontWeight: 800 }}>Create local branch with name</div>
-                        <input
-                          value={switchRemoteLocalName}
-                          onChange={(e) => setSwitchRemoteLocalName(e.target.value)}
-                          className="modalInput"
-                          disabled={switchBranchBusy || switchRemoteLocalMode !== "custom"}
-                          placeholder="feature/my-local"
-                        />
-                      </div>
-                    </label>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => setSwitchBranchOpen(false)} disabled={switchBranchBusy}>
-                Cancel
-              </button>
-              <button type="button" onClick={() => void runSwitchBranch()} disabled={switchBranchBusy || !activeRepoPath || !switchBranchName.trim()}>
-                {switchBranchBusy ? "Switching…" : "Switch"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <SwitchBranchModal
+          mode={switchBranchMode}
+          setMode={setSwitchBranchMode}
+          branchName={switchBranchName}
+          setBranchName={setSwitchBranchName}
+          remoteLocalMode={switchRemoteLocalMode}
+          setRemoteLocalMode={setSwitchRemoteLocalMode}
+          remoteLocalName={switchRemoteLocalName}
+          setRemoteLocalName={setSwitchRemoteLocalName}
+          busy={switchBranchBusy}
+          error={switchBranchError}
+          setError={setSwitchBranchError}
+          branchesLoading={switchBranchesLoading}
+          branchesError={switchBranchesError}
+          branches={switchBranches}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setSwitchBranchOpen(false)}
+          onFetch={() => void fetchSwitchBranches()}
+          onSwitch={() => void runSwitchBranch()}
+        />
       ) : null}
 
       <BranchContextMenu
@@ -5949,815 +5580,196 @@ function App() {
       ) : null}
 
       {createBranchOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Create branch</div>
-              <button type="button" onClick={() => setCreateBranchOpen(false)} disabled={createBranchBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {createBranchError ? <div className="error">{createBranchError}</div> : null}
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Branch name</div>
-                  <input
-                    value={createBranchName}
-                    onChange={(e) => setCreateBranchName(e.target.value)}
-                    className="modalInput"
-                    placeholder="feature/my-branch"
-                    disabled={createBranchBusy}
-                  />
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Create at commit</div>
-                  <input
-                    value={createBranchAt}
-                    onChange={(e) => setCreateBranchAt(e.target.value)}
-                    className="modalInput mono"
-                    placeholder="HEAD or a commit hash"
-                    disabled={createBranchBusy}
-                  />
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Commit</div>
-                  {createBranchCommitLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
-                  {createBranchCommitError ? <div className="error">{createBranchCommitError}</div> : null}
-                  {!createBranchCommitLoading && !createBranchCommitError && createBranchCommitSummary ? (
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 12,
-                        padding: 10,
-                        display: "grid",
-                        gap: 4,
-                        background: "rgba(0, 0, 0, 0.02)",
-                      }}
-                    >
-                      <div style={{ fontWeight: 800 }}>{truncate(createBranchCommitSummary.subject, 120)}</div>
-                      <div style={{ opacity: 0.75, fontSize: 12 }}>
-                        {createBranchCommitSummary.author} — {createBranchCommitSummary.date}
-                      </div>
-                      <div className="mono" style={{ opacity: 0.85, fontSize: 12 }}>
-                        {createBranchCommitSummary.hash}
-                        {createBranchCommitSummary.refs ? ` — ${createBranchCommitSummary.refs}` : ""}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
-                    <input
-                      type="checkbox"
-                      checked={createBranchCheckout}
-                      onChange={(e) => setCreateBranchCheckout(e.target.checked)}
-                      disabled={createBranchBusy || createBranchOrphan}
-                    />
-                    Checkout after create
-                  </label>
-
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
-                      <input
-                        type="checkbox"
-                        checked={createBranchOrphan}
-                        onChange={(e) => {
-                          const next = e.target.checked;
-                          setCreateBranchOrphan(next);
-                          if (next) {
-                            setCreateBranchCheckout(true);
-                            setCreateBranchClearWorkingTree(true);
-                          } else {
-                            setCreateBranchClearWorkingTree(false);
-                          }
-                        }}
-                        disabled={createBranchBusy}
-                      />
-                      Orphan
-                    </label>
-                    <div style={{ opacity: 0.75, fontSize: 12 }}>
-                      Creates a new, disconnected history (separate tree) using <span className="mono">git switch --orphan</span>.
-                    </div>
-
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
-                      <input
-                        type="checkbox"
-                        checked={createBranchClearWorkingTree}
-                        onChange={(e) => setCreateBranchClearWorkingTree(e.target.checked)}
-                        disabled={createBranchBusy || !createBranchOrphan}
-                      />
-                      Clear working directory and index
-                    </label>
-                    <div style={{ opacity: 0.75, fontSize: 12 }}>
-                      Removes tracked files and cleans untracked files after creating the orphan branch.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => setCreateBranchOpen(false)} disabled={createBranchBusy}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void runCreateBranch()}
-                disabled={createBranchBusy || !activeRepoPath || !createBranchName.trim() || !createBranchAt.trim()}
-              >
-                {createBranchBusy ? "Creating…" : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CreateBranchModal
+          name={createBranchName}
+          setName={setCreateBranchName}
+          at={createBranchAt}
+          setAt={setCreateBranchAt}
+          checkout={createBranchCheckout}
+          setCheckout={setCreateBranchCheckout}
+          orphan={createBranchOrphan}
+          setOrphan={setCreateBranchOrphan}
+          clearWorkingTree={createBranchClearWorkingTree}
+          setClearWorkingTree={setCreateBranchClearWorkingTree}
+          busy={createBranchBusy}
+          error={createBranchError}
+          commitLoading={createBranchCommitLoading}
+          commitError={createBranchCommitError}
+          commitSummary={createBranchCommitSummary}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setCreateBranchOpen(false)}
+          onCreate={() => void runCreateBranch()}
+        />
       ) : null}
 
       {cherryStepsOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(900px, 96vw)", maxHeight: "min(72vh, 680px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Cherry-pick steps</div>
-              <button type="button" onClick={() => setCherryStepsOpen(false)} disabled={detachedBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ opacity: 0.85 }}>
-                  Apply your detached commit to <span className="mono">{detachedTargetBranch || "<target-branch>"}</span>.
-                </div>
-
-                {detachedError ? <div className="error">{detachedError}</div> : null}
-
-                <div>
-                  <div style={{ fontWeight: 900, opacity: 0.8, marginBottom: 6 }}>Commit to cherry-pick</div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <div className="mono" style={{ opacity: 0.9 }}>
-                      {cherryCommitHash || "(missing)"}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={!cherryCommitHash}
-                      onClick={() => void copyText(cherryCommitHash)}
-                    >
-                      Copy hash
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontWeight: 900, opacity: 0.8, marginBottom: 6 }}>Reflog (for reference)</div>
-                  <textarea className="modalTextarea" value={cherryReflog} readOnly rows={10} />
-                </div>
-
-                <div className="mono" style={{ opacity: 0.9 }}>
-                  git reset --hard
-                  <br />
-                  git checkout {detachedTargetBranch || "<target-branch>"}
-                  <br />
-                  git cherry-pick {cherryCommitHash || "<hash>"}
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => void detachedApplyCherryPick()}
-                disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || !cherryCommitHash}
-              >
-                Apply
-              </button>
-              <button type="button" onClick={() => setCherryStepsOpen(false)} disabled={detachedBusy}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <CherryStepsModal
+          targetBranch={detachedTargetBranch}
+          error={detachedError}
+          commitHash={cherryCommitHash}
+          reflog={cherryReflog}
+          busy={detachedBusy}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setCherryStepsOpen(false)}
+          onCopyHash={() => void copyText(cherryCommitHash)}
+          onApply={() => void detachedApplyCherryPick()}
+        />
       ) : null}
 
       {previewZoomSrc ? (
-        <div
-          className="modalOverlay"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setPreviewZoomSrc(null)}
-          style={{ zIndex: 500 }}
-        >
-          <div
-            style={{
-              width: "min(1100px, 96vw)",
-              maxHeight: "min(86vh, 860px)",
-              borderRadius: 14,
-              border: "1px solid rgba(15, 15, 15, 0.18)",
-              background: "var(--panel)",
-              boxShadow: "0 24px 90px rgba(0, 0, 0, 0.40)",
-              padding: 10,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 6 }}>
-              <div style={{ fontWeight: 900, opacity: 0.8 }}>Preview</div>
-              <button type="button" onClick={() => setPreviewZoomSrc(null)}>
-                Close
-              </button>
-            </div>
-            <div style={{ overflow: "auto", maxHeight: "calc(min(86vh, 860px) - 58px)" }}>
-              <img
-                src={previewZoomSrc}
-                alt="Preview zoom"
-                onClick={() => setPreviewZoomSrc(null)}
-                style={{ width: "100%", height: "auto", display: "block", borderRadius: 12, border: "1px solid rgba(15, 15, 15, 0.10)" }}
-              />
-            </div>
-          </div>
-        </div>
+        <PreviewZoomModal src={previewZoomSrc} onClose={() => setPreviewZoomSrc(null)} />
       ) : null}
 
       {pullPredictOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Pull predict</div>
-              <button type="button" onClick={() => setPullPredictOpen(false)} disabled={pullPredictBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {pullPredictError ? <div className="error">{pullPredictError}</div> : null}
-              {pullPredictBusy ? <div style={{ opacity: 0.7 }}>Predicting…</div> : null}
-
-              {pullPredictResult ? (
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Upstream</div>
-                    <div className="mono" style={{ opacity: 0.9 }}>
-                      {pullPredictResult.upstream ?? "(none)"}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <div>
-                      <span style={{ fontWeight: 800 }}>Ahead:</span> {pullPredictResult.ahead}
-                    </div>
-                    <div>
-                      <span style={{ fontWeight: 800 }}>Behind:</span> {pullPredictResult.behind}
-                    </div>
-                    <div>
-                      <span style={{ fontWeight: 800 }}>Action:</span> {pullPredictResult.action}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Potential conflicts</div>
-                    {pullPredictResult.conflict_files?.length ? (
-                      <div className="statusList">
-                        {pullPredictResult.conflict_files.map((p) => (
-                          <div key={p} className="statusRow statusRowSingleCol" onClick={() => openPullPredictConflictPreview(p)} title={p}>
-                            <span className="statusPath">{p}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ opacity: 0.75 }}>No conflicts predicted.</div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => {
-                  if (pullPredictRebase) {
-                    void startPull("rebase");
-                  } else {
-                    void startPull("merge");
-                  }
-                  setPullPredictOpen(false);
-                }}
-                disabled={pullPredictBusy || !pullPredictResult || !activeRepoPath || !remoteUrl || loading || pullBusy}
-              >
-                Apply
-              </button>
-              <button type="button" onClick={() => setPullPredictOpen(false)} disabled={pullPredictBusy}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <PullPredictModal
+          busy={pullPredictBusy}
+          error={pullPredictError}
+          result={pullPredictResult}
+          activeRepoPath={activeRepoPath}
+          remoteUrl={remoteUrl}
+          loading={loading}
+          pullBusy={pullBusy}
+          onClose={() => setPullPredictOpen(false)}
+          onApply={() => {
+            if (pullPredictRebase) {
+              void startPull("rebase");
+            } else {
+              void startPull("merge");
+            }
+            setPullPredictOpen(false);
+          }}
+          onOpenConflictPreview={(p) => openPullPredictConflictPreview(p)}
+        />
       ) : null}
 
       {pullConflictOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Conflicts detected</div>
-              <button type="button" onClick={() => setPullConflictOpen(false)} disabled={pullBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              <div style={{ opacity: 0.8, marginBottom: 10 }}>
-                Operation: <span className="mono">{pullConflictOperation}</span>
-              </div>
-              {pullConflictMessage ? (
-                <pre style={{ whiteSpace: "pre-wrap", opacity: 0.8, marginTop: 0 }}>{pullConflictMessage}</pre>
-              ) : null}
-              <div>
-                <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Conflict files</div>
-                {pullConflictFiles.length ? (
-                  <div className="statusList">
-                    {pullConflictFiles.map((p) => (
-                      <div key={p} className="statusRow statusRowSingleCol" onClick={() => openFilePreview(p)} title={p}>
-                        <span className="statusPath">{p}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ opacity: 0.75 }}>Could not parse conflict file list.</div>
-                )}
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-              <button type="button" disabled title="Not implemented yet">
-                Fix conflicts…
-              </button>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" onClick={() => void continueAfterConflicts()} disabled={pullBusy}>
-                  Continue
-                </button>
-                <button type="button" onClick={() => void abortAfterConflicts()} disabled={pullBusy}>
-                  Abort
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PullConflictModal
+          operation={pullConflictOperation}
+          message={pullConflictMessage}
+          files={pullConflictFiles}
+          busy={pullBusy}
+          onClose={() => setPullConflictOpen(false)}
+          onContinue={() => void continueAfterConflicts()}
+          onAbort={() => void abortAfterConflicts()}
+          onOpenFilePreview={(p) => openFilePreview(p)}
+        />
       ) : null}
 
       {stashModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Stash</div>
-              <button type="button" onClick={() => setStashModalOpen(false)} disabled={stashBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {stashError ? <div className="error">{stashError}</div> : null}
+        <StashModal
+          activeRepoPath={activeRepoPath}
+          diffToolName={diffTool.difftool}
+          busy={stashBusy}
+          error={stashError}
+          message={stashMessage}
+          setMessage={setStashMessage}
+          advancedMode={stashAdvancedMode}
+          onToggleAdvanced={async (next) => {
+            if (next && diffTool.difftool !== "Graphoria builtin diff") {
+              setStashError("Advanced mode requires Graphoria builtin diff.");
+              return;
+            }
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
-                  gap: 12,
-                  alignItems: "stretch",
-                  minHeight: 0,
-                  height: "100%",
-                }}
-              >
-                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
-                    <textarea
-                      value={stashMessage}
-                      onChange={(e) => setStashMessage(e.target.value)}
-                      rows={3}
-                      className="modalTextarea"
-                      placeholder="Stash message (optional)"
-                      disabled={stashBusy}
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                        <input
-                          type="checkbox"
-                          checked={stashAdvancedMode}
-                          onChange={async (e) => {
-                            const next = e.target.checked;
-                            if (next && diffTool.difftool !== "Graphoria builtin diff") {
-                              setStashError("Advanced mode requires Graphoria builtin diff.");
-                              return;
-                            }
-
-                            if (next && activeRepoPath) {
-                              try {
-                                const has = await invoke<boolean>("git_has_staged_changes", { repoPath: activeRepoPath });
-                                if (has) {
-                                  setStashError("Index has staged changes. Unstage/commit them before using advanced mode.");
-                                  return;
-                                }
-                              } catch (err) {
-                                setStashError(typeof err === "string" ? err : JSON.stringify(err));
-                                return;
-                              }
-                            }
-
-                            setStashError("");
-                            setStashAdvancedMode(next);
-                          }}
-                          disabled={stashBusy}
-                        />
-                        Advanced
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next: Record<string, boolean> = {};
-                          for (const e of stashStatusEntries) next[e.path] = true;
-                          setStashSelectedPaths(next);
-                        }}
-                        disabled={stashBusy || stashStatusEntries.length === 0}
-                      >
-                        Select all
-                      </button>
-                    </div>
-                  </div>
-
-                  {stashStatusEntries.length === 0 ? (
-                    <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to stash.</div>
-                  ) : (
-                    <div className="statusList">
-                      {stashStatusEntries.map((e) => (
-                        <div
-                          key={e.path}
-                          className="statusRow"
-                          onClick={() => {
-                            setStashPreviewPath(e.path);
-                            setStashPreviewStatus(e.status);
-                          }}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-                            setStashPreviewPath(e.path);
-                            setStashPreviewStatus(e.status);
-                            openWorkingFileContextMenu("stash", e.path, e.status, ev.clientX, ev.clientY);
-                          }}
-                          style={
-                            e.path === stashPreviewPath
-                              ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
-                              : undefined
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!stashSelectedPaths[e.path]}
-                            onClick={(ev) => ev.stopPropagation()}
-                            onChange={(ev) => setStashSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
-                            disabled={stashBusy}
-                          />
-                          <span className="statusCode" title={e.status}>
-                            {statusBadge(e.status)}
-                          </span>
-                          <span className="statusPath">{e.path}</span>
-                          <span className="statusActions">
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Reset file / Discard changes"
-                              disabled={!activeRepoPath || stashBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                void discardWorkingFile("stash", e.path, e.status);
-                              }}
-                            >
-                              R
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Delete file"
-                              disabled={!activeRepoPath || stashBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                void deleteWorkingFile("stash", e.path);
-                              }}
-                            >
-                              D
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Copy path (absolute)"
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                if (!activeRepoPath) return;
-                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                                void copyText(abs);
-                              }}
-                            >
-                              C
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Reveal in File Explorer"
-                              disabled={!activeRepoPath || stashBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                if (!activeRepoPath) return;
-                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                                void invoke<void>("reveal_in_file_explorer", { path: abs });
-                              }}
-                            >
-                              E
-                            </button>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
-                  {stashAdvancedMode ? (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <div style={{ opacity: 0.75, fontSize: 12 }}>
-                        Select hunks for the currently selected file, then stash selected hunks.
-                      </div>
-                      {stashHunkRanges.length > 0 ? (
-                        <div className="statusList" style={{ maxHeight: 160, overflow: "auto" }}>
-                          {stashHunkRanges.map((r) => {
-                            const sel = new Set(stashHunksByPath[stashPreviewPath] ?? []);
-                            const checked = sel.has(r.index);
-                            return (
-                              <label key={r.index} className="statusRow hunkRow" style={{ cursor: "pointer" }}>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(ev) => {
-                                    const next = ev.target.checked;
-                                    setStashHunksByPath((prev) => {
-                                      const cur = new Set(prev[stashPreviewPath] ?? []);
-                                      if (next) cur.add(r.index);
-                                      else cur.delete(r.index);
-                                      return { ...prev, [stashPreviewPath]: Array.from(cur.values()).sort((a, b) => a - b) };
-                                    });
-                                  }}
-                                  disabled={stashBusy || !stashPreviewPath}
-                                />
-                                <span className="hunkHeader">{r.header}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>No hunks detected for this file.</div>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ opacity: 0.75, fontSize: 12 }}>Green: added, red: removed. Yellow/blue: detected moved lines.</div>
-                  )}
-
-                  {stashPreviewError ? <div className="error">{stashPreviewError}</div> : null}
-                  {stashPreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
-
-                  {!stashPreviewLoading && !stashPreviewError ? (
-                    diffTool.difftool !== "Graphoria builtin diff" ? (
-                      <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
-                    ) : stashPreviewImageBase64 ? (
-                      <div
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 12,
-                          overflow: "hidden",
-                          flex: 1,
-                          minHeight: 0,
-                          minWidth: 0,
-                          display: "grid",
-                        }}
-                      >
-                        <img
-                          src={`data:${imageMimeFromExt(fileExtLower(stashPreviewPath))};base64,${stashPreviewImageBase64}`}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "contain",
-                            display: "block",
-                          }}
-                        />
-                      </div>
-                    ) : stashPreviewDiff ? (
-                      <pre
-                        className="diffCode"
-                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
-                      >
-                        {parseUnifiedDiff(stashPreviewDiff).map((l, i) => (
-                          <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                            {l.text}
-                          </div>
-                        ))}
-                      </pre>
-                    ) : stashPreviewContent ? (
-                      <pre
-                        className="diffCode"
-                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
-                      >
-                        {stashPreviewContent.replace(/\r\n/g, "\n")}
-                      </pre>
-                    ) : (
-                      <div style={{ opacity: 0.75 }}>Select a file.</div>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => void runStash()}
-                disabled={
-                  stashBusy ||
-                  (stashAdvancedMode
-                    ? !stashPreviewPath || (stashHunksByPath[stashPreviewPath]?.length ?? 0) === 0
-                    : stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).length === 0)
+            if (next && activeRepoPath) {
+              try {
+                const has = await invoke<boolean>("git_has_staged_changes", { repoPath: activeRepoPath });
+                if (has) {
+                  setStashError("Index has staged changes. Unstage/commit them before using advanced mode.");
+                  return;
                 }
-              >
-                {stashBusy ? "Stashing…" : "Stash"}
-              </button>
-            </div>
-          </div>
-        </div>
+              } catch (err) {
+                setStashError(typeof err === "string" ? err : JSON.stringify(err));
+                return;
+              }
+            }
+
+            setStashError("");
+            setStashAdvancedMode(next);
+          }}
+          statusEntries={stashStatusEntries}
+          selectedPaths={stashSelectedPaths}
+          setSelectedPaths={setStashSelectedPaths}
+          previewPath={stashPreviewPath}
+          setPreviewPath={setStashPreviewPath}
+          setPreviewStatus={setStashPreviewStatus}
+          hunkRanges={stashHunkRanges}
+          hunksByPath={stashHunksByPath}
+          setHunksByPath={setStashHunksByPath}
+          previewLoading={stashPreviewLoading}
+          previewError={stashPreviewError}
+          previewImageBase64={stashPreviewImageBase64}
+          previewDiff={stashPreviewDiff}
+          previewContent={stashPreviewContent}
+          joinPath={joinPath}
+          onCopyText={(text) => {
+            void copyText(text);
+          }}
+          onRevealInExplorer={(absPath) => {
+            void invoke<void>("reveal_in_file_explorer", { path: absPath });
+          }}
+          onOpenWorkingFileContextMenu={(path, status, x, y) => {
+            openWorkingFileContextMenu("stash", path, status, x, y);
+          }}
+          onDiscard={(path, status) => {
+            void discardWorkingFile("stash", path, status);
+          }}
+          onDelete={(path) => {
+            void deleteWorkingFile("stash", path);
+          }}
+          onClose={() => setStashModalOpen(false)}
+          onStash={() => void runStash()}
+        />
       ) : null}
 
       {stashViewOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(84vh, 900px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Stash</div>
-              <button type="button" onClick={() => setStashViewOpen(false)} disabled={stashViewLoading}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {stashViewError ? <div className="error">{stashViewError}</div> : null}
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ opacity: 0.8, fontSize: 12 }}>
-                  <span className="mono">{stashViewRef}</span>
-                  {stashViewMessage ? <span style={{ marginLeft: 10 }}>{stashViewMessage}</span> : null}
-                </div>
-                {stashViewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
-                {!stashViewLoading ? (
-                  stashViewPatch ? (
-                    <pre className="diffCode" style={{ maxHeight: 520, border: "1px solid var(--border)", borderRadius: 12 }}>
-                      {parseUnifiedDiff(stashViewPatch).map((l, i) => (
-                        <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                          {l.text}
-                        </div>
-                      ))}
-                    </pre>
-                  ) : (
-                    <div style={{ opacity: 0.75 }}>No patch output.</div>
-                  )
-                ) : null}
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    const ok = await confirmDialog({
-                      title: "Delete stash",
-                      message: `Delete stash ${stashViewMessage?.trim() ? stashViewMessage.trim() : stashViewRef}?`,
-                      okLabel: "Delete",
-                      cancelLabel: "Cancel",
-                    });
-                    if (!ok) return;
-                    await dropStashFromView();
-                  })();
-                }}
-                disabled={stashViewLoading || !stashViewRef}
-              >
-                Delete
-              </button>
-              <button type="button" onClick={() => void applyStashFromView()} disabled={stashViewLoading || !stashViewRef}>
-                Apply
-              </button>
-            </div>
-          </div>
-        </div>
+        <StashViewModal
+          reference={stashViewRef}
+          message={stashViewMessage}
+          patch={stashViewPatch}
+          loading={stashViewLoading}
+          error={stashViewError}
+          onClose={() => setStashViewOpen(false)}
+          onDelete={() => {
+            void (async () => {
+              const ok = await confirmDialog({
+                title: "Delete stash",
+                message: `Delete stash ${stashViewMessage?.trim() ? stashViewMessage.trim() : stashViewRef}?`,
+                okLabel: "Delete",
+                cancelLabel: "Cancel",
+              });
+              if (!ok) return;
+              await dropStashFromView();
+            })();
+          }}
+          onApply={() => void applyStashFromView()}
+          deleteDisabled={stashViewLoading || !stashViewRef}
+          applyDisabled={stashViewLoading || !stashViewRef}
+        />
       ) : null}
 
       {confirmOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(540px, 96vw)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>{confirmTitle}</div>
-            </div>
-            <div className="modalBody">
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", opacity: 0.85 }}>{confirmMessage}</pre>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => resolveConfirm(false)}>
-                {confirmCancelLabel}
-              </button>
-              <button type="button" onClick={() => resolveConfirm(true)}>
-                {confirmOkLabel}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          title={confirmTitle}
+          message={confirmMessage}
+          okLabel={confirmOkLabel}
+          cancelLabel={confirmCancelLabel}
+          onCancel={() => resolveConfirm(false)}
+          onOk={() => resolveConfirm(true)}
+        />
       ) : null}
 
       {resetModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 620px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>git reset</div>
-              <button type="button" onClick={() => setResetModalOpen(false)} disabled={resetBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {resetError ? <div className="error">{resetError}</div> : null}
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Target</div>
-                  <input
-                    value={resetTarget}
-                    onChange={(e) => setResetTarget(e.target.value)}
-                    className="modalInput"
-                    placeholder="HEAD~1 or a commit hash"
-                    disabled={resetBusy}
-                  />
-                  <div style={{ opacity: 0.7, fontSize: 12 }}>
-                    Examples: <span className="mono">HEAD~1</span>, <span className="mono">HEAD~5</span>, <span className="mono">a1b2c3d4</span>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Mode</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <input
-                        type="radio"
-                        name="resetMode"
-                        checked={resetMode === "soft"}
-                        onChange={() => setResetMode("soft")}
-                        disabled={resetBusy}
-                      />
-                      <div>
-                        <div style={{ fontWeight: 800 }}>soft</div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>Undo commits; keep changes staged (selected in Commit).</div>
-                      </div>
-                    </label>
-                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <input
-                        type="radio"
-                        name="resetMode"
-                        checked={resetMode === "mixed"}
-                        onChange={() => setResetMode("mixed")}
-                        disabled={resetBusy}
-                      />
-                      <div>
-                        <div style={{ fontWeight: 800 }}>mixed</div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>Undo commits; keep changes unstaged (not selected in Commit).</div>
-                      </div>
-                    </label>
-                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <input
-                        type="radio"
-                        name="resetMode"
-                        checked={resetMode === "hard"}
-                        onChange={() => setResetMode("hard")}
-                        disabled={resetBusy}
-                      />
-                      <div>
-                        <div style={{ fontWeight: 800 }}>hard</div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>
-                          Discard commits after target and any uncommitted changes. Recovery is hard (reflog).
-                        </div>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <button type="button" onClick={() => setResetModalOpen(false)} disabled={resetBusy}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void runGitReset(resetMode, resetTarget)}
-                disabled={resetBusy || !activeRepoPath || !resetTarget.trim()}
-              >
-                {resetBusy ? "Resetting…" : "Reset"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ResetModal
+          resetTarget={resetTarget}
+          setResetTarget={setResetTarget}
+          resetMode={resetMode}
+          setResetMode={setResetMode}
+          resetBusy={resetBusy}
+          resetError={resetError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setResetModalOpen(false)}
+          onReset={(mode, target) => void runGitReset(mode, target)}
+        />
       ) : null}
 
       {commitModalOpen ? (
@@ -6993,150 +6005,42 @@ function App() {
       ) : null}
 
       {showChangesOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 300 }}>
-          <div className="modal" style={{ width: "min(1200px, 96vw)", maxHeight: "min(80vh, 900px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Changes</div>
-              <button type="button" onClick={() => setShowChangesOpen(false)}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody" style={{ padding: 12 }}>
-              {!activeRepoPath ? (
-                <div style={{ opacity: 0.7 }}>No repository selected.</div>
-              ) : !showChangesCommit ? (
-                <div style={{ opacity: 0.7 }}>No commit selected.</div>
-              ) : (
-                <DiffView repoPath={activeRepoPath} source={{ kind: "commit", commit: showChangesCommit }} tool={diffTool} height={"min(68vh, 720px)"} />
-              )}
-            </div>
-            <div className="modalFooter">
-              <button type="button" onClick={() => setShowChangesOpen(false)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <ChangesModal
+          activeRepoPath={activeRepoPath}
+          commit={showChangesCommit}
+          tool={diffTool}
+          onClose={() => setShowChangesOpen(false)}
+        />
       ) : null}
 
       {remoteModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(60vh, 540px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Remote</div>
-              <button type="button" onClick={() => setRemoteModalOpen(false)} disabled={remoteBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {remoteError ? <div className="error">{remoteError}</div> : null}
-
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 800, opacity: 0.8 }}>Origin URL</div>
-                <input
-                  value={remoteUrlDraft}
-                  onChange={(e) => setRemoteUrlDraft(e.target.value)}
-                  className="modalInput"
-                  placeholder="https://github.com/user/repo.git"
-                  disabled={remoteBusy}
-                />
-                {remoteUrl ? (
-                  <div style={{ opacity: 0.7, fontSize: 12, wordBreak: "break-all" }}>
-                    Current: {remoteUrl}
-                  </div>
-                ) : (
-                  <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin configured.</div>
-                )}
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button type="button" onClick={() => void saveRemote()} disabled={remoteBusy || !remoteUrlDraft.trim()}>
-                {remoteBusy ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <RemoteModal
+          urlDraft={remoteUrlDraft}
+          setUrlDraft={setRemoteUrlDraft}
+          currentUrl={remoteUrl}
+          busy={remoteBusy}
+          error={remoteError}
+          onClose={() => setRemoteModalOpen(false)}
+          onSave={() => void saveRemote()}
+        />
       ) : null}
 
       {pushModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(900px, 96vw)", maxHeight: "min(60vh, 560px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Push</div>
-              <button type="button" onClick={() => setPushModalOpen(false)} disabled={pushBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {pushError ? <div className="error">{pushError}</div> : null}
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Remote</div>
-                  <div style={{ opacity: 0.8, fontSize: 12, wordBreak: "break-all" }}>{remoteUrl || "(none)"}</div>
-                </div>
-
-                <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Local branch</div>
-                    <input
-                      value={pushLocalBranch}
-                      onChange={(e) => setPushLocalBranch(e.target.value)}
-                      className="modalInput"
-                      placeholder="master"
-                      disabled={pushBusy}
-                    />
-                  </div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Remote branch</div>
-                    <input
-                      value={pushRemoteBranch}
-                      onChange={(e) => setPushRemoteBranch(e.target.value)}
-                      className="modalInput"
-                      placeholder="main"
-                      disabled={pushBusy}
-                    />
-                  </div>
-                  <div style={{ opacity: 0.7, fontSize: 12 }}>
-                    Example: local <span className="mono">master</span> to remote <span className="mono">main</span>.
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                    <input
-                      type="checkbox"
-                      checked={pushForce}
-                      onChange={(e) => setPushForce(e.target.checked)}
-                      disabled={pushBusy}
-                    />
-                    Force push
-                  </label>
-                  <label
-                    style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: pushForce ? 0.85 : 0.5 }}
-                    title="With lease is safer: it will refuse to force push if remote changed since last fetch."
-                  >
-                    <input
-                      type="checkbox"
-                      checked={pushWithLease}
-                      onChange={(e) => setPushWithLease(e.target.checked)}
-                      disabled={pushBusy || !pushForce}
-                    />
-                    With lease
-                  </label>
-                </div>
-                <div style={{ opacity: 0.7, fontSize: 12, marginTop: -6 }}>
-                  Force push rewrites history on remote. Use only if you really want to replace remote history.
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button type="button" onClick={() => void runPush()} disabled={pushBusy || !remoteUrl}>
-                {pushBusy ? "Pushing…" : "Push"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PushModal
+          remoteUrl={remoteUrl}
+          localBranch={pushLocalBranch}
+          setLocalBranch={setPushLocalBranch}
+          remoteBranch={pushRemoteBranch}
+          setRemoteBranch={setPushRemoteBranch}
+          force={pushForce}
+          setForce={setPushForce}
+          withLease={pushWithLease}
+          setWithLease={setPushWithLease}
+          busy={pushBusy}
+          error={pushError}
+          onClose={() => setPushModalOpen(false)}
+          onPush={() => void runPush()}
+        />
       ) : null}
 
       {cloneModalOpen ? (
