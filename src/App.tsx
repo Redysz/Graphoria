@@ -21,9 +21,6 @@ import {
 } from "./shortcuts";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { copyText } from "./utils/clipboard";
-import { computeHunkRanges, buildPatchFromUnselectedHunks } from "./utils/diffPatch";
-import { fileExtLower, isDocTextPreviewExt, isImageExt } from "./utils/filePreview";
-import { normalizeGitPath } from "./utils/gitPath";
 import { fnv1a32, md5Hex } from "./utils/hash";
 import { authorInitials, shortHash, truncate } from "./utils/text";
 import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
@@ -32,10 +29,15 @@ import {
   computeCompactLaneByHashForGraph,
   type CommitLaneRow,
 } from "./features/commits/lanes";
+import { useCommitController } from "./features/commits/useCommitController";
 import { useCyGraph } from "./features/graph/useCyGraph";
+import { useFilePreviewController } from "./features/filePreview/useFilePreviewController";
 import { useRepoIndicators } from "./features/repo/useRepoIndicators";
 import { useRepoLoader } from "./features/repo/useRepoLoader";
 import { useRepoOpenClose } from "./features/repo/useRepoOpenClose";
+import { useStashController } from "./features/stash/useStashController";
+import { useGitTrustActions, useGitTrustState } from "./features/gitTrust/useGitTrustController";
+import { useSystemHelpers } from "./features/system/useSystemHelpers";
 import {
   gitCreateBranchAdvanced,
   gitCreateBranch,
@@ -47,7 +49,6 @@ import {
   initRepo,
   gitCommitSummary,
   gitBranchesPointsAt,
-  changeRepoOwnershipToCurrentUser,
   gitDeleteBranch,
   gitDeleteWorkingPath,
   gitDiscardWorkingPath,
@@ -62,7 +63,6 @@ import {
   gitMergeContinue,
   gitPull,
   gitPullPredict,
-  gitPullPredictConflictPreview,
   gitPullRebase,
   gitRebaseAbort,
   gitRebaseContinue,
@@ -71,33 +71,12 @@ import {
   gitReflog,
   gitReset,
   gitResetHard,
-  gitStashBaseCommit,
-  gitStashApply,
-  gitStashClear,
-  gitStashDrop,
-  gitStashPushPatch,
-  gitStashPushPaths,
-  gitStashShow,
-  gitStatus,
   gitSwitch,
-  gitCommit,
-  gitHasStagedChanges,
   gitPush,
   gitSetRemoteUrl,
-  gitTrustRepoGlobal,
-  gitTrustRepoSession,
   repoOverview,
 } from "./api/git";
- import { getCurrentUsername, openInFileExplorer, openTerminalProfile as openTerminalProfileApi, revealInFileExplorer } from "./api/system";
-import {
-  gitHeadVsWorkingTextDiff,
-  gitLaunchExternalDiffWorking,
-  gitWorkingFileContent,
-  gitWorkingFileDiff,
-  gitWorkingFileDiffUnified,
-  gitWorkingFileImageBase64,
-  gitWorkingFileTextPreview,
-} from "./api/gitWorkingFiles";
+import { revealInFileExplorer } from "./api/system";
 import { RepoTabs } from "./components/RepoTabs";
 import { TopToolbar } from "./components/TopToolbar";
 import { MainHeader } from "./components/MainHeader";
@@ -144,7 +123,6 @@ import type {
   GitCloneProgressEvent,
   GitCommit,
   GitCommitSummary,
-  GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
   PullPredictResult,
@@ -172,14 +150,24 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string>("");
   const [errorByRepo, setErrorByRepo] = useState<Record<string, string>>({});
-  const [gitTrustOpen, setGitTrustOpen] = useState(false);
-  const [gitTrustRepoPath, setGitTrustRepoPath] = useState<string>("");
-  const [gitTrustDetails, setGitTrustDetails] = useState<string>("");
-  const [gitTrustDetailsOpen, setGitTrustDetailsOpen] = useState(false);
-  const [gitTrustBusy, setGitTrustBusy] = useState(false);
-  const [gitTrustActionError, setGitTrustActionError] = useState<string>("");
-  const [gitTrustCopied, setGitTrustCopied] = useState(false);
-  const [currentUsername, setCurrentUsername] = useState<string>("");
+  const {
+    gitTrustOpen,
+    setGitTrustOpen,
+    gitTrustRepoPath,
+    setGitTrustRepoPath,
+    gitTrustDetails,
+    setGitTrustDetails,
+    gitTrustDetailsOpen,
+    setGitTrustDetailsOpen,
+    gitTrustBusy,
+    setGitTrustBusy,
+    gitTrustActionError,
+    setGitTrustActionError,
+    gitTrustCopied,
+    currentUsername,
+    gitTrustGlobalCommand,
+    copyGitTrustGlobalCommand,
+  } = useGitTrustState();
   const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false);
   const [navigateMenuOpen, setNavigateMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -247,8 +235,6 @@ function App() {
     prev.clear();
   }, [repos]);
 
-  const gitTrustCopyTimeoutRef = useRef<number | null>(null);
-
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const [cloneRepoUrl, setCloneRepoUrl] = useState("");
   const [cloneDestinationFolder, setCloneDestinationFolder] = useState("");
@@ -268,50 +254,7 @@ function App() {
   const [cloneBranchesError, setCloneBranchesError] = useState("");
   const [cloneBranches, setCloneBranches] = useState<string[]>([]);
 
-  const [commitModalOpen, setCommitModalOpen] = useState(false);
-  const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
-  const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
-  const [commitMessage, setCommitMessage] = useState("");
-  const [commitAlsoPush, setCommitAlsoPush] = useState(false);
-  const [commitBusy, setCommitBusy] = useState(false);
-  const [commitError, setCommitError] = useState("");
-
   const [stashesByRepo, setStashesByRepo] = useState<Record<string, GitStashEntry[] | undefined>>({});
-
-  const [stashModalOpen, setStashModalOpen] = useState(false);
-  const [stashStatusEntries, setStashStatusEntries] = useState<GitStatusEntry[]>([]);
-  const [stashSelectedPaths, setStashSelectedPaths] = useState<Record<string, boolean>>({});
-  const [stashMessage, setStashMessage] = useState("");
-  const [stashBusy, setStashBusy] = useState(false);
-  const [stashError, setStashError] = useState("");
-
-  const [stashPreviewPath, setStashPreviewPath] = useState("");
-  const [stashPreviewStatus, setStashPreviewStatus] = useState("");
-  const [stashPreviewDiff, setStashPreviewDiff] = useState("");
-  const [stashPreviewContent, setStashPreviewContent] = useState("");
-  const [stashPreviewImageBase64, setStashPreviewImageBase64] = useState("");
-  const [stashPreviewLoading, setStashPreviewLoading] = useState(false);
-  const [stashPreviewError, setStashPreviewError] = useState("");
-
-  const [stashAdvancedMode, setStashAdvancedMode] = useState(false);
-  const [stashHunksByPath, setStashHunksByPath] = useState<Record<string, number[]>>({});
-
-  const [stashViewOpen, setStashViewOpen] = useState(false);
-  const [stashViewRef, setStashViewRef] = useState<string>("");
-  const [stashViewMessage, setStashViewMessage] = useState<string>("");
-  const [stashViewPatch, setStashViewPatch] = useState<string>("");
-  const [stashViewLoading, setStashViewLoading] = useState(false);
-  const [stashViewError, setStashViewError] = useState<string>("");
-
-  const [stashBaseByRepo, setStashBaseByRepo] = useState<Record<string, Record<string, string>>>({});
-
-  const [commitPreviewPath, setCommitPreviewPath] = useState("");
-  const [commitPreviewStatus, setCommitPreviewStatus] = useState("");
-  const [commitPreviewDiff, setCommitPreviewDiff] = useState("");
-  const [commitPreviewContent, setCommitPreviewContent] = useState("");
-  const [commitPreviewImageBase64, setCommitPreviewImageBase64] = useState("");
-  const [commitPreviewLoading, setCommitPreviewLoading] = useState(false);
-  const [commitPreviewError, setCommitPreviewError] = useState("");
 
   const [remoteModalOpen, setRemoteModalOpen] = useState(false);
   const [remoteUrlDraft, setRemoteUrlDraft] = useState("");
@@ -383,16 +326,6 @@ function App() {
   const [pullPredictError, setPullPredictError] = useState("");
   const [pullPredictRebase, setPullPredictRebase] = useState(false);
   const [pullPredictResult, setPullPredictResult] = useState<PullPredictResult | null>(null);
-
-  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
-  const [filePreviewPath, setFilePreviewPath] = useState("");
-  const [filePreviewUpstream, setFilePreviewUpstream] = useState("");
-  const [filePreviewMode, setFilePreviewMode] = useState<"normal" | "pullPredict">("normal");
-  const [filePreviewDiff, setFilePreviewDiff] = useState("");
-  const [filePreviewContent, setFilePreviewContent] = useState("");
-  const [filePreviewImageBase64, setFilePreviewImageBase64] = useState("");
-  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
-  const [filePreviewError, setFilePreviewError] = useState("");
 
   const [detachedHelpOpen, setDetachedHelpOpen] = useState(false);
   const [detachedBusy, setDetachedBusy] = useState(false);
@@ -480,6 +413,12 @@ function App() {
     setGlobalError(m);
   }
 
+  const { openTerminalProfile, openActiveRepoInExplorer } = useSystemHelpers({
+    activeRepoPath,
+    terminalSettings,
+    setError,
+  });
+
   const pullError = activeRepoPath ? (pullErrorByRepo[activeRepoPath] ?? "") : "";
   function setPullError(msg: string) {
     if (!activeRepoPath) return;
@@ -509,6 +448,38 @@ function App() {
     setGitTrustDetailsOpen,
     setGitTrustActionError,
     setGitTrustOpen,
+  });
+
+  const {
+    commitModalOpen,
+    setCommitModalOpen,
+    statusEntries,
+    selectedPaths,
+    setSelectedPaths,
+    commitMessage,
+    setCommitMessage,
+    commitAlsoPush,
+    setCommitAlsoPush,
+    commitBusy,
+    commitError,
+    setCommitError,
+    commitPreviewPath,
+    setCommitPreviewPath,
+    setCommitPreviewStatus,
+    commitPreviewDiff,
+    commitPreviewContent,
+    commitPreviewImageBase64,
+    commitPreviewLoading,
+    commitPreviewError,
+    refreshCommitStatusEntries,
+    openCommitDialog,
+    runCommit,
+  } = useCommitController({
+    activeRepoPath,
+    headName: overviewByRepo[activeRepoPath]?.head_name ?? "",
+    diffTool,
+    loadRepo: async (repoPath) => loadRepo(repoPath),
+    setStatusSummaryByRepo,
   });
 
   const { openRepository, closeRepository } = useRepoOpenClose({
@@ -881,6 +852,27 @@ function App() {
     confirmResolveRef.current = null;
     if (r) r(v);
   };
+
+  const {
+    trustRepoGloballyAndOpen,
+    trustRepoForSessionAndOpen,
+    changeOwnershipAndOpen,
+    revealRepoInExplorerFromTrustDialog,
+    openTerminalFromTrustDialog,
+    closeTrustDialogAndRepoIfOpen,
+  } = useGitTrustActions({
+    repos,
+    openRepository,
+    closeRepository,
+    confirmDialog,
+    openTerminalProfile,
+    gitTrustRepoPath,
+    currentUsername,
+    setGitTrustOpen,
+    setGitTrustBusy,
+    setGitTrustActionError,
+  });
+
   const overview = overviewByRepo[activeRepoPath];
   const remoteUrl = remoteUrlByRepo[activeRepoPath] ?? null;
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
@@ -889,59 +881,79 @@ function App() {
   const indicatorsUpdating = indicatorsUpdatingByRepo[activeRepoPath] ?? false;
   const stashes = stashesByRepo[activeRepoPath] ?? [];
 
-  useEffect(() => {
-    if (viewMode !== "graph") return;
-    if (!graphSettings.showStashesOnGraph) return;
-    if (!activeRepoPath) return;
-    if (stashes.length === 0) return;
+  const {
+    stashModalOpen,
+    setStashModalOpen,
+    stashStatusEntries,
+    setStashSelectedPaths,
+    stashSelectedPaths,
+    stashMessage,
+    setStashMessage,
+    stashBusy,
+    stashError,
+    setStashError,
 
-    let alive = true;
-    const repo = activeRepoPath;
+    stashPreviewPath,
+    setStashPreviewPath,
+    setStashPreviewStatus,
+    stashHunkRanges,
+    stashHunksByPath,
+    setStashHunksByPath,
+    stashPreviewLoading,
+    stashPreviewError,
+    stashPreviewImageBase64,
+    stashPreviewDiff,
+    stashPreviewContent,
 
-    void (async () => {
-      const current = stashBaseByRepo[repo] ?? {};
-      const missing = stashes.filter((s) => !current[s.reference]);
-      if (missing.length === 0) return;
+    stashAdvancedMode,
+    toggleAdvancedMode,
+    runStash,
 
-      const results = await Promise.all(
-        missing.map(async (s) => {
-          try {
-            const base = await gitStashBaseCommit({ repoPath: repo, stashRef: s.reference });
-            const t = (base ?? "").trim();
-            if (!t) return null;
-            return [s.reference, t] as const;
-          } catch {
-            return null;
-          }
-        }),
-      );
+    stashViewOpen,
+    stashViewRef,
+    stashViewMessage,
+    stashViewPatch,
+    stashViewLoading,
+    stashViewError,
+    setStashViewOpen,
+    applyStashFromView,
+    dropStashFromView,
 
-      if (!alive) return;
-      const patch: Record<string, string> = {};
-      for (const r of results) {
-        if (!r) continue;
-        patch[r[0]] = r[1];
-      }
-      if (Object.keys(patch).length === 0) return;
+    stashBaseByRepo,
+    openStashDialog,
+    openStashView,
+    applyStashByRef,
+    dropStashByRef,
+    clearAllStashes,
+    refreshStashStatusEntries,
+  } = useStashController({
+    activeRepoPath,
+    stashes,
+    viewMode,
+    showStashesOnGraph: graphSettings.showStashesOnGraph,
+    diffTool,
+    loadRepo: async (repoPath) => loadRepo(repoPath),
+    setLoading,
+    setError,
+    setStatusSummaryByRepo,
+  });
 
-      setStashBaseByRepo((prev) => ({
-        ...prev,
-        [repo]: {
-          ...(prev[repo] ?? {}),
-          ...patch,
-        },
-      }));
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [activeRepoPath, graphSettings.showStashesOnGraph, stashes, stashBaseByRepo, viewMode]);
-
-  const stashHunkRanges = useMemo(() => {
-    if (!stashPreviewDiff) return [] as Array<{ index: number; header: string; start: number; end: number }>;
-    return computeHunkRanges(stashPreviewDiff).ranges;
-  }, [stashPreviewDiff]);
+  const {
+    filePreviewOpen,
+    setFilePreviewOpen,
+    filePreviewPath,
+    filePreviewMode,
+    filePreviewDiff,
+    filePreviewContent,
+    filePreviewImageBase64,
+    filePreviewLoading,
+    filePreviewError,
+    openFilePreview,
+    openPullPredictConflictPreview,
+  } = useFilePreviewController({
+    activeRepoPath,
+    diffTool,
+  });
 
   const headHash = useMemo(() => {
     return overview?.head || commitsAll.find((c) => c.is_head)?.hash || "";
@@ -1156,26 +1168,6 @@ function App() {
     };
   }, [createBranchOpen, activeRepoPath, createBranchAt]);
 
-  useEffect(() => {
-    if (!gitTrustOpen) return;
-    if (currentUsername) return;
-    void getCurrentUsername()
-      .then((u) => {
-        setCurrentUsername(typeof u === "string" ? u : "");
-      })
-      .catch(() => {
-        setCurrentUsername("");
-      });
-  }, [gitTrustOpen, currentUsername]);
-
-  useEffect(() => {
-    if (gitTrustCopyTimeoutRef.current) {
-      window.clearTimeout(gitTrustCopyTimeoutRef.current);
-      gitTrustCopyTimeoutRef.current = null;
-    }
-    setGitTrustCopied(false);
-  }, [gitTrustOpen, gitTrustRepoPath]);
-
   function normalizeBranchName(name: string) {
     let t = name.trim();
     if (t.startsWith("* ")) t = t.slice(2).trim();
@@ -1342,38 +1334,6 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
-  }
-
-  async function refreshCommitStatusEntries() {
-    if (!activeRepoPath) return;
-    const entries = await gitStatus(activeRepoPath);
-    setStatusEntries(entries);
-    setSelectedPaths((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const e of entries) next[e.path] = prev[e.path] ?? true;
-      return next;
-    });
-    const keep = commitPreviewPath && entries.some((e) => e.path === commitPreviewPath) ? commitPreviewPath : (entries[0]?.path ?? "");
-    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
-    setCommitPreviewPath(keep);
-    setCommitPreviewStatus(keepStatus);
-    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
-  }
-
-  async function refreshStashStatusEntries() {
-    if (!activeRepoPath) return;
-    const entries = await gitStatus(activeRepoPath);
-    setStashStatusEntries(entries);
-    setStashSelectedPaths((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const e of entries) next[e.path] = prev[e.path] ?? true;
-      return next;
-    });
-    const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
-    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
-    setStashPreviewPath(keep);
-    setStashPreviewStatus(keepStatus);
-    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
   }
 
   async function discardWorkingFile(mode: "commit" | "stash", path: string, status: string) {
@@ -1921,26 +1881,6 @@ function App() {
     }
   }
 
-  async function openTerminalProfile(profileId?: string, repoPathOverride?: string) {
-    const repoPath = repoPathOverride ?? activeRepoPath;
-    if (!repoPath) return;
-
-    const profiles = terminalSettings.profiles ?? [];
-    const selected = (profileId ? profiles.find((p) => p.id === profileId) : null) ??
-      profiles.find((p) => p.id === terminalSettings.defaultProfileId) ??
-      profiles[0];
-    if (!selected) {
-      setError("No terminal profiles configured.");
-      return;
-    }
-
-    setError("");
-    try {
-      await openTerminalProfileApi({ repoPath, kind: selected.kind, command: selected.command, args: selected.args });
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
-    }
-  }
 
   function generateTempBranchName() {
     const base = headHash ? shortHash(headHash) : "head";
@@ -2104,17 +2044,6 @@ function App() {
       setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setDetachedBusy(false);
-    }
-  }
-
-  async function openActiveRepoInExplorer() {
-    if (!activeRepoPath) return;
-
-    setError("");
-    try {
-      await openInFileExplorer(activeRepoPath);
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
     }
   }
 
@@ -2284,119 +2213,6 @@ function App() {
       setPullBusy(false);
     }
   }
-
-  function openFilePreview(path: string) {
-    const p = path.trim();
-    if (!p) return;
-    setFilePreviewMode("normal");
-    setFilePreviewUpstream("");
-    setFilePreviewOpen(true);
-    setFilePreviewPath(p);
-  }
-
-  function openPullPredictConflictPreview(path: string) {
-    const p = path.trim();
-    if (!p) return;
-    const upstream = pullPredictResult?.upstream?.trim() ?? "";
-    setFilePreviewMode(upstream ? "pullPredict" : "normal");
-    setFilePreviewUpstream(upstream);
-    setFilePreviewOpen(true);
-    setFilePreviewPath(p);
-  }
-
-  useEffect(() => {
-    if (!filePreviewOpen || !activeRepoPath || !filePreviewPath) {
-      setFilePreviewDiff("");
-      setFilePreviewContent("");
-      setFilePreviewImageBase64("");
-      setFilePreviewError("");
-      setFilePreviewLoading(false);
-      return;
-    }
-
-    let alive = true;
-    setFilePreviewLoading(true);
-    setFilePreviewError("");
-    setFilePreviewDiff("");
-    setFilePreviewContent("");
-    setFilePreviewImageBase64("");
-
-    const run = async () => {
-      try {
-        if (filePreviewMode === "pullPredict" && filePreviewUpstream.trim()) {
-          const content = await gitPullPredictConflictPreview({
-            repoPath: activeRepoPath,
-            upstream: filePreviewUpstream,
-            path: filePreviewPath,
-          });
-          if (!alive) return;
-          setFilePreviewContent(content);
-          return;
-        }
-
-        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
-        if (useExternal) {
-          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: filePreviewPath, toolPath: diffTool.path, command: diffTool.command });
-          if (!alive) return;
-          setFilePreviewContent("Opened in external diff tool.");
-          return;
-        }
-
-        const ext = fileExtLower(filePreviewPath);
-        if (isImageExt(ext)) {
-          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: filePreviewPath });
-          if (!alive) return;
-          setFilePreviewImageBase64(b64);
-          return;
-        }
-
-        if (isDocTextPreviewExt(ext)) {
-          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: filePreviewPath, unified: 3 });
-          if (!alive) return;
-          if (diff.trim()) {
-            setFilePreviewDiff(diff);
-            return;
-          }
-
-          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: filePreviewPath });
-          if (!alive) return;
-          setFilePreviewContent(content);
-          return;
-        }
-
-        const diff = await gitWorkingFileDiff({ repoPath: activeRepoPath, path: filePreviewPath });
-        if (!alive) return;
-        if (diff.trim()) {
-          setFilePreviewDiff(diff);
-          return;
-        }
-
-        const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: filePreviewPath });
-        if (!alive) return;
-        setFilePreviewContent(content);
-      } catch (e) {
-        if (!alive) return;
-        setFilePreviewError(typeof e === "string" ? e : JSON.stringify(e));
-      } finally {
-        if (!alive) return;
-        setFilePreviewLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [
-    activeRepoPath,
-    diffTool.command,
-    diffTool.difftool,
-    diffTool.path,
-    filePreviewMode,
-    filePreviewOpen,
-    filePreviewPath,
-    filePreviewUpstream,
-  ]);
 
   async function predictPull(rebase: boolean) {
     if (!activeRepoPath) return;
@@ -2784,416 +2600,6 @@ function App() {
     }
   }
 
-  async function openCommitDialog() {
-    if (!activeRepoPath) return;
-    setCommitError("");
-    setCommitMessage("");
-    setCommitAlsoPush(false);
-    setCommitModalOpen(true);
-    setCommitPreviewPath("");
-    setCommitPreviewStatus("");
-    setCommitPreviewDiff("");
-    setCommitPreviewContent("");
-    setCommitPreviewError("");
-
-    try {
-      const entries = await gitStatus(activeRepoPath);
-      setStatusEntries(entries);
-      const nextSelected: Record<string, boolean> = {};
-      for (const e of entries) nextSelected[e.path] = true;
-      setSelectedPaths(nextSelected);
-      const first = entries[0];
-      setCommitPreviewPath(first?.path ?? "");
-      setCommitPreviewStatus(first?.status ?? "");
-      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
-    } catch (e) {
-      setStatusEntries([]);
-      setSelectedPaths({});
-      setCommitError(typeof e === "string" ? e : JSON.stringify(e));
-    }
-  }
-
-  useEffect(() => {
-    if (!commitModalOpen || !activeRepoPath || !commitPreviewPath) {
-      setCommitPreviewDiff("");
-      setCommitPreviewContent("");
-      setCommitPreviewImageBase64("");
-      setCommitPreviewError("");
-      setCommitPreviewLoading(false);
-      return;
-    }
-
-    let alive = true;
-    setCommitPreviewLoading(true);
-    setCommitPreviewError("");
-    setCommitPreviewDiff("");
-    setCommitPreviewContent("");
-    setCommitPreviewImageBase64("");
-
-    const run = async () => {
-      try {
-        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
-        if (useExternal) {
-          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: commitPreviewPath, toolPath: diffTool.path, command: diffTool.command });
-          if (!alive) return;
-          setCommitPreviewContent("Opened in external diff tool.");
-          return;
-        }
-
-        const ext = fileExtLower(commitPreviewPath);
-        if (isImageExt(ext)) {
-          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: commitPreviewPath });
-          if (!alive) return;
-          setCommitPreviewImageBase64(b64);
-          return;
-        }
-
-        const st = commitPreviewStatus.trim();
-
-        if (isDocTextPreviewExt(ext)) {
-          if (st.startsWith("??")) {
-            const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: commitPreviewPath });
-            if (!alive) return;
-            setCommitPreviewContent(content);
-            return;
-          }
-
-          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: commitPreviewPath, unified: 3 });
-          if (!alive) return;
-          if (diff.trim()) {
-            setCommitPreviewDiff(diff);
-            return;
-          }
-
-          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: commitPreviewPath });
-          if (!alive) return;
-          setCommitPreviewContent(content);
-          return;
-        }
-
-        if (st.startsWith("??")) {
-          const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: commitPreviewPath });
-          if (!alive) return;
-          setCommitPreviewContent(content);
-          return;
-        }
-
-        const diff = await gitWorkingFileDiff({ repoPath: activeRepoPath, path: commitPreviewPath });
-        if (!alive) return;
-        setCommitPreviewDiff(diff);
-      } catch (e) {
-        if (!alive) return;
-        setCommitPreviewError(typeof e === "string" ? e : JSON.stringify(e));
-      } finally {
-        if (!alive) return;
-        setCommitPreviewLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [activeRepoPath, commitModalOpen, commitPreviewPath, commitPreviewStatus, diffTool.command, diffTool.difftool, diffTool.path]);
-
-  async function openStashDialog() {
-    if (!activeRepoPath) return;
-    setStashError("");
-    setStashMessage("");
-    setStashModalOpen(true);
-    setStashAdvancedMode(false);
-    setStashHunksByPath({});
-    setStashPreviewPath("");
-    setStashPreviewStatus("");
-    setStashPreviewDiff("");
-    setStashPreviewContent("");
-    setStashPreviewError("");
-
-    try {
-      const entries = await gitStatus(activeRepoPath);
-      setStashStatusEntries(entries);
-      const nextSelected: Record<string, boolean> = {};
-      for (const e of entries) nextSelected[e.path] = true;
-      setStashSelectedPaths(nextSelected);
-      const first = entries[0];
-      setStashPreviewPath(first?.path ?? "");
-      setStashPreviewStatus(first?.status ?? "");
-      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
-    } catch (e) {
-      setStashStatusEntries([]);
-      setStashSelectedPaths({});
-      setStashError(typeof e === "string" ? e : JSON.stringify(e));
-    }
-  }
-
-  useEffect(() => {
-    if (!stashModalOpen || !activeRepoPath || !stashPreviewPath) {
-      setStashPreviewDiff("");
-      setStashPreviewContent("");
-      setStashPreviewImageBase64("");
-      setStashPreviewError("");
-      setStashPreviewLoading(false);
-      return;
-    }
-
-    let alive = true;
-    setStashPreviewLoading(true);
-    setStashPreviewError("");
-    setStashPreviewDiff("");
-    setStashPreviewContent("");
-    setStashPreviewImageBase64("");
-
-    const run = async () => {
-      try {
-        const useExternal = diffTool.difftool !== "Graphoria builtin diff";
-        if (useExternal) {
-          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: stashPreviewPath, toolPath: diffTool.path, command: diffTool.command });
-          if (!alive) return;
-          setStashPreviewContent("Opened in external diff tool.");
-          return;
-        }
-
-        const ext = fileExtLower(stashPreviewPath);
-        if (isImageExt(ext)) {
-          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: stashPreviewPath });
-          if (!alive) return;
-          setStashPreviewImageBase64(b64);
-          return;
-        }
-
-        const st = stashPreviewStatus.trim();
-
-        if (isDocTextPreviewExt(ext)) {
-          if (st.startsWith("??")) {
-            const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: stashPreviewPath });
-            if (!alive) return;
-            setStashPreviewContent(content);
-            return;
-          }
-
-          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: stashPreviewPath, unified: stashAdvancedMode ? 20 : 3 });
-          if (!alive) return;
-          if (diff.trim()) {
-            setStashPreviewDiff(diff);
-            return;
-          }
-
-          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: stashPreviewPath });
-          if (!alive) return;
-          setStashPreviewContent(content);
-          return;
-        }
-
-        if (st.startsWith("??")) {
-          const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: stashPreviewPath });
-          if (!alive) return;
-          setStashPreviewContent(content);
-          return;
-        }
-
-        const diff = await gitWorkingFileDiffUnified({ repoPath: activeRepoPath, path: stashPreviewPath, unified: stashAdvancedMode ? 20 : 3 });
-        if (!alive) return;
-        setStashPreviewDiff(diff);
-      } catch (e) {
-        if (!alive) return;
-        setStashPreviewError(typeof e === "string" ? e : JSON.stringify(e));
-      } finally {
-        if (!alive) return;
-        setStashPreviewLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [activeRepoPath, stashModalOpen, stashPreviewPath, stashPreviewStatus, stashAdvancedMode, diffTool.command, diffTool.difftool, diffTool.path]);
-
-  async function runStash() {
-    if (!activeRepoPath) return;
-
-    setStashBusy(true);
-    setStashError("");
-    try {
-      if (!stashAdvancedMode) {
-        const paths = stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).map((e) => e.path);
-        if (paths.length === 0) {
-          setStashError("No files selected.");
-          return;
-        }
-
-        const includeUntracked = stashStatusEntries.some((e) => {
-          if (!stashSelectedPaths[e.path]) return false;
-          return e.status.trim().startsWith("??");
-        });
-
-        await gitStashPushPaths({ repoPath: activeRepoPath, message: stashMessage, paths, includeUntracked });
-      } else {
-        if (!stashPreviewPath) {
-          setStashError("Select a file.");
-          return;
-        }
-
-        const ext = fileExtLower(stashPreviewPath);
-        if (isImageExt(ext) || isDocTextPreviewExt(ext)) {
-          setStashError("Partial stash is not supported for this file type.");
-          return;
-        }
-
-        const selected = new Set(stashHunksByPath[stashPreviewPath] ?? []);
-        if (selected.size === 0) {
-          setStashError("No hunks selected.");
-          return;
-        }
-
-        if (!stashPreviewDiff.trim()) {
-          setStashError("No diff available for the selected file.");
-          return;
-        }
-
-        const keepPatch = buildPatchFromUnselectedHunks(stashPreviewDiff, selected);
-        await gitStashPushPatch({ repoPath: activeRepoPath, message: stashMessage, path: stashPreviewPath, keepPatch });
-      }
-
-      setStashModalOpen(false);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setStashError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setStashBusy(false);
-    }
-  }
-
-  async function openStashView(entry: GitStashEntry) {
-    if (!activeRepoPath) return;
-    setStashViewOpen(true);
-    setStashViewRef(entry.reference);
-    setStashViewMessage(entry.message);
-    setStashViewPatch("");
-    setStashViewError("");
-    setStashViewLoading(true);
-    try {
-      const patch = await gitStashShow({ repoPath: activeRepoPath, stashRef: entry.reference });
-      setStashViewPatch(patch);
-    } catch (e) {
-      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setStashViewLoading(false);
-    }
-  }
-
-  async function applyStashByRef(stashRef: string) {
-    if (!activeRepoPath || !stashRef.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      await gitStashApply({ repoPath: activeRepoPath, stashRef });
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function applyStashFromView() {
-    if (!activeRepoPath || !stashViewRef) return;
-    setStashViewLoading(true);
-    setStashViewError("");
-    try {
-      await gitStashApply({ repoPath: activeRepoPath, stashRef: stashViewRef });
-      setStashViewOpen(false);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setStashViewLoading(false);
-    }
-  }
-
-  async function dropStashByRef(stashRef: string) {
-    if (!activeRepoPath || !stashRef.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      await gitStashDrop({ repoPath: activeRepoPath, stashRef });
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function dropStashFromView() {
-    if (!activeRepoPath || !stashViewRef) return;
-    setStashViewLoading(true);
-    setStashViewError("");
-    try {
-      await gitStashDrop({ repoPath: activeRepoPath, stashRef: stashViewRef });
-      setStashViewOpen(false);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setStashViewLoading(false);
-    }
-  }
-
-  async function clearAllStashes() {
-    if (!activeRepoPath) return;
-    setLoading(true);
-    setError("");
-    try {
-      await gitStashClear(activeRepoPath);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function runCommit() {
-    if (!activeRepoPath) return;
-
-    const paths = statusEntries.filter((e) => selectedPaths[e.path]).map((e) => e.path);
-    if (paths.length === 0) {
-      setCommitError("No files selected.");
-      return;
-    }
-
-    setCommitBusy(true);
-    setCommitError("");
-    try {
-      await gitCommit({ repoPath: activeRepoPath, message: commitMessage, paths });
-
-      if (commitAlsoPush) {
-        const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
-
-        if (!currentRemote) {
-          setCommitError("No remote origin set. Configure Remote first.");
-          return;
-        }
-
-        const headName = overviewByRepo[activeRepoPath]?.head_name ?? "";
-        if (headName === "(detached)") {
-          setCommitError("Cannot push from detached HEAD.");
-          return;
-        }
-
-        await gitPush({ repoPath: activeRepoPath, remoteName: "origin", force: false });
-      }
-
-      setCommitModalOpen(false);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setCommitError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setCommitBusy(false);
-    }
-  }
-
   async function openRemoteDialog() {
     if (!activeRepoPath) return;
     setRemoteError("");
@@ -3280,97 +2686,6 @@ function App() {
     }
   }
 
-  async function trustRepoGloballyAndOpen() {
-    if (!gitTrustRepoPath) return;
-    setGitTrustBusy(true);
-    setGitTrustActionError("");
-    try {
-      await gitTrustRepoGlobal(gitTrustRepoPath);
-      setGitTrustOpen(false);
-      await openRepository(gitTrustRepoPath);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setGitTrustBusy(false);
-    }
-  }
-
-  async function trustRepoForSessionAndOpen() {
-    if (!gitTrustRepoPath) return;
-    setGitTrustBusy(true);
-    setGitTrustActionError("");
-    try {
-      await gitTrustRepoSession(gitTrustRepoPath);
-      setGitTrustOpen(false);
-      await openRepository(gitTrustRepoPath);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setGitTrustBusy(false);
-    }
-  }
-
-  async function changeOwnershipAndOpen() {
-    if (!gitTrustRepoPath) return;
-    const who = currentUsername ? currentUsername : "current user";
-    const ok = await confirmDialog({
-      title: "Change ownership",
-      message: `This will attempt to change ownership of the repository folder to ${who}.\n\nUse this only if you know what you are doing. Continue?`,
-      okLabel: "Continue",
-      cancelLabel: "Cancel",
-    });
-    if (!ok) return;
-
-    setGitTrustBusy(true);
-    setGitTrustActionError("");
-    try {
-      await changeRepoOwnershipToCurrentUser(gitTrustRepoPath);
-      setGitTrustOpen(false);
-      await openRepository(gitTrustRepoPath);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setGitTrustBusy(false);
-    }
-  }
-
-  async function revealRepoInExplorerFromTrustDialog() {
-    if (!gitTrustRepoPath) return;
-    setGitTrustBusy(true);
-    setGitTrustActionError("");
-    try {
-      await openInFileExplorer(gitTrustRepoPath);
-      setGitTrustOpen(false);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setGitTrustBusy(false);
-    }
-  }
-
-  async function openTerminalFromTrustDialog() {
-    if (!gitTrustRepoPath) return;
-    setGitTrustBusy(true);
-    setGitTrustActionError("");
-    try {
-      await openTerminalProfile(undefined, gitTrustRepoPath);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setGitTrustBusy(false);
-    }
-  }
-
-  async function closeTrustDialogAndRepoIfOpen() {
-    const p = gitTrustRepoPath;
-    setGitTrustOpen(false);
-    setGitTrustActionError("");
-    if (!p) return;
-    if (repos.includes(p)) {
-      await closeRepository(p);
-    }
-  }
-
   async function runFetch() {
     if (!activeRepoPath) return;
     setLoading(true);
@@ -3382,27 +2697,6 @@ function App() {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
-    }
-  }
-
-  const gitTrustGlobalCommand = gitTrustRepoPath
-    ? `git config --global --add safe.directory ${normalizeGitPath(gitTrustRepoPath)}`
-    : "";
-
-  async function copyGitTrustGlobalCommand() {
-    if (!gitTrustGlobalCommand) return;
-    try {
-      await copyText(gitTrustGlobalCommand);
-      setGitTrustCopied(true);
-      if (gitTrustCopyTimeoutRef.current) {
-        window.clearTimeout(gitTrustCopyTimeoutRef.current);
-      }
-      gitTrustCopyTimeoutRef.current = window.setTimeout(() => {
-        setGitTrustCopied(false);
-        gitTrustCopyTimeoutRef.current = null;
-      }, 1200);
-    } catch (e) {
-      setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
     }
   }
 
@@ -4226,7 +3520,7 @@ function App() {
             }
             setPullPredictOpen(false);
           }}
-          onOpenConflictPreview={(p) => openPullPredictConflictPreview(p)}
+          onOpenConflictPreview={(p) => openPullPredictConflictPreview(p, pullPredictResult?.upstream?.trim() ?? "")}
         />
       ) : null}
 
@@ -4253,26 +3547,7 @@ function App() {
           setMessage={setStashMessage}
           advancedMode={stashAdvancedMode}
           onToggleAdvanced={async (next) => {
-            if (next && diffTool.difftool !== "Graphoria builtin diff") {
-              setStashError("Advanced mode requires Graphoria builtin diff.");
-              return;
-            }
-
-            if (next && activeRepoPath) {
-              try {
-                const has = await gitHasStagedChanges(activeRepoPath);
-                if (has) {
-                  setStashError("Index has staged changes. Unstage/commit them before using advanced mode.");
-                  return;
-                }
-              } catch (err) {
-                setStashError(typeof err === "string" ? err : JSON.stringify(err));
-                return;
-              }
-            }
-
-            setStashError("");
-            setStashAdvancedMode(next);
+            await toggleAdvancedMode(next);
           }}
           statusEntries={stashStatusEntries}
           selectedPaths={stashSelectedPaths}
