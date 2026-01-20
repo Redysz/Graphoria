@@ -24,11 +24,11 @@ import {
 } from "./shortcuts";
 import { copyText } from "./utils/clipboard";
 import { computeHunkRanges, buildPatchFromUnselectedHunks } from "./utils/diffPatch";
-import { fileExtLower, imageMimeFromExt, isDocTextPreviewExt, isImageExt } from "./utils/filePreview";
+import { fileExtLower, isDocTextPreviewExt, isImageExt } from "./utils/filePreview";
 import { normalizeGitPath } from "./utils/gitPath";
 import { fnv1a32, md5Hex } from "./utils/hash";
 import { parseGitDubiousOwnershipError } from "./utils/gitTrust";
-import { authorInitials, shortHash, statusBadge, truncate } from "./utils/text";
+import { authorInitials, shortHash, truncate } from "./utils/text";
 import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
 import {
   computeCommitLaneRows,
@@ -69,7 +69,10 @@ import { RemoteModal } from "./components/modals/RemoteModal";
 import { PushModal } from "./components/modals/PushModal";
 import { StashModal } from "./components/modals/StashModal";
 import { StashViewModal } from "./components/modals/StashViewModal";
-import { parseUnifiedDiff } from "./DiffView";
+import { CommitModal } from "./components/modals/CommitModal";
+import { CloneModal } from "./components/modals/CloneModal";
+import { GitTrustModal } from "./components/modals/GitTrustModal";
+import { DetachedHeadModal } from "./components/modals/DetachedHeadModal";
 import DiffToolModal from "./DiffToolModal";
 import TooltipLayer from "./TooltipLayer";
 import type {
@@ -1314,40 +1317,6 @@ function App() {
 
   function togglePreviewZoom(src: string) {
     setPreviewZoomSrc((prev) => (prev === src ? null : src));
-  }
-
-  function PreviewZoomBadge() {
-    return (
-      <span
-        style={{
-          position: "absolute",
-          right: 10,
-          top: 10,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 30,
-          height: 30,
-          borderRadius: 10,
-          border: "1px solid rgba(15, 15, 15, 0.14)",
-          background: "rgba(255, 255, 255, 0.92)",
-          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.12)",
-          pointerEvents: "none",
-        }}
-        aria-hidden="true"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M10.5 18.5C14.6421 18.5 18 15.1421 18 11C18 6.85786 14.6421 3.5 10.5 3.5C6.35786 3.5 3 6.85786 3 11C3 15.1421 6.35786 18.5 10.5 18.5Z"
-            stroke="rgba(15, 15, 15, 0.7)"
-            strokeWidth="2"
-          />
-          <path d="M16.2 16.2L21 21" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
-          <path d="M10.5 8V14" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
-          <path d="M7.5 11H13.5" stroke="rgba(15, 15, 15, 0.7)" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      </span>
-    );
   }
 
   function pickPreferredBranch(branches: string[]) {
@@ -5344,239 +5313,30 @@ function App() {
       />
 
       {detachedHelpOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(78vh, 720px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Detached HEAD</div>
-              <button type="button" onClick={() => setDetachedHelpOpen(false)} disabled={detachedBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ opacity: 0.85 }}>
-                  Detached HEAD is a normal Git state after checking out a commit directly. If this is intentional (you are
-                  inspecting history), you don't need to do anything.
-                </div>
-
-                <div style={{ opacity: 0.85 }}>
-                  If you don't want to stay in detached HEAD state (or you're not sure how it happened), choose one of the
-                  solutions below.
-                </div>
-
-                {detachedError ? <div className="error">{detachedError}</div> : null}
-
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 900, opacity: 0.8 }}>Target branch</div>
-                  <select
-                    value={detachedTargetBranch}
-                    onChange={(e) => setDetachedTargetBranch(e.target.value)}
-                    disabled={detachedBusy || detachedBranchOptions.length <= 1}
-                    title={
-                      detachedBranchOptions.length === 0
-                        ? "No local branch available."
-                        : "Select which branch should be checked out to re-attach HEAD."
-                    }
-                  >
-                    {detachedBranchOptions.length === 0 ? <option value="">(none)</option> : null}
-                    {detachedBranchOptions.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="recoveryOption">
-                  <div>
-                    <div className="recoveryOptionTitle">I have no changes, just fix it</div>
-                    <div className="recoveryOptionDesc">Checks out the target branch that points at the current commit.</div>
-                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
-                      git checkout &lt;target-branch&gt;
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void detachedFixSimple()}
-                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch}
-                    >
-                      {detachedBusy ? "Working…" : "Fix detached HEAD"}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePreviewZoom("/recovery/detached-fix-simple.svg")}
-                    title="Click to zoom"
-                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
-                  >
-                    <PreviewZoomBadge />
-                    <img className="recoveryPreview" src="/recovery/detached-fix-simple.svg" alt="Preview" />
-                  </button>
-                </div>
-
-                <div className="recoveryOption">
-                  <div>
-                    <div className="recoveryOptionTitle">I have changes, but they are not important. Discard them and fix</div>
-                    <div className="recoveryOptionDesc">Discards local changes and checks out the target branch.</div>
-                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
-                      git reset --hard
-                      <br />
-                      git checkout &lt;target-branch&gt;
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void detachedFixDiscardChanges()}
-                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || changedCount === 0}
-                      title={changedCount === 0 ? "No local changes detected." : undefined}
-                    >
-                      {detachedBusy ? "Working…" : "Discard changes and fix"}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePreviewZoom("/recovery/detached-fix-hard.svg")}
-                    title="Click to zoom"
-                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
-                  >
-                    <PreviewZoomBadge />
-                    <img className="recoveryPreview" src="/recovery/detached-fix-hard.svg" alt="Preview" />
-                  </button>
-                </div>
-
-                <div className="recoveryOption">
-                  <div>
-                    <div className="recoveryOptionTitle">Save changes by creating a branch</div>
-                    <div className="recoveryOptionDesc">
-                      Commits your current changes, creates a temporary branch, then checks out the target branch. Optionally
-                      merges and deletes the temporary branch.
-                    </div>
-
-                    <div className="recoveryFields">
-                      <div style={{ display: "grid", gap: 6 }}>
-                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Commit message</div>
-                        <input
-                          value={detachedSaveCommitMessage}
-                          onChange={(e) => setDetachedSaveCommitMessage(e.target.value)}
-                          className="modalInput"
-                          disabled={detachedBusy || changedCount === 0}
-                          placeholder="Commit message"
-                        />
-                      </div>
-
-                      <div className="recoveryRow">
-                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 900, opacity: 0.85 }}>
-                          <input
-                            type="checkbox"
-                            checked={detachedTempBranchRandom}
-                            onChange={(e) => setDetachedTempBranchRandom(e.target.checked)}
-                            disabled={detachedBusy}
-                          />
-                          Set random branch name
-                        </label>
-                        <input
-                          value={detachedTempBranchName}
-                          onChange={(e) => setDetachedTempBranchName(e.target.value)}
-                          className="modalInput"
-                          disabled={detachedBusy || detachedTempBranchRandom}
-                          placeholder="temporary-branch-name"
-                          style={{ width: 320 }}
-                        />
-                      </div>
-
-                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 900, opacity: 0.85 }}>
-                        <input
-                          type="checkbox"
-                          checked={detachedMergeAfterSave}
-                          onChange={(e) => setDetachedMergeAfterSave(e.target.checked)}
-                          disabled={detachedBusy}
-                        />
-                        Merge temporary branch into target branch
-                      </label>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void detachedSaveByBranch()}
-                      disabled={
-                        detachedBusy ||
-                        !activeRepoPath ||
-                        !detachedTargetBranch ||
-                        changedCount === 0 ||
-                        !detachedSaveCommitMessage.trim() ||
-                        !detachedTempBranchName.trim()
-                      }
-                      title={changedCount === 0 ? "No local changes detected." : undefined}
-                    >
-                      {detachedBusy ? "Working…" : "Save changes using a branch"}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePreviewZoom("/recovery/detached-fix-branch.svg")}
-                    title="Click to zoom"
-                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
-                  >
-                    <PreviewZoomBadge />
-                    <img className="recoveryPreview" src="/recovery/detached-fix-branch.svg" alt="Preview" />
-                  </button>
-                </div>
-
-                <div className="recoveryOption">
-                  <div>
-                    <div className="recoveryOptionTitle">Save changes by cherry-picks</div>
-                    <div className="recoveryOptionDesc">Commits your changes, then shows the steps to cherry-pick onto the target branch.</div>
-                    <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
-                      git commit -a -m &quot;&lt;message&gt;&quot;
-                      <br />
-                      git reset --hard
-                      <br />
-                      git checkout &lt;target-branch&gt;
-                      <br />
-                      git reflog
-                      <br />
-                      git cherry-pick &lt;hash&gt;
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void detachedPrepareCherryPickSteps()}
-                      disabled={detachedBusy || !activeRepoPath || !detachedTargetBranch || changedCount === 0}
-                      title={changedCount === 0 ? "No local changes detected." : undefined}
-                    >
-                      {detachedBusy ? "Working…" : "Show cherry-pick steps"}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePreviewZoom("/recovery/detached-fix-cherry.svg")}
-                    title="Click to zoom"
-                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
-                  >
-                    <PreviewZoomBadge />
-                    <img className="recoveryPreview" src="/recovery/detached-fix-cherry.svg" alt="Preview" />
-                  </button>
-                </div>
-
-                <div className="recoveryOption">
-                  <div>
-                    <div className="recoveryOptionTitle">I'll handle it myself — open terminal</div>
-                    <div className="recoveryOptionDesc">Opens a terminal in the repository folder (Git Bash on Windows if available).</div>
-                    <button type="button" onClick={() => void openTerminalProfile()} disabled={detachedBusy || !activeRepoPath}>
-                      Open terminal
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePreviewZoom("/recovery/detached-fix-terminal.svg")}
-                    title="Click to zoom"
-                    style={{ border: 0, padding: 0, background: "transparent", position: "relative" }}
-                  >
-                    <PreviewZoomBadge />
-                    <img className="recoveryPreview" src="/recovery/detached-fix-terminal.svg" alt="Preview" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DetachedHeadModal
+          busy={detachedBusy}
+          error={detachedError}
+          activeRepoPath={activeRepoPath}
+          changedCount={changedCount}
+          targetBranch={detachedTargetBranch}
+          setTargetBranch={setDetachedTargetBranch}
+          branchOptions={detachedBranchOptions}
+          saveCommitMessage={detachedSaveCommitMessage}
+          setSaveCommitMessage={setDetachedSaveCommitMessage}
+          tempBranchName={detachedTempBranchName}
+          setTempBranchName={setDetachedTempBranchName}
+          tempBranchRandom={detachedTempBranchRandom}
+          setTempBranchRandom={setDetachedTempBranchRandom}
+          mergeAfterSave={detachedMergeAfterSave}
+          setMergeAfterSave={setDetachedMergeAfterSave}
+          onClose={() => setDetachedHelpOpen(false)}
+          onFixSimple={() => void detachedFixSimple()}
+          onFixDiscardChanges={() => void detachedFixDiscardChanges()}
+          onSaveByBranch={() => void detachedSaveByBranch()}
+          onPrepareCherryPickSteps={() => void detachedPrepareCherryPickSteps()}
+          onOpenTerminal={() => void openTerminalProfile()}
+          onTogglePreviewZoom={(src) => togglePreviewZoom(src)}
+        />
       ) : null}
 
       {createBranchOpen ? (
@@ -5773,235 +5533,46 @@ function App() {
       ) : null}
 
       {commitModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Commit</div>
-              <button type="button" onClick={() => setCommitModalOpen(false)} disabled={commitBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {commitError ? <div className="error">{commitError}</div> : null}
-
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
-                  gap: 12,
-                  alignItems: "stretch",
-                  minHeight: 0,
-                  height: "100%",
-                }}
-              >
-                <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
-                    <textarea
-                      value={commitMessage}
-                      onChange={(e) => setCommitMessage(e.target.value)}
-                      rows={3}
-                      className="modalTextarea"
-                      placeholder="Commit message"
-                      disabled={commitBusy}
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next: Record<string, boolean> = {};
-                        for (const e of statusEntries) next[e.path] = true;
-                        setSelectedPaths(next);
-                      }}
-                      disabled={commitBusy || statusEntries.length === 0}
-                    >
-                      Select all
-                    </button>
-                  </div>
-
-                  {statusEntries.length === 0 ? (
-                    <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to commit.</div>
-                  ) : (
-                    <div className="statusList">
-                      {statusEntries.map((e) => (
-                        <div
-                          key={e.path}
-                          className="statusRow"
-                          onClick={() => {
-                            setCommitPreviewPath(e.path);
-                            setCommitPreviewStatus(e.status);
-                          }}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-                            setCommitPreviewPath(e.path);
-                            setCommitPreviewStatus(e.status);
-                            openWorkingFileContextMenu("commit", e.path, e.status, ev.clientX, ev.clientY);
-                          }}
-                          style={
-                            e.path === commitPreviewPath
-                              ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
-                              : undefined
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!selectedPaths[e.path]}
-                            onClick={(ev) => ev.stopPropagation()}
-                            onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
-                            disabled={commitBusy}
-                          />
-                          <span className="statusCode" title={e.status}>
-                            {statusBadge(e.status)}
-                          </span>
-                          <span className="statusPath">{e.path}</span>
-                          <span className="statusActions">
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Reset file / Discard changes"
-                              disabled={!activeRepoPath || commitBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                void discardWorkingFile("commit", e.path, e.status);
-                              }}
-                            >
-                              R
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Delete file"
-                              disabled={!activeRepoPath || commitBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                void deleteWorkingFile("commit", e.path);
-                              }}
-                            >
-                              D
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Copy path (absolute)"
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                if (!activeRepoPath) return;
-                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                                void copyText(abs);
-                              }}
-                            >
-                              C
-                            </button>
-                            <button
-                              type="button"
-                              className="statusActionBtn"
-                              title="Reveal in File Explorer"
-                              disabled={!activeRepoPath || commitBusy}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                if (!activeRepoPath) return;
-                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                                void invoke<void>("reveal_in_file_explorer", { path: abs });
-                              }}
-                            >
-                              E
-                            </button>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 2 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                      <input
-                        type="checkbox"
-                        checked={commitAlsoPush}
-                        onChange={(e) => setCommitAlsoPush(e.target.checked)}
-                        disabled={commitBusy || !remoteUrl}
-                      />
-                      Push after commit
-                    </label>
-                    {!remoteUrl ? <div style={{ opacity: 0.7, fontSize: 12 }}>No remote origin.</div> : null}
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
-                  <div style={{ opacity: 0.75, fontSize: 12 }}>
-                    Green: added, red: removed. Yellow/blue: detected moved lines.
-                  </div>
-
-                  {commitPreviewError ? <div className="error">{commitPreviewError}</div> : null}
-                  {commitPreviewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}
-
-                  {!commitPreviewLoading && !commitPreviewError ? (
-                    diffTool.difftool !== "Graphoria builtin diff" ? (
-                      <div style={{ opacity: 0.75 }}>Opened in external diff tool.</div>
-                    ) : commitPreviewImageBase64 ? (
-                      <div
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 12,
-                          overflow: "hidden",
-                          flex: 1,
-                          minHeight: 0,
-                          minWidth: 0,
-                          display: "grid",
-                        }}
-                      >
-                        <img
-                          src={`data:${imageMimeFromExt(fileExtLower(commitPreviewPath))};base64,${commitPreviewImageBase64}`}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "contain",
-                            display: "block",
-                          }}
-                        />
-                      </div>
-                    ) : commitPreviewDiff ? (
-                      <pre
-                        className="diffCode"
-                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
-                      >
-                        {parseUnifiedDiff(commitPreviewDiff).map((l, i) => (
-                          <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                            {l.text}
-                          </div>
-                        ))}
-                      </pre>
-                    ) : commitPreviewContent ? (
-                      <pre
-                        className="diffCode"
-                        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "auto", border: "1px solid var(--border)", borderRadius: 12 }}
-                      >
-                        {commitPreviewContent.replace(/\r\n/g, "\n")}
-                      </pre>
-                    ) : (
-                      <div style={{ opacity: 0.75 }}>Select a file.</div>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => void runCommit()}
-                disabled={commitBusy || !commitMessage.trim() || statusEntries.filter((e) => selectedPaths[e.path]).length === 0}
-              >
-                {commitBusy ? "Committing…" : "Commit"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CommitModal
+          activeRepoPath={activeRepoPath}
+          remoteUrl={remoteUrl}
+          diffToolName={diffTool.difftool}
+          busy={commitBusy}
+          error={commitError}
+          message={commitMessage}
+          setMessage={setCommitMessage}
+          statusEntries={statusEntries}
+          selectedPaths={selectedPaths}
+          setSelectedPaths={setSelectedPaths}
+          previewPath={commitPreviewPath}
+          setPreviewPath={setCommitPreviewPath}
+          setPreviewStatus={setCommitPreviewStatus}
+          previewLoading={commitPreviewLoading}
+          previewError={commitPreviewError}
+          previewImageBase64={commitPreviewImageBase64}
+          previewDiff={commitPreviewDiff}
+          previewContent={commitPreviewContent}
+          alsoPush={commitAlsoPush}
+          setAlsoPush={setCommitAlsoPush}
+          joinPath={joinPath}
+          onCopyText={(text) => {
+            void copyText(text);
+          }}
+          onRevealInExplorer={(absPath) => {
+            void invoke<void>("reveal_in_file_explorer", { path: absPath });
+          }}
+          onOpenWorkingFileContextMenu={(path, status, x, y) => {
+            openWorkingFileContextMenu("commit", path, status, x, y);
+          }}
+          onDiscard={(path, status) => {
+            void discardWorkingFile("commit", path, status);
+          }}
+          onDelete={(path) => {
+            void deleteWorkingFile("commit", path);
+          }}
+          onClose={() => setCommitModalOpen(false)}
+          onCommit={() => void runCommit()}
+        />
       ) : null}
 
       {showChangesOpen ? (
@@ -6044,295 +5615,60 @@ function App() {
       ) : null}
 
       {cloneModalOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(80vh, 820px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Clone repository</div>
-              <button type="button" onClick={() => setCloneModalOpen(false)} disabled={cloneBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              {cloneError ? <div className="error">{cloneError}</div> : null}
-              {cloneBusy && cloneProgressMessage ? (
-                <div style={{ opacity: 0.75, fontSize: 12, marginBottom: 10 }}>
-                  <span className="mono">{cloneProgressMessage}</span>
-                </div>
-              ) : null}
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Repository link</div>
-                  <input
-                    value={cloneRepoUrl}
-                    onChange={(e) => {
-                      setCloneRepoUrl(e.target.value);
-                      setCloneBranches([]);
-                      setCloneBranchesError("");
-                    }}
-                    className="modalInput"
-                    placeholder="https://github.com/user/repo.git"
-                    disabled={cloneBusy}
-                  />
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Destination folder</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input
-                      value={cloneDestinationFolder}
-                      onChange={(e) => setCloneDestinationFolder(e.target.value)}
-                      className="modalInput"
-                      placeholder="C:\\Projects"
-                      disabled={cloneBusy}
-                    />
-                    <button type="button" onClick={() => void pickCloneDestinationFolder()} disabled={cloneBusy}>
-                      Browse…
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Create subdirectory</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <input
-                      value={cloneSubdirName}
-                      onChange={(e) => setCloneSubdirName(e.target.value)}
-                      className="modalInput"
-                      placeholder="(default: do not create subfolder)"
-                      disabled={cloneBusy}
-                    />
-                    <div style={{ opacity: 0.7, fontSize: 12 }}>
-                      Target path: <span className="mono">{cloneTargetPath || "(choose destination folder first)"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 800, opacity: 0.8 }}>Branch to clone</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        onClick={() => void fetchCloneBranches()}
-                        disabled={cloneBusy || cloneBranchesBusy || !cloneRepoUrl.trim()}
-                        title="Fetch branches from remote (git ls-remote --heads)"
-                      >
-                        {cloneBranchesBusy ? "Fetching…" : "Fetch"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCloneBranch("")}
-                        disabled={cloneBusy || !cloneBranch.trim()}
-                        title="Use default branch"
-                      >
-                        Default
-                      </button>
-                    </div>
-                  </div>
-                  {cloneBranchesError ? <div className="error">{cloneBranchesError}</div> : null}
-                  <input
-                    value={cloneBranch}
-                    onChange={(e) => setCloneBranch(e.target.value)}
-                    className="modalInput"
-                    placeholder="(default)"
-                    list="cloneBranchesList"
-                    disabled={cloneBusy}
-                  />
-                  <datalist id="cloneBranchesList">
-                    {cloneBranches.map((b) => (
-                      <option key={b} value={b} />
-                    ))}
-                  </datalist>
-                </div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Options</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                      <input
-                        type="checkbox"
-                        checked={cloneInitSubmodules}
-                        onChange={(e) => setCloneInitSubmodules(e.target.checked)}
-                        disabled={cloneBusy}
-                      />
-                      Initialize all submodules
-                    </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                      <input
-                        type="checkbox"
-                        checked={cloneDownloadFullHistory}
-                        onChange={(e) => setCloneDownloadFullHistory(e.target.checked)}
-                        disabled={cloneBusy}
-                      />
-                      Download full history
-                    </label>
-                    <label
-                      style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}
-                      title="Bare repository has no working tree (no project files), only Git history. Useful for read-only storage."
-                    >
-                      <input
-                        type="checkbox"
-                        checked={cloneBare}
-                        onChange={(e) => setCloneBare(e.target.checked)}
-                        disabled={cloneBusy}
-                      />
-                      Bare repository
-                    </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
-                      <input
-                        type="checkbox"
-                        checked={cloneSingleBranch}
-                        onChange={(e) => setCloneSingleBranch(e.target.checked)}
-                        disabled={cloneBusy}
-                      />
-                      Single-branch
-                    </label>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Origin</div>
-                  <input
-                    value={cloneOrigin}
-                    onChange={(e) => setCloneOrigin(e.target.value)}
-                    className="modalInput"
-                    placeholder="(default: origin)"
-                    disabled={cloneBusy}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="modalFooter">
-              <button
-                type="button"
-                onClick={() => void runCloneRepository()}
-                disabled={
-                  cloneBusy ||
-                  !cloneRepoUrl.trim() ||
-                  !cloneDestinationFolder.trim() ||
-                  !cloneTargetPath
-                }
-              >
-                {cloneBusy ? (cloneProgressPercent !== null ? `Cloning ${cloneProgressPercent}%` : "Cloning…") : "Clone"}
-              </button>
-              <button type="button" onClick={() => setCloneModalOpen(false)} disabled={cloneBusy}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <CloneModal
+          busy={cloneBusy}
+          error={cloneError}
+          progressMessage={cloneProgressMessage}
+          progressPercent={cloneProgressPercent}
+          repoUrl={cloneRepoUrl}
+          setRepoUrl={setCloneRepoUrl}
+          destinationFolder={cloneDestinationFolder}
+          setDestinationFolder={setCloneDestinationFolder}
+          subdirName={cloneSubdirName}
+          setSubdirName={setCloneSubdirName}
+          targetPath={cloneTargetPath}
+          branch={cloneBranch}
+          setBranch={setCloneBranch}
+          branchesBusy={cloneBranchesBusy}
+          branchesError={cloneBranchesError}
+          branches={cloneBranches}
+          setBranches={setCloneBranches}
+          setBranchesError={setCloneBranchesError}
+          initSubmodules={cloneInitSubmodules}
+          setInitSubmodules={setCloneInitSubmodules}
+          downloadFullHistory={cloneDownloadFullHistory}
+          setDownloadFullHistory={setCloneDownloadFullHistory}
+          bare={cloneBare}
+          setBare={setCloneBare}
+          origin={cloneOrigin}
+          setOrigin={setCloneOrigin}
+          singleBranch={cloneSingleBranch}
+          setSingleBranch={setCloneSingleBranch}
+          onBrowseDestination={() => void pickCloneDestinationFolder()}
+          onFetchBranches={() => void fetchCloneBranches()}
+          onClose={() => setCloneModalOpen(false)}
+          onClone={() => void runCloneRepository()}
+        />
       ) : null}
 
       {gitTrustOpen ? (
-        <div className="modalOverlay" role="dialog" aria-modal="true">
-          <div className="modal" style={{ width: "min(980px, 96vw)", maxHeight: "min(76vh, 780px)" }}>
-            <div className="modalHeader">
-              <div style={{ fontWeight: 900 }}>Repository is not trusted by Git</div>
-              <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
-                Close
-              </button>
-            </div>
-            <div className="modalBody">
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ opacity: 0.85 }}>
-                  Git prevents opening a repository owned by someone else than the current user. You can choose one of the solutions below.
-                </div>
-
-                {gitTrustActionError ? <div className="error">{gitTrustActionError}</div> : null}
-
-                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
-                  <div>
-                    <div className="recoveryOptionTitle">Trust this repository globally (recommended)</div>
-                    <div className="recoveryOptionDesc">Adds this repository to Git's global safe.directory list.</div>
-                    <div style={{ display: "flex", gap: 10, alignItems: "stretch", marginBottom: 10 }}>
-                      <pre
-                        className="mono"
-                        style={{
-                          margin: 0,
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid var(--border)",
-                          background: "var(--panel-2)",
-                          opacity: 0.95,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-all",
-                          flex: "1 1 auto",
-                          minWidth: 0,
-                        }}
-                      >
-                        {gitTrustGlobalCommand}
-                      </pre>
-                      <button
-                        type="button"
-                        onClick={() => void copyGitTrustGlobalCommand()}
-                        disabled={gitTrustBusy || !gitTrustGlobalCommand || gitTrustCopied}
-                        title="Copy command to clipboard"
-                        style={
-                          gitTrustCopied
-                            ? { background: "rgba(0, 140, 0, 0.10)", borderColor: "rgba(0, 140, 0, 0.25)" }
-                            : undefined
-                        }
-                      >
-                        {gitTrustCopied ? "Copied!" : "Copy"}
-                      </button>
-                    </div>
-                    <button type="button" onClick={() => void trustRepoGloballyAndOpen()} disabled={gitTrustBusy}>
-                      Trust globally
-                    </button>
-                  </div>
-                </div>
-
-                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
-                  <div>
-                    <div className="recoveryOptionTitle">Trust this repository for this session only</div>
-                    <div className="recoveryOptionDesc">
-                      Graphoria will allow Git operations for this repository during the current app session, without changing your Git configuration.
-                    </div>
-                    <button type="button" onClick={() => void trustRepoForSessionAndOpen()} disabled={gitTrustBusy}>
-                      Trust for session
-                    </button>
-                  </div>
-                </div>
-
-                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
-                  <div>
-                    <div className="recoveryOptionTitle">Change ownership to {currentUsername ? currentUsername : "current user"}</div>
-                    <div className="recoveryOptionDesc">Attempts to fix the underlying filesystem ownership/permissions issue.</div>
-                    <button type="button" onClick={() => void changeOwnershipAndOpen()} disabled={gitTrustBusy}>
-                      Change ownership
-                    </button>
-                  </div>
-                </div>
-
-                <div className="recoveryOption" style={{ gridTemplateColumns: "1fr" }}>
-                  <div>
-                    <div className="recoveryOptionTitle">Other actions</div>
-                    <div className="recoveryOptionDesc">Inspect the folder or run Git manually.</div>
-                    <div className="recoveryRow">
-                      <button type="button" onClick={() => void revealRepoInExplorerFromTrustDialog()} disabled={gitTrustBusy}>
-                        Reveal in Explorer
-                      </button>
-                      <button type="button" onClick={() => void openTerminalFromTrustDialog()} disabled={gitTrustBusy}>
-                        Open terminal (Git Bash)
-                      </button>
-                      <button type="button" onClick={() => void closeTrustDialogAndRepoIfOpen()} disabled={gitTrustBusy}>
-                        Close
-                      </button>
-                      <button type="button" onClick={() => setGitTrustDetailsOpen((v) => !v)} disabled={gitTrustBusy || !gitTrustDetails}>
-                        {gitTrustDetailsOpen ? "Hide details" : "Details"}
-                      </button>
-                    </div>
-
-                    {gitTrustDetailsOpen && gitTrustDetails ? (
-                      <pre style={{ whiteSpace: "pre-wrap", opacity: 0.85, marginTop: 10 }}>{gitTrustDetails}</pre>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <GitTrustModal
+          busy={gitTrustBusy}
+          actionError={gitTrustActionError}
+          globalCommand={gitTrustGlobalCommand}
+          copied={gitTrustCopied}
+          currentUsername={currentUsername}
+          detailsOpen={gitTrustDetailsOpen}
+          details={gitTrustDetails}
+          onClose={() => void closeTrustDialogAndRepoIfOpen()}
+          onCopyGlobalCommand={() => void copyGitTrustGlobalCommand()}
+          onTrustGlobally={() => void trustRepoGloballyAndOpen()}
+          onTrustForSession={() => void trustRepoForSessionAndOpen()}
+          onChangeOwnership={() => void changeOwnershipAndOpen()}
+          onRevealInExplorer={() => void revealRepoInExplorerFromTrustDialog()}
+          onOpenTerminal={() => void openTerminalFromTrustDialog()}
+          onToggleDetails={() => setGitTrustDetailsOpen((v) => !v)}
+        />
       ) : null}
 
       <SettingsModal open={settingsOpen} activeRepoPath={activeRepoPath} onClose={() => setSettingsOpen(false)} />
