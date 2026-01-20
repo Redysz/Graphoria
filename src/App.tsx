@@ -8,26 +8,23 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
+import type { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import cytoscape, { type Core } from "cytoscape";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
 import {
   detectAppPlatform,
-  eventToShortcutSpec,
   formatShortcutSpecForDisplay,
   joinShortcutDisplay,
   type ShortcutActionId,
 } from "./shortcuts";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { copyText } from "./utils/clipboard";
 import { computeHunkRanges, buildPatchFromUnselectedHunks } from "./utils/diffPatch";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "./utils/filePreview";
 import { normalizeGitPath } from "./utils/gitPath";
 import { fnv1a32, md5Hex } from "./utils/hash";
-import { parseGitDubiousOwnershipError } from "./utils/gitTrust";
 import { authorInitials, shortHash, truncate } from "./utils/text";
 import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
 import {
@@ -35,6 +32,72 @@ import {
   computeCompactLaneByHashForGraph,
   type CommitLaneRow,
 } from "./features/commits/lanes";
+import { useCyGraph } from "./features/graph/useCyGraph";
+import { useRepoIndicators } from "./features/repo/useRepoIndicators";
+import { useRepoLoader } from "./features/repo/useRepoLoader";
+import { useRepoOpenClose } from "./features/repo/useRepoOpenClose";
+import {
+  gitCreateBranchAdvanced,
+  gitCreateBranch,
+  gitCheckoutBranch,
+  gitCheckoutCommit,
+  gitCherryPick,
+  gitCloneRepo,
+  gitCommitAll,
+  initRepo,
+  gitCommitSummary,
+  gitBranchesPointsAt,
+  changeRepoOwnershipToCurrentUser,
+  gitDeleteBranch,
+  gitDeleteWorkingPath,
+  gitDiscardWorkingPath,
+  gitAddToGitignore,
+  gitFetch,
+  gitGetRemoteUrl,
+  gitIsAncestor,
+  gitListBranches,
+  gitLsRemoteHeads,
+  gitMergeAbort,
+  gitMergeBranch,
+  gitMergeContinue,
+  gitPull,
+  gitPullPredict,
+  gitPullPredictConflictPreview,
+  gitPullRebase,
+  gitRebaseAbort,
+  gitRebaseContinue,
+  gitRenameBranch,
+  gitResolveRef,
+  gitReflog,
+  gitReset,
+  gitResetHard,
+  gitStashBaseCommit,
+  gitStashApply,
+  gitStashClear,
+  gitStashDrop,
+  gitStashPushPatch,
+  gitStashPushPaths,
+  gitStashShow,
+  gitStatus,
+  gitSwitch,
+  gitCommit,
+  gitHasStagedChanges,
+  gitPush,
+  gitSetRemoteUrl,
+  gitTrustRepoGlobal,
+  gitTrustRepoSession,
+  repoOverview,
+} from "./api/git";
+ import { getCurrentUsername, openInFileExplorer, openTerminalProfile as openTerminalProfileApi, revealInFileExplorer } from "./api/system";
+import {
+  gitHeadVsWorkingTextDiff,
+  gitLaunchExternalDiffWorking,
+  gitWorkingFileContent,
+  gitWorkingFileDiff,
+  gitWorkingFileDiffUnified,
+  gitWorkingFileImageBase64,
+  gitWorkingFileTextPreview,
+} from "./api/gitWorkingFiles";
 import { RepoTabs } from "./components/RepoTabs";
 import { TopToolbar } from "./components/TopToolbar";
 import { MainHeader } from "./components/MainHeader";
@@ -85,18 +148,12 @@ import type {
   GitStatusSummary,
   GitStashEntry,
   PullPredictResult,
-  PullResult,
   RepoOverview,
 } from "./types/git";
 
 import "./styles/index.css";
 
 type GitResetMode = "soft" | "mixed" | "hard";
-
-type ViewportState = {
-  zoom: number;
-  pan: { x: number; y: number };
-};
 
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
@@ -143,7 +200,6 @@ function App() {
   const [confirmOkLabel, setConfirmOkLabel] = useState("OK");
   const [confirmCancelLabel, setConfirmCancelLabel] = useState("Cancel");
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null);
-  const [autoCenterToken, setAutoCenterToken] = useState(0);
 
   const tabSuppressClickRef = useRef(false);
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -315,6 +371,8 @@ function App() {
   const shortcutRuntimeRef = useRef<any>({});
   const fullscreenRestoreRef = useRef<{ pos: PhysicalPosition; size: PhysicalSize } | null>(null);
 
+  useGlobalShortcuts(shortcutRuntimeRef, fullscreenRestoreRef);
+
   const [pullConflictOpen, setPullConflictOpen] = useState(false);
   const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
   const [pullConflictFiles, setPullConflictFiles] = useState<string[]>([]);
@@ -428,6 +486,63 @@ function App() {
     const m = msg ?? "";
     setPullErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
   }
+
+  const { loadRepo } = useRepoLoader({
+    activeRepoPath,
+    commitsFullByRepo,
+    commitsOnlyHead,
+    commitsHistoryOrder,
+
+    setLoading,
+    setError,
+    setSelectedHash,
+
+    setCommitsByRepo,
+    setOverviewByRepo,
+    setStatusSummaryByRepo,
+    setRemoteUrlByRepo,
+    setAheadBehindByRepo,
+    setStashesByRepo,
+
+    setGitTrustRepoPath,
+    setGitTrustDetails,
+    setGitTrustDetailsOpen,
+    setGitTrustActionError,
+    setGitTrustOpen,
+  });
+
+  const { openRepository, closeRepository } = useRepoOpenClose({
+    defaultViewMode,
+    repos,
+    activeRepoPath,
+
+    setGlobalError,
+    setErrorByRepo,
+    setPullErrorByRepo,
+    setSelectedHash,
+    setLoading,
+
+    setViewModeByRepo,
+    setRepos,
+    setActiveRepoPath,
+
+    setOverviewByRepo,
+    setCommitsByRepo,
+    setCommitsFullByRepo,
+    setCommitsFullLoadingByRepo,
+    setRemoteUrlByRepo,
+    setStatusSummaryByRepo,
+    setAheadBehindByRepo,
+    setStashesByRepo,
+
+    setGitTrustRepoPath,
+    setGitTrustDetails,
+    setGitTrustDetailsOpen,
+    setGitTrustActionError,
+    setGitTrustOpen,
+
+    loadRepo,
+  });
 
   const lastSidebarWidthRef = useRef<number>(280);
   const lastDetailsHeightRef = useRef<number>(280);
@@ -553,7 +668,6 @@ function App() {
     tag: string;
   } | null>(null);
   const tagContextMenuRef = useRef<HTMLDivElement | null>(null);
-  const [zoomPct, setZoomPct] = useState<number>(100);
 
   const [avatarFailedByEmail, setAvatarFailedByEmail] = useState<Record<string, true>>({});
 
@@ -690,6 +804,62 @@ function App() {
     return m;
   }, [commitLaneLayout.rows]);
 
+  function parseRefs(
+    refs: string,
+    remoteNames: string[],
+  ): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
+    const parts = refs
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    const out: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> = [];
+
+    const remotePrefixes = (remoteNames ?? [])
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+
+    const isRemoteRef = (label: string) => {
+      const t = label.trim();
+      if (!t) return false;
+      return remotePrefixes.some((r) => t.startsWith(`${r}/`));
+    };
+
+    for (const part of parts) {
+      if (part.startsWith("tag: ")) {
+        const label = part.slice("tag: ".length).trim();
+        if (label) out.push({ kind: "tag", label });
+        continue;
+      }
+
+      if (part.includes(" -> ")) {
+        const [leftRaw, rightRaw] = part.split(" -> ", 2);
+        const left = leftRaw.trim();
+        const right = rightRaw.trim();
+        if (left === "HEAD") {
+          out.push({ kind: "head", label: "HEAD" });
+        } else if (left.endsWith("/HEAD")) {
+          out.push({ kind: "remote", label: left });
+        } else if (left) {
+          out.push({ kind: isRemoteRef(left) ? "remote" : "branch", label: left });
+        }
+        if (right) {
+          out.push({ kind: isRemoteRef(right) ? "remote" : "branch", label: right });
+        }
+        continue;
+      }
+
+      if (part === "HEAD") {
+        out.push({ kind: "head", label: "HEAD" });
+        continue;
+      }
+
+      out.push({ kind: isRemoteRef(part) ? "remote" : "branch", label: part });
+    }
+
+    return out;
+  }
+
   const commitLanePalette = useMemo(() => getCyPalette(theme), [theme]);
   const commitLaneNodeBg = commitLanePalette.nodeBg;
 
@@ -736,7 +906,7 @@ function App() {
       const results = await Promise.all(
         missing.map(async (s) => {
           try {
-            const base = await invoke<string>("git_stash_base_commit", { repoPath: repo, stashRef: s.reference });
+            const base = await gitStashBaseCommit({ repoPath: repo, stashRef: s.reference });
             const t = (base ?? "").trim();
             if (!t) return null;
             return [s.reference, t] as const;
@@ -845,6 +1015,7 @@ function App() {
       setGraph,
       setGit,
       setGeneral,
+      setGraphButtonsVisible,
 
       setGoToOpen,
       setGoToKind,
@@ -865,278 +1036,6 @@ function App() {
       openTerminalProfile,
     };
   });
-
-  useEffect(() => {
-    const isTextEntryTarget = (t: EventTarget | null) => {
-      const el = t instanceof HTMLElement ? t : null;
-      if (!el) return false;
-      if (el.isContentEditable) return true;
-      const tag = el.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-      return !!el.closest("input,textarea,select,[contenteditable='true']");
-    };
-
-    const isShortcutCaptureTarget = (t: EventTarget | null) => {
-      const el = t instanceof HTMLElement ? t : null;
-      if (!el) return false;
-      return !!el.closest("[data-shortcut-capture='true']");
-    };
-
-    const isBrowserShortcut = (e: KeyboardEvent) => {
-      const key = (e.key || "").toLowerCase();
-      const primary = e.ctrlKey || e.metaKey;
-
-      if (e.key === "F5") return true;
-      if (e.key === "F11") return true;
-      if (primary && !e.altKey && (key === "r" || key === "p" || key === "f" || key === "g")) return true;
-      if (primary && !e.altKey && (key === "t" || key === "n" || key === "w" || key === "o" || key === "s")) return true;
-      if (primary && !e.altKey && (key === "l" || key === "k" || key === "u")) return true;
-      if (primary && e.shiftKey && !e.altKey && (key === "i" || key === "j" || key === "c")) return true;
-      return false;
-    };
-
-    const toggleFullscreen = async () => {
-      const win = getCurrentWindow();
-      const isFs = await win.isFullscreen();
-      if (!isFs) {
-        const pos = await win.outerPosition();
-        const size = await win.outerSize();
-        fullscreenRestoreRef.current = { pos, size };
-        await win.setFullscreen(true);
-        return;
-      }
-
-      await win.setFullscreen(false);
-      const restore = fullscreenRestoreRef.current;
-      if (!restore) return;
-      await win.setSize(new PhysicalSize(restore.size.width, restore.size.height)).catch(() => undefined);
-      await win.setPosition(new PhysicalPosition(restore.pos.x, restore.pos.y)).catch(() => undefined);
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const s = shortcutRuntimeRef.current;
-
-      const inShortcutCapture = isShortcutCaptureTarget(e.target) || isShortcutCaptureTarget(document.activeElement);
-      if (inShortcutCapture) return;
-
-      if (e.key === "F12") {
-        e.preventDefault();
-        e.stopPropagation();
-        void toggleFullscreen();
-        return;
-      }
-
-      const inTextEntry = isTextEntryTarget(e.target) || isTextEntryTarget(document.activeElement);
-      const blockedByBrowser = isBrowserShortcut(e);
-      if (blockedByBrowser) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-
-      const anyModalOpen =
-        !!s.gitTrustOpen ||
-        !!s.diffToolModalOpen ||
-        !!s.cleanOldBranchesOpen ||
-        !!s.settingsOpen ||
-        !!s.goToOpen ||
-        !!s.confirmOpen ||
-        !!s.cloneModalOpen ||
-        !!s.commitModalOpen ||
-        !!s.stashModalOpen ||
-        !!s.stashViewOpen ||
-        !!s.remoteModalOpen ||
-        !!s.pushModalOpen ||
-        !!s.resetModalOpen ||
-        !!s.createBranchOpen ||
-        !!s.renameBranchOpen ||
-        !!s.switchBranchOpen ||
-        !!s.pullConflictOpen ||
-        !!s.pullPredictOpen ||
-        !!s.filePreviewOpen ||
-        !!s.detachedHelpOpen ||
-        !!s.cherryStepsOpen ||
-        !!s.previewZoomSrc;
-
-      if (s.terminalMenuOpen) {
-        const profiles = (s.terminalSettings?.profiles ?? []) as Array<{ id: string }>;
-        const max = profiles.length;
-
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          s.setTerminalMenuOpen(false);
-          return;
-        }
-        if (max > 0 && e.key === "ArrowDown") {
-          e.preventDefault();
-          e.stopPropagation();
-          s.setTerminalMenuIndex((i: number) => Math.min(max - 1, i + 1));
-          return;
-        }
-        if (max > 0 && e.key === "ArrowUp") {
-          e.preventDefault();
-          e.stopPropagation();
-          s.setTerminalMenuIndex((i: number) => Math.max(0, i - 1));
-          return;
-        }
-        if (max > 0 && e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          const p = profiles[Math.max(0, Math.min(max - 1, s.terminalMenuIndex))];
-          if (!p) return;
-          s.setTerminalMenuOpen(false);
-          s.setTerminal({ defaultProfileId: p.id });
-          s.openTerminalProfile(p.id);
-          return;
-        }
-      }
-
-      if (anyModalOpen) return;
-      if (inTextEntry) return;
-
-      const spec = eventToShortcutSpec(e);
-      if (!spec) return;
-
-      let actionId: ShortcutActionId | null = null;
-      for (const [k, v] of Object.entries(s.shortcutBindings ?? ({} as Record<string, unknown>))) {
-        const vv = typeof v === "string" ? v : "";
-        if (vv.trim() === spec) {
-          actionId = k as ShortcutActionId;
-          break;
-        }
-      }
-      if (!actionId) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (actionId === "cmd.terminalMenu" && !s.activeRepoPath) return;
-      if (actionId === "cmd.pullMenu" && !s.activeRepoPath) return;
-      if (actionId === "repo.fetch" && !s.activeRepoPath) return;
-      if (actionId === "cmd.commit" && !s.activeRepoPath) return;
-      if (actionId === "cmd.push" && !s.activeRepoPath) return;
-      if (actionId === "cmd.stash" && !s.activeRepoPath) return;
-      if (actionId === "cmd.checkoutBranch" && !s.activeRepoPath) return;
-      if (actionId === "cmd.reset" && !s.activeRepoPath) return;
-
-      switch (actionId) {
-        case "repo.prev":
-          s.moveActiveRepoBy(-1);
-          return;
-        case "repo.next":
-          s.moveActiveRepoBy(1);
-          return;
-        case "panel.branches.show":
-          s.setSidebarVisible(true);
-          return;
-        case "panel.branches.hide":
-          s.setSidebarVisible(false);
-          return;
-        case "panel.details.show":
-          s.setDetailsVisible(true);
-          return;
-        case "panel.details.hide":
-          s.setDetailsVisible(false);
-          return;
-        case "view.graph":
-          s.setViewMode("graph");
-          return;
-        case "view.commits":
-          s.setViewMode("commits");
-          return;
-        case "nav.goToCommit":
-          s.setGoToError("");
-          s.setGoToKind("commit");
-          s.setGoToText("");
-          s.setGoToTargetView(s.viewMode);
-          s.setGoToOpen(true);
-          return;
-        case "nav.goToTag":
-          s.setGoToError("");
-          s.setGoToKind("tag");
-          s.setGoToText("");
-          s.setGoToTargetView(s.viewMode);
-          s.setGoToOpen(true);
-          return;
-        case "cmd.commit":
-          s.openCommitDialog();
-          return;
-        case "cmd.push":
-          s.openPushDialog();
-          return;
-        case "cmd.stash":
-          s.openStashDialog();
-          return;
-        case "cmd.createBranch": {
-          const at = (s.selectedHash?.trim() ? s.selectedHash.trim() : s.headHash?.trim()).trim();
-          if (!at) return;
-          s.openCreateBranchDialog(at);
-          return;
-        }
-        case "cmd.checkoutBranch":
-          s.openSwitchBranchDialog();
-          return;
-        case "cmd.reset":
-          s.openResetDialog();
-          return;
-        case "repo.open":
-          s.pickRepository();
-          return;
-        case "repo.refresh":
-          s.loadRepo();
-          return;
-        case "repo.initialize":
-          s.initializeProject();
-          return;
-        case "cmd.terminalMenu":
-          s.setTerminalMenuOpen((v: boolean) => !v);
-          return;
-        case "cmd.pullMenu":
-          if (!s.activeRepoPath || s.loading || s.pullBusy || !s.remoteUrl) return;
-          s.setPullMenuOpen((v: boolean) => !v);
-          return;
-        case "repo.fetch":
-          s.runFetch();
-          return;
-        case "tool.diffTool":
-          s.setDiffToolModalOpen(true);
-          return;
-        case "view.toggleStashesOnGraph":
-          s.setGraph({ showStashesOnGraph: !s.graphSettings.showStashesOnGraph });
-          return;
-        case "view.toggleTags":
-          s.setGraph({ showTags: !s.graphSettings.showTags });
-          return;
-        case "view.toggleRemoteBranches":
-          s.setGraph({ showRemoteBranchesOnGraph: !s.graphSettings.showRemoteBranchesOnGraph });
-          return;
-        case "view.toggleDetailsWindow":
-          s.setDetailsVisible(!(s.layout.detailsHeightPx > 0));
-          return;
-        case "view.toggleBranchesWindow":
-          s.setSidebarVisible(!(s.layout.sidebarWidthPx > 0));
-          return;
-        case "view.toggleGraphButtons":
-          setGraphButtonsVisible((v) => !v);
-          return;
-        case "view.toggleOnlineAvatars":
-          s.setGit({ showOnlineAvatars: !s.showOnlineAvatars });
-          return;
-        case "view.toggleCommitsOnlyHead":
-          s.setGit({ commitsOnlyHead: !s.commitsOnlyHead });
-          return;
-        case "view.toggleLayoutDirection":
-          s.setGraph({ edgeDirection: s.graphSettings.edgeDirection === "to_parent" ? "to_child" : "to_parent" });
-          return;
-        case "view.toggleTooltips":
-          s.setGeneral({ tooltips: { ...s.tooltipSettings, enabled: !s.tooltipSettings.enabled } });
-          return;
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
 
   const isDetached = overview?.head_name === "(detached)";
   const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
@@ -1197,7 +1096,7 @@ function App() {
     let alive = true;
     setCommitContextBranches([]);
     setCommitContextBranchesLoading(true);
-    void invoke<string[]>("git_branches_points_at", { repoPath: activeRepoPath, commit: commitContextMenu.hash })
+    void gitBranchesPointsAt({ repoPath: activeRepoPath, commit: commitContextMenu.hash })
       .then((branches) => {
         if (!alive) return;
         const next = Array.isArray(branches) ? branches : [];
@@ -1237,7 +1136,7 @@ function App() {
     setCreateBranchCommitLoading(true);
 
     const timer = window.setTimeout(() => {
-      void invoke<GitCommitSummary>("git_commit_summary", { repoPath: activeRepoPath, commit: at })
+      void gitCommitSummary({ repoPath: activeRepoPath, commit: at })
         .then((s) => {
           if (!alive) return;
           setCreateBranchCommitSummary(s);
@@ -1260,7 +1159,7 @@ function App() {
   useEffect(() => {
     if (!gitTrustOpen) return;
     if (currentUsername) return;
-    void invoke<string>("get_current_username")
+    void getCurrentUsername()
       .then((u) => {
         setCurrentUsername(typeof u === "string" ? u : "");
       })
@@ -1335,7 +1234,7 @@ function App() {
     }
 
     let alive = true;
-    void invoke<string[]>("git_branches_points_at", { repoPath: activeRepoPath, commit: headHash })
+    void gitBranchesPointsAt({ repoPath: activeRepoPath, commit: headHash })
       .then((branches) => {
         if (!alive) return;
         const next = Array.isArray(branches) ? branches : [];
@@ -1386,12 +1285,6 @@ function App() {
     if (!name) return base;
     return joinPath(base, name);
   }, [cloneDestinationFolder, cloneSubdirName]);
-
-  const graphRef = useRef<HTMLDivElement | null>(null);
-  const cyRef = useRef<Core | null>(null);
-  const viewportByRepoRef = useRef<Record<string, ViewportState | undefined>>({});
-  const pendingAutoCenterByRepoRef = useRef<Record<string, boolean | undefined>>({});
-  const viewportRafRef = useRef<number | null>(null);
 
   const selectedCommit = useMemo(() => {
     if (!selectedHash) return undefined;
@@ -1453,7 +1346,7 @@ function App() {
 
   async function refreshCommitStatusEntries() {
     if (!activeRepoPath) return;
-    const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+    const entries = await gitStatus(activeRepoPath);
     setStatusEntries(entries);
     setSelectedPaths((prev) => {
       const next: Record<string, boolean> = {};
@@ -1469,7 +1362,7 @@ function App() {
 
   async function refreshStashStatusEntries() {
     if (!activeRepoPath) return;
-    const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+    const entries = await gitStatus(activeRepoPath);
     setStashStatusEntries(entries);
     setStashSelectedPaths((prev) => {
       const next: Record<string, boolean> = {};
@@ -1497,7 +1390,7 @@ function App() {
     });
     if (!ok) return;
     try {
-      await invoke<void>("git_discard_working_path", { repoPath: activeRepoPath, path, isUntracked });
+      await gitDiscardWorkingPath({ repoPath: activeRepoPath, path, isUntracked });
       if (mode === "commit") await refreshCommitStatusEntries();
       else await refreshStashStatusEntries();
     } catch (e) {
@@ -1518,7 +1411,7 @@ function App() {
     });
     if (!ok) return;
     try {
-      await invoke<void>("git_delete_working_path", { repoPath: activeRepoPath, path });
+      await gitDeleteWorkingPath({ repoPath: activeRepoPath, path });
       if (mode === "commit") await refreshCommitStatusEntries();
       else await refreshStashStatusEntries();
     } catch (e) {
@@ -1532,7 +1425,7 @@ function App() {
     if (!activeRepoPath) return;
     if (mode === "commit" ? commitBusy : stashBusy) return;
     try {
-      await invoke<void>("git_add_to_gitignore", { repoPath: activeRepoPath, pattern });
+      await gitAddToGitignore({ repoPath: activeRepoPath, pattern });
       if (mode === "commit") await refreshCommitStatusEntries();
       else await refreshStashStatusEntries();
     } catch (e) {
@@ -1587,7 +1480,7 @@ function App() {
     setResetError("");
     setError("");
     try {
-      await invoke<string>("git_reset", { repoPath: activeRepoPath, mode, target: t });
+      await gitReset({ repoPath: activeRepoPath, mode, target: t });
       setResetModalOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -1604,7 +1497,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_switch", { repoPath: activeRepoPath, branch: b, create: false });
+      await gitSwitch({ repoPath: activeRepoPath, branch: b, create: false });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -1622,7 +1515,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_switch", {
+      await gitSwitch({
         repoPath: activeRepoPath,
         branch: localName,
         create: true,
@@ -1660,7 +1553,7 @@ function App() {
     setSwitchBranchOpen(true);
 
     try {
-      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: true });
+      const list = await gitListBranches({ repoPath: activeRepoPath, includeRemote: true });
       setSwitchBranches(Array.isArray(list) ? list : []);
     } catch (e) {
       setSwitchBranches([]);
@@ -1675,8 +1568,8 @@ function App() {
     setSwitchBranchesError("");
     setSwitchBranchesLoading(true);
     try {
-      await invoke<string>("git_fetch", { repoPath: activeRepoPath, remoteName: "origin" });
-      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: true });
+      await gitFetch(activeRepoPath, "origin");
+      const list = await gitListBranches({ repoPath: activeRepoPath, includeRemote: true });
       setSwitchBranches(Array.isArray(list) ? list : []);
     } catch (e) {
       setSwitchBranches([]);
@@ -1706,7 +1599,7 @@ function App() {
     setError("");
     try {
       if (switchBranchMode === "local") {
-        await invoke<string>("git_switch", { repoPath: activeRepoPath, branch: name, create: false });
+        await gitSwitch({ repoPath: activeRepoPath, branch: name, create: false });
       } else {
         const remoteRef = name;
         const localName =
@@ -1715,7 +1608,7 @@ function App() {
           setSwitchBranchError("Local branch name is empty.");
           return;
         }
-        await invoke<string>("git_switch", {
+        await gitSwitch({
           repoPath: activeRepoPath,
           branch: localName,
           create: true,
@@ -1750,7 +1643,7 @@ function App() {
     setRenameBranchError("");
     setError("");
     try {
-      await invoke<string>("git_rename_branch", { repoPath: activeRepoPath, oldName, newName });
+      await gitRenameBranch({ repoPath: activeRepoPath, oldName, newName });
       setRenameBranchOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -1776,7 +1669,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: b, force: false });
+      await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: false });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -1790,7 +1683,7 @@ function App() {
     setCleanOldBranchesLoading(true);
     setCleanOldBranchesError("");
     try {
-      const list = await invoke<GitBranchInfo[]>("git_list_branches", { repoPath: activeRepoPath, includeRemote: false });
+      const list = await gitListBranches({ repoPath: activeRepoPath, includeRemote: false });
       setCleanOldBranchesAll(Array.isArray(list) ? list : []);
     } catch (e) {
       setCleanOldBranchesAll([]);
@@ -1837,7 +1730,7 @@ function App() {
       const failures: Array<{ branch: string; error: string }> = [];
       for (const b of toDelete) {
         try {
-          await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: b, force: false });
+          await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: false });
         } catch (e) {
           failures.push({ branch: b, error: typeof e === "string" ? e : JSON.stringify(e) });
         }
@@ -1846,7 +1739,7 @@ function App() {
       await refreshCleanOldBranches();
 
       try {
-        const ov = await invoke<RepoOverview>("repo_overview", { repoPath: activeRepoPath });
+        const ov = await repoOverview(activeRepoPath);
         setOverviewByRepo((prev) => ({ ...prev, [activeRepoPath]: ov }));
       } catch {
       }
@@ -1876,7 +1769,7 @@ function App() {
     setCreateBranchError("");
     setError("");
     try {
-      await invoke<string>("git_create_branch_advanced", {
+      await gitCreateBranchAdvanced({
         repoPath: activeRepoPath,
         branch: name,
         at: at ? at : undefined,
@@ -1902,11 +1795,7 @@ function App() {
     let outsideBranch = false;
     if (head) {
       try {
-        const isAncestor = await invoke<boolean>("git_is_ancestor", {
-          repoPath: activeRepoPath,
-          ancestor: h,
-          descendant: head,
-        });
+        const isAncestor = await gitIsAncestor({ repoPath: activeRepoPath, ancestor: h, descendant: head });
         outsideBranch = !isAncestor;
       } catch {
         outsideBranch = false;
@@ -1938,7 +1827,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_reset", { repoPath: activeRepoPath, mode, target: h });
+      await gitReset({ repoPath: activeRepoPath, mode, target: h });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -1980,7 +1869,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_checkout_commit", { repoPath: activeRepoPath, commit });
+      await gitCheckoutCommit({ repoPath: activeRepoPath, commit });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -1988,22 +1877,6 @@ function App() {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    if (viewMode !== "graph") return;
-    const cy = cyRef.current;
-    if (!cy) return;
-    applyRefBadges(cy);
-  }, [
-    activeRepoPath,
-    graphSettings.showStashesOnGraph,
-    graphSettings.showRemoteBranchesOnGraph,
-    stashBaseByRepo,
-    stashesByRepo,
-    theme,
-    viewMode,
-    overview?.remotes,
-  ]);
 
   async function checkoutBranch(branch: string) {
     if (!activeRepoPath) return;
@@ -2013,7 +1886,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -2038,8 +1911,8 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await gitResetHard(activeRepoPath);
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -2063,12 +1936,7 @@ function App() {
 
     setError("");
     try {
-      await invoke<void>("open_terminal_profile", {
-        repoPath,
-        kind: selected.kind,
-        command: selected.command,
-        args: selected.args,
-      });
+      await openTerminalProfileApi({ repoPath, kind: selected.kind, command: selected.command, args: selected.args });
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     }
@@ -2097,7 +1965,7 @@ function App() {
     setDetachedError("");
     setError("");
     try {
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
       setDetachedHelpOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -2127,8 +1995,8 @@ function App() {
     setDetachedError("");
     setError("");
     try {
-      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await gitResetHard(activeRepoPath);
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
       setDetachedHelpOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -2162,13 +2030,13 @@ function App() {
     setDetachedError("");
     setError("");
     try {
-      await invoke<string>("git_commit_all", { repoPath: activeRepoPath, message: msg });
-      await invoke<string>("git_create_branch", { repoPath: activeRepoPath, branch: tmp });
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
+      await gitCommitAll({ repoPath: activeRepoPath, message: msg });
+      await gitCreateBranch({ repoPath: activeRepoPath, branch: tmp });
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
 
       if (detachedMergeAfterSave) {
-        await invoke<string>("git_merge_branch", { repoPath: activeRepoPath, branch: tmp });
-        await invoke<string>("git_delete_branch", { repoPath: activeRepoPath, branch: tmp, force: false });
+        await gitMergeBranch({ repoPath: activeRepoPath, branch: tmp });
+        await gitDeleteBranch({ repoPath: activeRepoPath, branch: tmp, force: false });
       }
 
       setDetachedHelpOpen(false);
@@ -2194,9 +2062,9 @@ function App() {
     setCherryReflog("");
     setError("");
     try {
-      const newHash = await invoke<string>("git_commit_all", { repoPath: activeRepoPath, message: msg });
+      const newHash = await gitCommitAll({ repoPath: activeRepoPath, message: msg });
       setCherryCommitHash(newHash.trim());
-      const reflog = await invoke<string>("git_reflog", { repoPath: activeRepoPath, maxCount: 20 });
+      const reflog = await gitReflog({ repoPath: activeRepoPath, maxCount: 20 });
       setCherryReflog(reflog);
 
       setDetachedHelpOpen(false);
@@ -2226,9 +2094,9 @@ function App() {
     setDetachedError("");
     setError("");
     try {
-      await invoke<string>("git_reset_hard", { repoPath: activeRepoPath });
-      await invoke<string>("git_checkout_branch", { repoPath: activeRepoPath, branch: b });
-      await invoke<string>("git_cherry_pick", { repoPath: activeRepoPath, commits: [h] });
+      await gitResetHard(activeRepoPath);
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
+      await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
 
       setCherryStepsOpen(false);
       await loadRepo(activeRepoPath);
@@ -2244,7 +2112,7 @@ function App() {
 
     setError("");
     try {
-      await invoke<void>("open_in_file_explorer", { path: activeRepoPath });
+      await openInFileExplorer(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     }
@@ -2258,7 +2126,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const hash = await invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference: ref });
+      const hash = await gitResolveRef({ repoPath: activeRepoPath, reference: ref });
       return hash;
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -2266,12 +2134,6 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function requestAutoCenter() {
-    if (!activeRepoPath) return;
-    pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
-    setAutoCenterToken((t) => t + 1);
   }
 
   async function focusTagOnGraph(tag: string) {
@@ -2395,48 +2257,16 @@ function App() {
     focusHashOnCommits(root);
   }
 
-  function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
-    const cy = cyRef.current;
-    if (!cy) return;
-
-    cy.resize();
-
-    const node = cy.$id(hash);
-    if (node.length === 0) return;
-
-    if (typeof nextZoom === "number") {
-      cy.zoom(nextZoom);
-    }
-
-    const container = graphRef.current;
-    const cyW = cy.width() || 0;
-    const cyH = cy.height() || 0;
-    const h = cyH || container?.clientHeight || 0;
-    if ((cyW <= 0 || cyH <= 0) && attempt < 10) {
-      requestAnimationFrame(() => focusOnHash(hash, nextZoom, yRatio, attempt + 1));
-      return;
-    }
-
-    cy.center(node);
-
-    if (typeof yRatio === "number") {
-      const pan = cy.pan();
-      const desiredY = h * yRatio;
-      const currentY = h / 2;
-      cy.pan({ x: pan.x, y: pan.y + (desiredY - currentY) });
-    }
-  }
-
   async function startPull(op: "merge" | "rebase") {
     if (!activeRepoPath) return;
     setPullBusy(true);
     setPullError("");
     setError("");
     try {
-      const res = await invoke<PullResult>(op === "rebase" ? "git_pull_rebase" : "git_pull", {
-        repoPath: activeRepoPath,
-        remoteName: "origin",
-      });
+      const res =
+        op === "rebase"
+          ? await gitPullRebase({ repoPath: activeRepoPath, remoteName: "origin" })
+          : await gitPull({ repoPath: activeRepoPath, remoteName: "origin" });
 
       if (res.status === "conflicts") {
         const nextOp = res.operation === "rebase" ? "rebase" : "merge";
@@ -2494,7 +2324,7 @@ function App() {
     const run = async () => {
       try {
         if (filePreviewMode === "pullPredict" && filePreviewUpstream.trim()) {
-          const content = await invoke<string>("git_pull_predict_conflict_preview", {
+          const content = await gitPullPredictConflictPreview({
             repoPath: activeRepoPath,
             upstream: filePreviewUpstream,
             path: filePreviewPath,
@@ -2506,12 +2336,7 @@ function App() {
 
         const useExternal = diffTool.difftool !== "Graphoria builtin diff";
         if (useExternal) {
-          await invoke<void>("git_launch_external_diff_working", {
-            repoPath: activeRepoPath,
-            path: filePreviewPath,
-            toolPath: diffTool.path,
-            command: diffTool.command,
-          });
+          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: filePreviewPath, toolPath: diffTool.path, command: diffTool.command });
           if (!alive) return;
           setFilePreviewContent("Opened in external diff tool.");
           return;
@@ -2519,50 +2344,34 @@ function App() {
 
         const ext = fileExtLower(filePreviewPath);
         if (isImageExt(ext)) {
-          const b64 = await invoke<string>("git_working_file_image_base64", {
-            repoPath: activeRepoPath,
-            path: filePreviewPath,
-          });
+          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: filePreviewPath });
           if (!alive) return;
           setFilePreviewImageBase64(b64);
           return;
         }
 
         if (isDocTextPreviewExt(ext)) {
-          const diff = await invoke<string>("git_head_vs_working_text_diff", {
-            repoPath: activeRepoPath,
-            path: filePreviewPath,
-            unified: 3,
-          });
+          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: filePreviewPath, unified: 3 });
           if (!alive) return;
           if (diff.trim()) {
             setFilePreviewDiff(diff);
             return;
           }
 
-          const content = await invoke<string>("git_working_file_text_preview", {
-            repoPath: activeRepoPath,
-            path: filePreviewPath,
-          });
+          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: filePreviewPath });
           if (!alive) return;
           setFilePreviewContent(content);
           return;
         }
 
-        const diff = await invoke<string>("git_working_file_diff", {
-          repoPath: activeRepoPath,
-          path: filePreviewPath,
-        });
+        const diff = await gitWorkingFileDiff({ repoPath: activeRepoPath, path: filePreviewPath });
         if (!alive) return;
         if (diff.trim()) {
           setFilePreviewDiff(diff);
           return;
         }
 
-        const content = await invoke<string>("git_working_file_content", {
-          repoPath: activeRepoPath,
-          path: filePreviewPath,
-        });
+        const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: filePreviewPath });
         if (!alive) return;
         setFilePreviewContent(content);
       } catch (e) {
@@ -2597,11 +2406,7 @@ function App() {
     setPullPredictRebase(rebase);
     setPullPredictOpen(true);
     try {
-      const res = await invoke<PullPredictResult>("git_pull_predict", {
-        repoPath: activeRepoPath,
-        remoteName: "origin",
-        rebase,
-      });
+      const res = await gitPullPredict({ repoPath: activeRepoPath, remoteName: "origin", rebase });
       setPullPredictResult(res);
     } catch (e) {
       setPullPredictError(typeof e === "string" ? e : JSON.stringify(e));
@@ -2615,11 +2420,7 @@ function App() {
     setPullBusy(true);
     setPullError("");
     try {
-      const pred = await invoke<PullPredictResult>("git_pull_predict", {
-        repoPath: activeRepoPath,
-        remoteName: "origin",
-        rebase: true,
-      });
+      const pred = await gitPullPredict({ repoPath: activeRepoPath, remoteName: "origin", rebase: true });
 
       if (pred.conflict_files && pred.conflict_files.length > 0) {
         await startPull("merge");
@@ -2640,9 +2441,9 @@ function App() {
     setPullError("");
     try {
       if (pullConflictOperation === "rebase") {
-        await invoke<string>("git_rebase_continue", { repoPath: activeRepoPath });
+        await gitRebaseContinue(activeRepoPath);
       } else {
-        await invoke<string>("git_merge_continue", { repoPath: activeRepoPath });
+        await gitMergeContinue(activeRepoPath);
       }
       setPullConflictOpen(false);
       await loadRepo(activeRepoPath);
@@ -2659,9 +2460,9 @@ function App() {
     setPullError("");
     try {
       if (pullConflictOperation === "rebase") {
-        await invoke<string>("git_rebase_abort", { repoPath: activeRepoPath });
+        await gitRebaseAbort(activeRepoPath);
       } else {
-        await invoke<string>("git_merge_abort", { repoPath: activeRepoPath });
+        await gitMergeAbort(activeRepoPath);
       }
       setPullConflictOpen(false);
       await loadRepo(activeRepoPath);
@@ -2670,11 +2471,6 @@ function App() {
     } finally {
       setPullBusy(false);
     }
-  }
-
-  function focusOnHead() {
-    if (!headHash) return;
-    focusOnHash(headHash, 1, 0.22);
   }
 
   function focusOnNewest() {
@@ -2712,18 +2508,6 @@ function App() {
     } finally {
       setCommitsFullLoadingByRepo((prev) => ({ ...prev, [activeRepoPath]: false }));
     }
-  }
-
-  function zoomBy(factor: number) {
-    const cy = cyRef.current;
-    if (!cy) return;
-    const current = cy.zoom();
-    const next = Math.min(5, Math.max(0.1, current * factor));
-    const renderedCenter = {
-      x: cy.width() / 2,
-      y: cy.height() / 2,
-    };
-    cy.zoom({ level: next, renderedPosition: renderedCenter });
   }
 
   const elements = useMemo(() => {
@@ -2790,704 +2574,40 @@ function App() {
     };
   }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankSep]);
 
-  function parseRefs(
-    refs: string,
-    remoteNames: string[],
-  ): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
-    const parts = refs
-      .split(",")
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-
-    const out: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> = [];
-
-    const remotePrefixes = (remoteNames ?? [])
-      .map((r) => r.trim())
-      .filter((r) => r.length > 0);
-
-    const isRemoteRef = (label: string) => {
-      const t = label.trim();
-      if (!t) return false;
-      return remotePrefixes.some((r) => t.startsWith(`${r}/`));
-    };
-
-    for (const part of parts) {
-      if (part.startsWith("tag: ")) {
-        const label = part.slice("tag: ".length).trim();
-        if (label) out.push({ kind: "tag", label });
-        continue;
-      }
-
-      if (part.includes(" -> ")) {
-        const [leftRaw, rightRaw] = part.split(" -> ", 2);
-        const left = leftRaw.trim();
-        const right = rightRaw.trim();
-        if (left === "HEAD") {
-          out.push({ kind: "head", label: "HEAD" });
-        } else if (left.endsWith("/HEAD")) {
-          out.push({ kind: "remote", label: left });
-        } else if (left) {
-          out.push({ kind: isRemoteRef(left) ? "remote" : "branch", label: left });
-        }
-        if (right) {
-          out.push({ kind: isRemoteRef(right) ? "remote" : "branch", label: right });
-        }
-        continue;
-      }
-
-      if (part === "HEAD") {
-        out.push({ kind: "head", label: "HEAD" });
-        continue;
-      }
-
-      out.push({ kind: isRemoteRef(part) ? "remote" : "branch", label: part });
-    }
-
-    return out;
-  }
-
-  function applyRefBadges(cy: Core) {
-    cy.$("node.refBadge").remove();
-    cy.$("edge.refEdge").remove();
-    cy.$("node.stashBadge").remove();
-    cy.$("edge.stashEdge").remove();
-
-    const sideOffsetX = 240;
-    const gapY = 30;
-    const colGapX = 150;
-    const maxPerCol = 6;
-
-    const edgeSegs = cy
-      .edges()
-      .toArray()
-      .filter((e) => !e.hasClass("refEdge") && !e.hasClass("stashEdge"))
-      .map((e) => {
-        const s = (e.source() as any).position();
-        const t = (e.target() as any).position();
-        const x1 = Number(s?.x ?? 0);
-        const y1 = Number(s?.y ?? 0);
-        const x2 = Number(t?.x ?? 0);
-        const y2 = Number(t?.y ?? 0);
-        const minX = Math.min(x1, x2);
-        const maxX = Math.max(x1, x2);
-        const minY = Math.min(y1, y2);
-        const maxY = Math.max(y1, y2);
-        return { x1, y1, x2, y2, minX, maxX, minY, maxY };
-      });
-
-    const segIntersectsRect = (seg: { x1: number; y1: number; x2: number; y2: number }, r: any) => {
-      const x1 = seg.x1;
-      const y1 = seg.y1;
-      const x2 = seg.x2;
-      const y2 = seg.y2;
-
-      const inside = (x: number, y: number) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2;
-      if (inside(x1, y1) || inside(x2, y2)) return true;
-
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      let t0 = 0;
-      let t1 = 1;
-
-      const clip = (p: number, q: number) => {
-        if (p === 0) return q >= 0;
-        const r0 = q / p;
-        if (p < 0) {
-          if (r0 > t1) return false;
-          if (r0 > t0) t0 = r0;
-        } else {
-          if (r0 < t0) return false;
-          if (r0 < t1) t1 = r0;
-        }
-        return true;
-      };
-
-      if (!clip(-dx, x1 - r.x1)) return false;
-      if (!clip(dx, r.x2 - x1)) return false;
-      if (!clip(-dy, y1 - r.y1)) return false;
-      if (!clip(dy, r.y2 - y1)) return false;
-
-      return t0 <= t1;
-    };
-
-    const bboxIntersectsAnyEdge = (b: any) => {
-      for (const seg of edgeSegs) {
-        if (seg.minY > b.y2) continue;
-        if (seg.maxY < b.y1) continue;
-        if (seg.minX > b.x2) continue;
-        if (seg.maxX < b.x1) continue;
-        if (segIntersectsRect(seg, b)) return true;
-      }
-      return false;
-    };
-
-    const pushNodeAwayFromEdges = (nodeId: string, side: -1 | 1) => {
-      const n = cy.$id(nodeId);
-      if (n.length === 0) return;
-      const step = 40;
-      const maxIter = 35;
-      for (let i = 0; i < maxIter; i++) {
-        const bb0 = n.boundingBox({ includeLabels: true, includeOverlays: false } as any);
-        const bb = {
-          x1: bb0.x1 - 10,
-          y1: bb0.y1 - 6,
-          x2: bb0.x2 + 10,
-          y2: bb0.y2 + 6,
-        };
-        if (!bboxIntersectsAnyEdge(bb)) break;
-        const pos = n.position();
-        n.unlock();
-        n.position({ x: pos.x + side * step, y: pos.y });
-        n.lock();
-      }
-    };
-
-    for (const n of cy.nodes().toArray()) {
-      if (n.hasClass("refBadge")) continue;
-      const refs = (n.data("refs") as string) || "";
-      if (!refs.trim()) continue;
-
-      const parsed = parseRefs(refs, overview?.remotes ?? []);
-      if (parsed.length === 0) continue;
-
-      let filtered = parsed;
-      if (!graphSettings.showRemoteBranchesOnGraph) {
-        filtered = filtered.filter((r) => r.kind !== "remote");
-      }
-      if (!graphSettings.showTags) {
-        filtered = filtered.filter((r) => r.kind !== "tag");
-      }
-      if (filtered.length === 0) continue;
-
-      const pos = n.position();
-
-      const left = filtered.filter((_, i) => i % 2 === 0);
-      const right = filtered.filter((_, i) => i % 2 === 1);
-
-      const placeSide = (items: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>, side: -1 | 1) => {
-        const visibleCount = Math.min(items.length, maxPerCol);
-        const baseY = pos.y - ((visibleCount - 1) * gapY) / 2;
-
-        for (let i = 0; i < items.length; i++) {
-          const r = items[i];
-          const col = Math.floor(i / maxPerCol);
-          const row = i % maxPerCol;
-          const id = `ref:${n.id()}:${r.kind}:${r.label}`;
-          if (cy.$id(id).length > 0) continue;
-
-          cy.add({
-            group: "nodes",
-            data: { id, label: r.label, kind: r.kind },
-            position: {
-              x: pos.x + side * (sideOffsetX + col * colGapX),
-              y: baseY + row * gapY,
-            },
-            classes: `refBadge ref-${r.kind}`,
-            locked: true,
-            grabbable: false,
-            selectable: false,
-          } as any);
-
-          cy.add({
-            group: "edges",
-            data: { id: `refedge:${id}`, source: id, target: n.id() },
-            classes: "refEdge",
-            selectable: false,
-          } as any);
-        }
-      };
-
-      if (left.length > 0) placeSide(left, -1);
-      if (right.length > 0) placeSide(right, 1);
-    }
-
-    for (const b of cy.$("node.refBadge").toArray()) {
-      const badge = b as any;
-      const id = badge.id();
-      const parts = id.split(":");
-      if (parts.length < 3) continue;
-      const targetId = parts[1];
-      const target = cy.$id(targetId);
-      if (target.length === 0) continue;
-      const side: -1 | 1 = badge.position().x < (target as any).position().x ? -1 : 1;
-      pushNodeAwayFromEdges(id, side);
-    }
-
-    if (!graphSettings.showStashesOnGraph || !activeRepoPath) return;
-    const baseMap = stashBaseByRepo[activeRepoPath] ?? {};
-    const list = stashesByRepo[activeRepoPath] ?? [];
-    if (list.length === 0) return;
-
-    const byBase = new Map<string, GitStashEntry[]>();
-    for (const s of list) {
-      const base = baseMap[s.reference];
-      if (!base) continue;
-      const arr = byBase.get(base) ?? [];
-      arr.push(s);
-      byBase.set(base, arr);
-    }
-
-    const stashLine = "rgba(184, 92, 255, 0.75)";
-    const stashBg = "rgba(184, 92, 255, 0.16)";
-    const stashText = theme === "dark" ? "#f2f4f8" : "#0f0f0f";
-
-    for (const [base, arr] of byBase.entries()) {
-      const baseNode = cy.$id(base);
-      if (baseNode.length === 0) continue;
-      const pos = baseNode.position();
-
-      const maxPerCol = 8;
-      const gapY = 28;
-      const colGapX = 210;
-      const baseX = pos.x - 360;
-      const baseY = pos.y + 140;
-
-      for (let i = 0; i < arr.length; i++) {
-        const s = arr[i];
-        const col = Math.floor(i / maxPerCol);
-        const row = i % maxPerCol;
-        const safeRef = s.reference.replace(/[^a-zA-Z0-9:_-]/g, "_");
-        const id = `stash:${base}:${safeRef}`;
-        if (cy.$id(id).length > 0) continue;
-
-        cy.add({
-          group: "nodes",
-          data: {
-            id,
-            label: s.message?.trim() ? s.message.trim() : s.reference,
-            kind: "stash",
-            stashRef: s.reference,
-            stashMessage: s.message,
-          },
-          position: {
-            x: baseX - col * colGapX,
-            y: baseY + row * gapY,
-          },
-          classes: "stashBadge",
-          locked: true,
-          grabbable: false,
-          selectable: false,
-        } as any);
-
-        cy.add({
-          group: "edges",
-          data: { id: `stashedge:${id}`, source: id, target: base, label: "stash edge" },
-          classes: "stashEdge",
-          selectable: false,
-        } as any);
-
-        const node = cy.$id(id);
-        if (node.length > 0) {
-          node.style({
-            "border-color": stashLine,
-            "background-color": stashBg,
-            color: stashText,
-          } as any);
-          pushNodeAwayFromEdges(id, -1);
-        }
-      }
-    }
-  }
-
-  useEffect(() => {
-    if (viewMode !== "graph") {
-      if (cyRef.current && activeRepoPath) {
-        if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) {
-          viewportByRepoRef.current[activeRepoPath] = {
-            zoom: cyRef.current.zoom(),
-            pan: cyRef.current.pan(),
-          };
-        }
-      }
-      cyRef.current?.destroy();
-      cyRef.current = null;
-      return;
-    }
-
-    if (!graphRef.current) return;
-
-    cyRef.current?.destroy();
-
-    const palette = getCyPalette(theme);
-    cyRef.current = cytoscape({
-      container: graphRef.current,
-      elements: [...elements.nodes, ...elements.edges],
-      minZoom: 0.1,
-      maxZoom: 5,
-      wheelSensitivity: isMacOS ? 0.14 : 0.6,
-      layout: { name: "preset" } as any,
-      style: [
-        {
-          selector: "node",
-          style: {
-            "background-color": palette.nodeBg,
-            "border-color": palette.nodeBorder,
-            "border-width": "1px",
-            shape: "round-rectangle",
-            "corner-radius": `${Math.max(0, graphSettings.nodeCornerRadius)}px`,
-            label: "data(label)",
-            color: palette.nodeText,
-            "text-outline-width": "0px",
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-wrap": "wrap",
-            "text-max-width": "220px",
-            "text-valign": "center",
-            "text-halign": "center",
-            width: "260px",
-            height: "56px",
-          },
-        },
-        {
-          selector: "node.head",
-          style: {
-            "border-color": palette.nodeHeadBorder,
-            "border-width": "2px",
-          },
-        },
-        {
-          selector: "node.selected",
-          style: {
-            "border-color": palette.nodeSelectedBorder,
-            "border-width": "3px",
-            "background-color": palette.nodeSelectedBg,
-          },
-        },
-        {
-          selector: "node.placeholder",
-          style: {
-            "background-color": palette.placeholderBg,
-            "border-color": palette.placeholderBorder,
-            "border-width": "1px",
-            color: palette.placeholderText,
-          },
-        },
-        {
-          selector: "edge",
-          style: {
-            width: "3px",
-            "line-color": palette.edgeLine,
-            "target-arrow-color": palette.edgeArrow,
-            "target-arrow-shape": "triangle",
-            "target-arrow-fill": "filled",
-            "arrow-scale": 1.25,
-            "curve-style": "bezier",
-          },
-        },
-        {
-          selector: "node.refBadge",
-          style: {
-            shape: "round-rectangle",
-            width: "label",
-            height: "24px",
-            padding: "6px",
-            "background-color": palette.refBadgeBg,
-            "border-color": palette.refBadgeBorder,
-            "border-width": "1px",
-            label: "data(label)",
-            color: palette.refBadgeText,
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-wrap": "none",
-          },
-        },
-        {
-          selector: "node.refBadge.ref-head",
-          style: {
-            "background-color": palette.refHeadBg,
-            "border-color": palette.refHeadBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-tag",
-          style: {
-            "background-color": palette.refTagBg,
-            "border-color": palette.refTagBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-branch",
-          style: {
-            "background-color": palette.refBranchBg,
-            "border-color": palette.refBranchBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-remote",
-          style: {
-            "background-color": theme === "dark" ? "rgba(235, 246, 255, 0.98)" : palette.refRemoteBg,
-            "border-color": palette.refRemoteBorder,
-            color: palette.refRemoteText,
-            opacity: theme === "dark" ? 0.6 : 0.4,
-          },
-        },
-        {
-          selector: "edge.refEdge",
-          style: {
-            width: "2px",
-            "line-style": "dotted",
-            "line-color": palette.refEdgeLine,
-            "target-arrow-shape": "none",
-            "curve-style": "straight",
-          },
-        },
-        {
-          selector: "node.stashBadge",
-          style: {
-            shape: "round-rectangle",
-            width: "label",
-            height: "22px",
-            padding: "6px",
-            "border-width": "2px",
-            label: "data(label)",
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-wrap": "none",
-          },
-        },
-        {
-          selector: "edge.stashEdge",
-          style: {
-            width: "2px",
-            "line-style": "dotted",
-            "target-arrow-shape": "none",
-            "curve-style": "straight",
-            label: "data(label)",
-            "font-size": "11px",
-            "text-rotation": "autorotate",
-            color: theme === "dark" ? "rgba(242, 244, 248, 0.85)" : undefined,
-            "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.80)" : "rgba(255, 255, 255, 0.70)",
-            "text-background-opacity": 1,
-            "text-background-padding": "2px",
-            "text-background-shape": "roundrectangle",
-          },
-        },
-      ],
-    });
-
-    const cy = cyRef.current;
-    if (!cy) return;
-
-    cy.on("tap", "node", (evt) => {
-      if ((evt.target as any).hasClass?.("refBadge")) return;
-      if ((evt.target as any).hasClass?.("stashBadge")) return;
-      setSelectedHash(evt.target.id());
-    });
-
-    cy.on("cxttap", "node", (evt) => {
-      if ((evt.target as any).hasClass?.("refBadge")) {
-        const oe = (evt as any).originalEvent as MouseEvent | undefined;
-        if (!oe) return;
-        const kind = (((evt.target as any).data?.("kind") as string) || "").toLowerCase();
-        const label = (((evt.target as any).data?.("label") as string) || "").trim();
-        if (!label) return;
-
-        setCommitContextMenu(null);
-        setStashContextMenu(null);
-        setBranchContextMenu(null);
-        setTagContextMenu(null);
-
-        if (kind === "remote" || kind === "branch") {
-          setRefBadgeContextMenu(null);
-          openRefBadgeContextMenu(kind as "remote" | "branch", label, oe.clientX, oe.clientY);
-        }
-        return;
-      }
-      if ((evt.target as any).hasClass?.("stashBadge")) {
-        const oe = (evt as any).originalEvent as MouseEvent | undefined;
-        if (!oe) return;
-        const stashRef = ((evt.target as any).data?.("stashRef") as string) || "";
-        const stashMessage = ((evt.target as any).data?.("stashMessage") as string) || "";
-        if (!stashRef.trim()) return;
-        setCommitContextMenu(null);
-        setTagContextMenu(null);
-        openStashContextMenu(stashRef, stashMessage, oe.clientX, oe.clientY);
-        return;
-      }
-      const hash = evt.target.id();
-      const oe = (evt as any).originalEvent as MouseEvent | undefined;
-      if (!oe) return;
-      setSelectedHash(hash);
-      openCommitContextMenu(hash, oe.clientX, oe.clientY);
-    });
-
-    cy.on("tap", (evt) => {
-      if ((evt.target as any).hasClass?.("stashEdge")) return;
-      if (evt.target === cy) setSelectedHash("");
-    });
-
-    cy.on("cxttap", (evt) => {
-      if (evt.target === cy) {
-        setCommitContextMenu(null);
-        setStashContextMenu(null);
-        setBranchContextMenu(null);
-        setTagContextMenu(null);
-        setRefBadgeContextMenu(null);
-      }
-    });
-
-    const scheduleViewportUpdate = () => {
-      if (!activeRepoPath) return;
-      if (viewportRafRef.current) return;
-      viewportRafRef.current = requestAnimationFrame(() => {
-        viewportRafRef.current = null;
-        if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) {
-          viewportByRepoRef.current[activeRepoPath] = {
-            zoom: cy.zoom(),
-            pan: cy.pan(),
-          };
-        }
-        setZoomPct(Math.round(cy.zoom() * 100));
-      });
-    };
-    cy.on("zoom pan", scheduleViewportUpdate);
-    setZoomPct(Math.round(cy.zoom() * 100));
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        cy.resize();
-        const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
-        if (saved) {
-          cy.zoom(saved.zoom);
-          cy.pan(saved.pan);
-          setZoomPct(Math.round(cy.zoom() * 100));
-          applyRefBadges(cy);
-        } else {
-          focusOnHead();
-          scheduleViewportUpdate();
-          applyRefBadges(cy);
-          if (activeRepoPath) {
-            pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
-            setAutoCenterToken((t) => t + 1);
-          }
-        }
-      });
-    });
-
-    return () => {
-      if (viewportRafRef.current) {
-        cancelAnimationFrame(viewportRafRef.current);
-        viewportRafRef.current = null;
-      }
-      cyRef.current?.destroy();
-      cyRef.current = null;
-    };
-  }, [
-    activeRepoPath,
-    elements.edges,
-    elements.nodes,
-    graphSettings.nodeCornerRadius,
-    graphSettings.padding,
-    headHash,
-    theme,
+  const { graphRef, zoomPct, requestAutoCenter, focusOnHash, focusOnHead, zoomBy } = useCyGraph({
     viewMode,
-  ]);
+    activeRepoPath,
+    elements,
+    graphSettings,
+    theme,
+    isMacOS,
 
-  useEffect(() => {
-    if (viewMode !== "graph") return;
+    remoteNames: overview?.remotes ?? [],
+    stashBaseByRepo,
+    stashesByRepo,
 
-    const el = graphRef.current;
-    if (!el) return;
+    selectedHash,
+    headHash,
 
-    let attemptTimer: number | null = null;
-    let clearPendingTimer: number | null = null;
+    setSelectedHash,
 
-    const attemptAutoCenter = () => {
-      const cy = cyRef.current;
-      if (!cy) return;
+    openCommitContextMenu,
+    openStashContextMenu,
+    openRefBadgeContextMenu,
 
-      if (!activeRepoPath) return;
-      if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) return;
+    closeCommitContextMenu: () => setCommitContextMenu(null),
+    closeStashContextMenu: () => setStashContextMenu(null),
+    closeBranchContextMenu: () => setBranchContextMenu(null),
+    closeTagContextMenu: () => setTagContextMenu(null),
+    closeRefBadgeContextMenu: () => setRefBadgeContextMenu(null),
+  });
 
-      const hash = selectedHash || headHash;
-      if (!hash) return;
-
-      cy.resize();
-
-      const cyW = cy.width() || 0;
-      const cyH = cy.height() || 0;
-      if (cyW <= 0 || cyH <= 0) return;
-
-      const node = cy.$id(hash);
-      if (node.length === 0) return;
-
-      focusOnHash(hash, 1, 0.22);
-
-      if (clearPendingTimer) window.clearTimeout(clearPendingTimer);
-      clearPendingTimer = window.setTimeout(() => {
-        if (!activeRepoPath) return;
-        const c = cyRef.current;
-        if (c) {
-          viewportByRepoRef.current[activeRepoPath] = {
-            zoom: c.zoom(),
-            pan: c.pan(),
-          };
-          setZoomPct(Math.round(c.zoom() * 100));
-        }
-        pendingAutoCenterByRepoRef.current[activeRepoPath] = false;
-      }, 350);
-    };
-
-    const scheduleAttempt = (delayMs: number) => {
-      if (attemptTimer) window.clearTimeout(attemptTimer);
-      attemptTimer = window.setTimeout(attemptAutoCenter, delayMs);
-    };
-
-    const ro = new ResizeObserver(() => {
-      const cy = cyRef.current;
-      if (!cy) return;
-      cy.resize();
-
-      if (clearPendingTimer) {
-        window.clearTimeout(clearPendingTimer);
-        clearPendingTimer = null;
-      }
-      scheduleAttempt(80);
-    });
-
-    ro.observe(el);
-
-    const raf = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        scheduleAttempt(0);
-      });
-    });
-
-    const t0 = window.setTimeout(() => scheduleAttempt(0), 0);
-    const t1 = window.setTimeout(() => scheduleAttempt(0), 150);
-    const t2 = window.setTimeout(() => scheduleAttempt(0), 400);
-    const t3 = window.setTimeout(() => scheduleAttempt(0), 1000);
-    const t4 = window.setTimeout(() => scheduleAttempt(0), 2000);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.clearTimeout(t0);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.clearTimeout(t3);
-      window.clearTimeout(t4);
-
-      if (attemptTimer) window.clearTimeout(attemptTimer);
-      if (clearPendingTimer) window.clearTimeout(clearPendingTimer);
-      ro.disconnect();
-    };
-  }, [activeRepoPath, autoCenterToken, headHash, selectedHash, viewMode]);
-
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.$("node").removeClass("selected");
-    if (selectedHash) {
-      cy.$id(selectedHash).addClass("selected");
-    }
-    if (!selectedHash && headHash) {
-      cy.$id(headHash).addClass("selected");
-    }
-  }, [selectedHash, headHash, viewMode, elements.nodes.length, elements.edges.length]);
+  const { refreshIndicators } = useRepoIndicators({
+    setIndicatorsUpdatingByRepo,
+    setStatusSummaryByRepo,
+    setRemoteUrlByRepo,
+    setAheadBehindByRepo,
+  });
 
   useEffect(() => {
     if (!activeRepoPath) return;
@@ -3510,45 +2630,6 @@ function App() {
       el.scrollIntoView({ block: "center", inline: "nearest" });
     });
   }, [activeRepoPath, selectedHash, viewMode]);
-
-  async function refreshIndicators(path: string) {
-    if (!path) return;
-    setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: true }));
-    try {
-      const statusSummaryPromise = invoke<GitStatusSummary>("git_status_summary", { repoPath: path })
-        .then((statusSummary) => {
-          setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
-        })
-        .catch(() => undefined);
-
-      const remote = await invoke<string | null>("git_get_remote_url", { repoPath: path, remoteName: "origin" }).catch(() => null);
-      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: remote }));
-
-      if (remote) {
-        const initialAheadBehind = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(
-          () => undefined,
-        );
-        if (initialAheadBehind) {
-          setAheadBehindByRepo((prev) => ({ ...prev, [path]: initialAheadBehind }));
-        }
-
-        await invoke<string>("git_fetch", { repoPath: path, remoteName: "origin" }).catch(() => undefined);
-
-        const updated = await invoke<GitAheadBehind>("git_ahead_behind", { repoPath: path, remoteName: "origin" }).catch(
-          () => initialAheadBehind,
-        );
-        if (updated) {
-          setAheadBehindByRepo((prev) => ({ ...prev, [path]: updated }));
-        }
-      }
-
-      await statusSummaryPromise;
-    } catch {
-      // ignore
-    } finally {
-      setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: false }));
-    }
-  }
 
   function parsePullPredictConflictPreview(text: string): { kind: "common" | "ours" | "base" | "theirs"; text: string }[] {
     const out: { kind: "common" | "ours" | "base" | "theirs"; text: string }[] = [];
@@ -3601,7 +2682,7 @@ function App() {
 
     setLoading(true);
     try {
-      await invoke<string>("init_repo", { repoPath: selected });
+      await initRepo(selected);
       await openRepository(selected);
     } catch (e) {
       setGlobalError(typeof e === "string" ? e : JSON.stringify(e));
@@ -3648,7 +2729,7 @@ function App() {
     setCloneBranchesBusy(true);
     setCloneBranchesError("");
     try {
-      const branches = await invoke<string[]>("git_ls_remote_heads", { repoUrl: url });
+      const branches = await gitLsRemoteHeads(url);
       setCloneBranches(branches);
     } catch (e) {
       setCloneBranches([]);
@@ -3683,7 +2764,7 @@ function App() {
     setCloneError("");
     setError("");
     try {
-      await invoke<string>("git_clone_repo", {
+      await gitCloneRepo({
         repoUrl,
         destinationPath: cloneTargetPath,
         branch: cloneBranch.trim() ? cloneBranch.trim() : undefined,
@@ -3716,7 +2797,7 @@ function App() {
     setCommitPreviewError("");
 
     try {
-      const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+      const entries = await gitStatus(activeRepoPath);
       setStatusEntries(entries);
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;
@@ -3753,12 +2834,7 @@ function App() {
       try {
         const useExternal = diffTool.difftool !== "Graphoria builtin diff";
         if (useExternal) {
-          await invoke<void>("git_launch_external_diff_working", {
-            repoPath: activeRepoPath,
-            path: commitPreviewPath,
-            toolPath: diffTool.path,
-            command: diffTool.command,
-          });
+          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: commitPreviewPath, toolPath: diffTool.path, command: diffTool.command });
           if (!alive) return;
           setCommitPreviewContent("Opened in external diff tool.");
           return;
@@ -3766,10 +2842,7 @@ function App() {
 
         const ext = fileExtLower(commitPreviewPath);
         if (isImageExt(ext)) {
-          const b64 = await invoke<string>("git_working_file_image_base64", {
-            repoPath: activeRepoPath,
-            path: commitPreviewPath,
-          });
+          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: commitPreviewPath });
           if (!alive) return;
           setCommitPreviewImageBase64(b64);
           return;
@@ -3779,49 +2852,33 @@ function App() {
 
         if (isDocTextPreviewExt(ext)) {
           if (st.startsWith("??")) {
-            const content = await invoke<string>("git_working_file_text_preview", {
-              repoPath: activeRepoPath,
-              path: commitPreviewPath,
-            });
+            const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: commitPreviewPath });
             if (!alive) return;
             setCommitPreviewContent(content);
             return;
           }
 
-          const diff = await invoke<string>("git_head_vs_working_text_diff", {
-            repoPath: activeRepoPath,
-            path: commitPreviewPath,
-            unified: 3,
-          });
+          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: commitPreviewPath, unified: 3 });
           if (!alive) return;
           if (diff.trim()) {
             setCommitPreviewDiff(diff);
             return;
           }
 
-          const content = await invoke<string>("git_working_file_text_preview", {
-            repoPath: activeRepoPath,
-            path: commitPreviewPath,
-          });
+          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: commitPreviewPath });
           if (!alive) return;
           setCommitPreviewContent(content);
           return;
         }
 
         if (st.startsWith("??")) {
-          const content = await invoke<string>("git_working_file_content", {
-            repoPath: activeRepoPath,
-            path: commitPreviewPath,
-          });
+          const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: commitPreviewPath });
           if (!alive) return;
           setCommitPreviewContent(content);
           return;
         }
 
-        const diff = await invoke<string>("git_working_file_diff", {
-          repoPath: activeRepoPath,
-          path: commitPreviewPath,
-        });
+        const diff = await gitWorkingFileDiff({ repoPath: activeRepoPath, path: commitPreviewPath });
         if (!alive) return;
         setCommitPreviewDiff(diff);
       } catch (e) {
@@ -3853,7 +2910,7 @@ function App() {
     setStashPreviewError("");
 
     try {
-      const entries = await invoke<GitStatusEntry[]>("git_status", { repoPath: activeRepoPath });
+      const entries = await gitStatus(activeRepoPath);
       setStashStatusEntries(entries);
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;
@@ -3890,12 +2947,7 @@ function App() {
       try {
         const useExternal = diffTool.difftool !== "Graphoria builtin diff";
         if (useExternal) {
-          await invoke<void>("git_launch_external_diff_working", {
-            repoPath: activeRepoPath,
-            path: stashPreviewPath,
-            toolPath: diffTool.path,
-            command: diffTool.command,
-          });
+          await gitLaunchExternalDiffWorking({ repoPath: activeRepoPath, path: stashPreviewPath, toolPath: diffTool.path, command: diffTool.command });
           if (!alive) return;
           setStashPreviewContent("Opened in external diff tool.");
           return;
@@ -3903,10 +2955,7 @@ function App() {
 
         const ext = fileExtLower(stashPreviewPath);
         if (isImageExt(ext)) {
-          const b64 = await invoke<string>("git_working_file_image_base64", {
-            repoPath: activeRepoPath,
-            path: stashPreviewPath,
-          });
+          const b64 = await gitWorkingFileImageBase64({ repoPath: activeRepoPath, path: stashPreviewPath });
           if (!alive) return;
           setStashPreviewImageBase64(b64);
           return;
@@ -3916,50 +2965,33 @@ function App() {
 
         if (isDocTextPreviewExt(ext)) {
           if (st.startsWith("??")) {
-            const content = await invoke<string>("git_working_file_text_preview", {
-              repoPath: activeRepoPath,
-              path: stashPreviewPath,
-            });
+            const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: stashPreviewPath });
             if (!alive) return;
             setStashPreviewContent(content);
             return;
           }
 
-          const diff = await invoke<string>("git_head_vs_working_text_diff", {
-            repoPath: activeRepoPath,
-            path: stashPreviewPath,
-            unified: stashAdvancedMode ? 20 : 3,
-          });
+          const diff = await gitHeadVsWorkingTextDiff({ repoPath: activeRepoPath, path: stashPreviewPath, unified: stashAdvancedMode ? 20 : 3 });
           if (!alive) return;
           if (diff.trim()) {
             setStashPreviewDiff(diff);
             return;
           }
 
-          const content = await invoke<string>("git_working_file_text_preview", {
-            repoPath: activeRepoPath,
-            path: stashPreviewPath,
-          });
+          const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: stashPreviewPath });
           if (!alive) return;
           setStashPreviewContent(content);
           return;
         }
 
         if (st.startsWith("??")) {
-          const content = await invoke<string>("git_working_file_content", {
-            repoPath: activeRepoPath,
-            path: stashPreviewPath,
-          });
+          const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: stashPreviewPath });
           if (!alive) return;
           setStashPreviewContent(content);
           return;
         }
 
-        const diff = await invoke<string>("git_working_file_diff_unified", {
-          repoPath: activeRepoPath,
-          path: stashPreviewPath,
-          unified: stashAdvancedMode ? 20 : 3,
-        });
+        const diff = await gitWorkingFileDiffUnified({ repoPath: activeRepoPath, path: stashPreviewPath, unified: stashAdvancedMode ? 20 : 3 });
         if (!alive) return;
         setStashPreviewDiff(diff);
       } catch (e) {
@@ -3995,12 +3027,7 @@ function App() {
           return e.status.trim().startsWith("??");
         });
 
-        await invoke<string>("git_stash_push_paths", {
-          repoPath: activeRepoPath,
-          message: stashMessage,
-          paths,
-          includeUntracked,
-        });
+        await gitStashPushPaths({ repoPath: activeRepoPath, message: stashMessage, paths, includeUntracked });
       } else {
         if (!stashPreviewPath) {
           setStashError("Select a file.");
@@ -4025,12 +3052,7 @@ function App() {
         }
 
         const keepPatch = buildPatchFromUnselectedHunks(stashPreviewDiff, selected);
-        await invoke<string>("git_stash_push_patch", {
-          repoPath: activeRepoPath,
-          message: stashMessage,
-          path: stashPreviewPath,
-          keepPatch,
-        });
+        await gitStashPushPatch({ repoPath: activeRepoPath, message: stashMessage, path: stashPreviewPath, keepPatch });
       }
 
       setStashModalOpen(false);
@@ -4051,7 +3073,7 @@ function App() {
     setStashViewError("");
     setStashViewLoading(true);
     try {
-      const patch = await invoke<string>("git_stash_show", { repoPath: activeRepoPath, stashRef: entry.reference });
+      const patch = await gitStashShow({ repoPath: activeRepoPath, stashRef: entry.reference });
       setStashViewPatch(patch);
     } catch (e) {
       setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
@@ -4065,7 +3087,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_stash_apply", { repoPath: activeRepoPath, stashRef });
+      await gitStashApply({ repoPath: activeRepoPath, stashRef });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -4079,7 +3101,7 @@ function App() {
     setStashViewLoading(true);
     setStashViewError("");
     try {
-      await invoke<string>("git_stash_apply", { repoPath: activeRepoPath, stashRef: stashViewRef });
+      await gitStashApply({ repoPath: activeRepoPath, stashRef: stashViewRef });
       setStashViewOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -4094,7 +3116,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_stash_drop", { repoPath: activeRepoPath, stashRef });
+      await gitStashDrop({ repoPath: activeRepoPath, stashRef });
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -4108,7 +3130,7 @@ function App() {
     setStashViewLoading(true);
     setStashViewError("");
     try {
-      await invoke<string>("git_stash_drop", { repoPath: activeRepoPath, stashRef: stashViewRef });
+      await gitStashDrop({ repoPath: activeRepoPath, stashRef: stashViewRef });
       setStashViewOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -4123,7 +3145,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_stash_clear", { repoPath: activeRepoPath });
+      await gitStashClear(activeRepoPath);
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -4144,13 +3166,10 @@ function App() {
     setCommitBusy(true);
     setCommitError("");
     try {
-      await invoke<string>("git_commit", { repoPath: activeRepoPath, message: commitMessage, paths });
+      await gitCommit({ repoPath: activeRepoPath, message: commitMessage, paths });
 
       if (commitAlsoPush) {
-        const currentRemote = await invoke<string | null>("git_get_remote_url", {
-          repoPath: activeRepoPath,
-          remoteName: "origin",
-        });
+        const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
 
         if (!currentRemote) {
           setCommitError("No remote origin set. Configure Remote first.");
@@ -4163,7 +3182,7 @@ function App() {
           return;
         }
 
-        await invoke<string>("git_push", { repoPath: activeRepoPath, remoteName: "origin", force: false });
+        await gitPush({ repoPath: activeRepoPath, remoteName: "origin", force: false });
       }
 
       setCommitModalOpen(false);
@@ -4193,11 +3212,7 @@ function App() {
     setRemoteBusy(true);
     setRemoteError("");
     try {
-      await invoke<void>("git_set_remote_url", {
-        repoPath: activeRepoPath,
-        remoteName: "origin",
-        url: nextUrl,
-      });
+      await gitSetRemoteUrl({ repoPath: activeRepoPath, remoteName: "origin", url: nextUrl });
       setRemoteModalOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -4229,10 +3244,7 @@ function App() {
       return;
     }
 
-    const currentRemote = await invoke<string | null>("git_get_remote_url", {
-      repoPath: activeRepoPath,
-      remoteName: "origin",
-    });
+    const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
     if (!currentRemote) {
       setPushError("No remote origin set. Configure Remote first.");
       return;
@@ -4258,13 +3270,7 @@ function App() {
     setPushError("");
     try {
       const refspec = remoteBranch && remoteBranch !== localBranch ? `${localBranch}:${remoteBranch}` : localBranch;
-      await invoke<string>("git_push", {
-        repoPath: activeRepoPath,
-        remoteName: "origin",
-        branch: refspec,
-        force: pushForce,
-        withLease: pushWithLease,
-      });
+      await gitPush({ repoPath: activeRepoPath, remoteName: "origin", branch: refspec, force: pushForce, withLease: pushWithLease });
       setPushModalOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
@@ -4274,190 +3280,12 @@ function App() {
     }
   }
 
-  async function openRepository(path: string) {
-    setGlobalError("");
-    setErrorByRepo((prev) => ({ ...prev, [path]: "" }));
-    setPullErrorByRepo((prev) => ({ ...prev, [path]: "" }));
-    setSelectedHash("");
-    setLoading(true);
-
-    try {
-      await invoke<void>("git_check_worktree", { repoPath: path });
-    } catch (e) {
-      const msg = typeof e === "string" ? e : JSON.stringify(e);
-      const details = parseGitDubiousOwnershipError(msg);
-      if (details !== null) {
-        setGitTrustRepoPath(path);
-        setGitTrustDetails(details);
-        setGitTrustDetailsOpen(false);
-        setGitTrustActionError("");
-        setGitTrustOpen(true);
-        setLoading(false);
-        return;
-      }
-      setGlobalError(msg);
-      setLoading(false);
-      return;
-    }
-
-    setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
-    setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
-    setActiveRepoPath(path);
-    await loadRepo(path);
-  }
-
-  async function closeRepository(path: string) {
-    setRepos((prev) => prev.filter((p) => p !== path));
-    setViewModeByRepo((prev) => {
-      const { [path]: _, ...rest } = prev;
-      return rest;
-    });
-    setOverviewByRepo((prev) => {
-      const { [path]: _, ...rest } = prev;
-      return rest;
-    });
-    setCommitsByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setCommitsFullByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setCommitsFullLoadingByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setRemoteUrlByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setStatusSummaryByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setAheadBehindByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-
-    setErrorByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-    setPullErrorByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-
-    setStashesByRepo((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-
-    if (activeRepoPath === path) {
-      const remaining = repos.filter((p) => p !== path);
-      const nextActive = remaining[0] ?? "";
-      setActiveRepoPath(nextActive);
-      setSelectedHash("");
-    }
-  }
-
-  async function loadRepo(nextRepoPath?: string, forceFullHistory?: boolean, updateSelection?: boolean): Promise<boolean> {
-    const path = nextRepoPath ?? activeRepoPath;
-    if (!path) return false;
-
-    const shouldUpdateSelection = updateSelection !== false;
-
-    const fullHistory =
-      typeof forceFullHistory === "boolean" ? forceFullHistory : Boolean(commitsFullByRepo[path]);
-
-    if (shouldUpdateSelection) {
-      setLoading(true);
-      setError("");
-    }
-    try {
-      const commitsPromise = fullHistory
-        ? invoke<GitCommit[]>("list_commits_full", { repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
-        : invoke<GitCommit[]>("list_commits", { repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
-
-      const cs = await commitsPromise;
-      setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
-
-      if (shouldUpdateSelection) {
-        const headHash = cs.find((c) => c.is_head)?.hash || "";
-        setSelectedHash(headHash);
-        setLoading(false);
-      }
-
-      void Promise.allSettled([
-        invoke<RepoOverview>("repo_overview", { repoPath: path }),
-        invoke<GitStatusSummary>("git_status_summary", { repoPath: path }),
-      ]).then(([ovRes, statusSummaryRes]) => {
-        if (ovRes.status === "fulfilled") {
-          setOverviewByRepo((prev) => ({ ...prev, [path]: ovRes.value }));
-        }
-        if (statusSummaryRes.status === "fulfilled") {
-          setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummaryRes.value }));
-        }
-      });
-
-      void invoke<GitStashEntry[]>("git_stash_list", { repoPath: path })
-        .then((stashes) => {
-          setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
-        })
-        .catch(() => undefined);
-
-      if (shouldUpdateSelection) {
-        // selection already updated above (after commits), keep it stable
-      }
-      return true;
-    } catch (e) {
-      setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
-      setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
-      setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
-      setStatusSummaryByRepo((prev) => ({ ...prev, [path]: undefined }));
-      setAheadBehindByRepo((prev) => ({ ...prev, [path]: undefined }));
-      setStashesByRepo((prev) => ({ ...prev, [path]: [] }));
-
-      const msg = typeof e === "string" ? e : JSON.stringify(e);
-      const details = parseGitDubiousOwnershipError(msg);
-      if (details !== null) {
-        setGitTrustRepoPath(path);
-        setGitTrustDetails(details);
-        setGitTrustDetailsOpen(false);
-        setGitTrustActionError("");
-        setGitTrustOpen(true);
-        setError("");
-        return false;
-      }
-
-      if (shouldUpdateSelection) {
-        setError(msg);
-      }
-      return false;
-    } finally {
-      if (shouldUpdateSelection) {
-        setLoading(false);
-      }
-    }
-  }
-
   async function trustRepoGloballyAndOpen() {
     if (!gitTrustRepoPath) return;
     setGitTrustBusy(true);
     setGitTrustActionError("");
     try {
-      await invoke<void>("git_trust_repo_global", { repoPath: gitTrustRepoPath });
+      await gitTrustRepoGlobal(gitTrustRepoPath);
       setGitTrustOpen(false);
       await openRepository(gitTrustRepoPath);
     } catch (e) {
@@ -4472,7 +3300,7 @@ function App() {
     setGitTrustBusy(true);
     setGitTrustActionError("");
     try {
-      await invoke<void>("git_trust_repo_session", { repoPath: gitTrustRepoPath });
+      await gitTrustRepoSession(gitTrustRepoPath);
       setGitTrustOpen(false);
       await openRepository(gitTrustRepoPath);
     } catch (e) {
@@ -4496,7 +3324,7 @@ function App() {
     setGitTrustBusy(true);
     setGitTrustActionError("");
     try {
-      await invoke<void>("change_repo_ownership_to_current_user", { repoPath: gitTrustRepoPath });
+      await changeRepoOwnershipToCurrentUser(gitTrustRepoPath);
       setGitTrustOpen(false);
       await openRepository(gitTrustRepoPath);
     } catch (e) {
@@ -4511,7 +3339,7 @@ function App() {
     setGitTrustBusy(true);
     setGitTrustActionError("");
     try {
-      await invoke<void>("open_in_file_explorer", { path: gitTrustRepoPath });
+      await openInFileExplorer(gitTrustRepoPath);
       setGitTrustOpen(false);
     } catch (e) {
       setGitTrustActionError(typeof e === "string" ? e : JSON.stringify(e));
@@ -4548,7 +3376,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      await invoke<string>("git_fetch", { repoPath: activeRepoPath, remoteName: "origin" });
+      await gitFetch(activeRepoPath, "origin");
       await loadRepo(activeRepoPath);
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
@@ -5166,7 +3994,7 @@ function App() {
         }}
         joinPath={joinPath}
         onRevealInExplorer={(absPath) => {
-          void invoke<void>("reveal_in_file_explorer", { path: absPath });
+          void revealInFileExplorer(absPath);
         }}
         onAddToGitignore={(mode, path) => {
           void addToGitignore(mode, path);
@@ -5275,7 +4103,7 @@ function App() {
         activeRepoPath={activeRepoPath}
         loading={loading}
         onClose={() => setBranchContextMenu(null)}
-        resolveRef={(reference) => invoke<string>("git_resolve_ref", { repoPath: activeRepoPath, reference })}
+        resolveRef={(reference) => gitResolveRef({ repoPath: activeRepoPath, reference })}
         setError={setError}
         openCreateBranchDialog={openCreateBranchDialog}
       />
@@ -5432,7 +4260,7 @@ function App() {
 
             if (next && activeRepoPath) {
               try {
-                const has = await invoke<boolean>("git_has_staged_changes", { repoPath: activeRepoPath });
+                const has = await gitHasStagedChanges(activeRepoPath);
                 if (has) {
                   setStashError("Index has staged changes. Unstage/commit them before using advanced mode.");
                   return;
@@ -5465,7 +4293,7 @@ function App() {
             void copyText(text);
           }}
           onRevealInExplorer={(absPath) => {
-            void invoke<void>("reveal_in_file_explorer", { path: absPath });
+            void revealInFileExplorer(absPath);
           }}
           onOpenWorkingFileContextMenu={(path, status, x, y) => {
             openWorkingFileContextMenu("stash", path, status, x, y);
@@ -5559,7 +4387,7 @@ function App() {
             void copyText(text);
           }}
           onRevealInExplorer={(absPath) => {
-            void invoke<void>("reveal_in_file_explorer", { path: absPath });
+            void revealInFileExplorer(absPath);
           }}
           onOpenWorkingFileContextMenu={(path, status, x, y) => {
             openWorkingFileContextMenu("commit", path, status, x, y);

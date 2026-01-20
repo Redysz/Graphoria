@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import {
   useAppSettings,
   type ThemeName,
@@ -17,6 +16,7 @@ import {
   shortcutActions,
   type ShortcutActionId,
 } from "./shortcuts";
+import { gitSetUserIdentity } from "./api/git";
 
 type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal" | "shortcuts";
 
@@ -122,16 +122,12 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
         return;
       }
 
-      const payload: Record<string, unknown> = {
+      await gitSetUserIdentity({
         scope,
         userName: git.userName,
         userEmail: git.userEmail,
-      };
-      if (scope === "repo") {
-        payload.repoPath = activeRepoPath;
-      }
-
-      await invoke<void>("git_set_user_identity", payload);
+        repoPath: scope === "repo" ? activeRepoPath : undefined,
+      });
       setApplyOk(true);
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));

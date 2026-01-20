@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { DiffToolSettings } from "./appSettingsStore";
+import { gitLaunchExternalDiffWorking, gitWorkingFileContent, gitWorkingFileDiff } from "./api/gitWorkingFiles";
+import { gitCommitChanges, gitCommitFileContent, gitCommitFileDiff, gitLaunchExternalDiffCommit, gitStatus } from "./api/git";
 
 type GitChangeEntry = {
   status: string;
@@ -120,12 +121,12 @@ export default function DiffView(props: Props) {
     const run = async () => {
       try {
         if (source.kind === "commit") {
-          const res = await invoke<GitChangeEntry[]>("git_commit_changes", { repoPath, commit: source.commit });
+          const res = await gitCommitChanges({ repoPath, commit: source.commit });
           if (!alive) return;
           setFiles(res);
           if (res.length > 0) setSelectedPath(res[0].path);
         } else {
-          const res = await invoke<{ status: string; path: string }[]>("git_status", { repoPath });
+          const res = await gitStatus(repoPath);
           if (!alive) return;
           const mapped: GitChangeEntry[] = res.map((r) => ({ status: r.status, path: r.path }));
           setFiles(mapped);
@@ -165,7 +166,7 @@ export default function DiffView(props: Props) {
 
         if (useExternal) {
           if (source.kind === "commit") {
-            await invoke<void>("git_launch_external_diff_commit", {
+            await gitLaunchExternalDiffCommit({
               repoPath,
               commit: source.commit,
               path: selected.path,
@@ -174,12 +175,7 @@ export default function DiffView(props: Props) {
               command: tool.command,
             });
           } else {
-            await invoke<void>("git_launch_external_diff_working", {
-              repoPath,
-              path: selected.path,
-              toolPath: tool.path,
-              command: tool.command,
-            });
+            await gitLaunchExternalDiffWorking({ repoPath, path: selected.path, toolPath: tool.path, command: tool.command });
           }
           if (!alive) return;
           setContentText("Opened in external diff tool.");
@@ -189,21 +185,13 @@ export default function DiffView(props: Props) {
         if (source.kind === "commit") {
           const st = selected.status.trim();
           if (st.startsWith("A") || st.startsWith("C")) {
-            const content = await invoke<string>("git_commit_file_content", {
-              repoPath,
-              commit: source.commit,
-              path: selected.path,
-            });
+            const content = await gitCommitFileContent({ repoPath, commit: source.commit, path: selected.path });
             if (!alive) return;
             setContentText(content);
             return;
           }
 
-          const diff = await invoke<string>("git_commit_file_diff", {
-            repoPath,
-            commit: source.commit,
-            path: selected.path,
-          });
+          const diff = await gitCommitFileDiff({ repoPath, commit: source.commit, path: selected.path });
           if (!alive) return;
           setDiffText(diff);
           return;
@@ -211,19 +199,13 @@ export default function DiffView(props: Props) {
 
         const st = selected.status.trim();
         if (st.startsWith("??")) {
-          const content = await invoke<string>("git_working_file_content", {
-            repoPath,
-            path: selected.path,
-          });
+          const content = await gitWorkingFileContent({ repoPath, path: selected.path });
           if (!alive) return;
           setContentText(content);
           return;
         }
 
-        const diff = await invoke<string>("git_working_file_diff", {
-          repoPath,
-          path: selected.path,
-        });
+        const diff = await gitWorkingFileDiff({ repoPath, path: selected.path });
         if (!alive) return;
         setDiffText(diff);
       } catch (e) {
