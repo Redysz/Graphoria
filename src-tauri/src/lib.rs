@@ -1,6 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
-use tauri::Emitter;
 use base64::Engine;
 use quick_xml::events::Event as XmlEvent;
 use quick_xml::Reader as XmlReader;
@@ -13,6 +12,55 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+mod commands;
+
+use commands::terminal::{open_terminal, open_terminal_profile};
+use commands::clone::git_clone_repo;
+use commands::repo::{
+    change_repo_ownership_to_current_user,
+    get_current_username,
+    git_check_worktree,
+    git_ls_remote_heads,
+    git_resolve_ref,
+    git_trust_repo_global,
+    git_trust_repo_session,
+    init_repo,
+    repo_overview,
+};
+use commands::commits::{list_commits, list_commits_full};
+use commands::status::{
+    git_ahead_behind,
+    git_get_remote_url,
+    git_has_staged_changes,
+    git_set_remote_url,
+    git_status,
+    git_status_summary,
+};
+use commands::branches::{
+    git_branches_points_at,
+    git_checkout_branch,
+    git_checkout_commit,
+    git_create_branch,
+    git_create_branch_advanced,
+    git_delete_branch,
+    git_is_ancestor,
+    git_list_branches,
+    git_rename_branch,
+    git_reset,
+    git_reset_hard,
+    git_switch,
+};
+use commands::stashes::{
+    git_stash_apply,
+    git_stash_base_commit,
+    git_stash_clear,
+    git_stash_drop,
+    git_stash_list,
+    git_stash_push_patch,
+    git_stash_push_paths,
+    git_stash_show,
+};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -39,123 +87,6 @@ fn is_repo_session_safe(repo_path: &str) -> bool {
     }
 }
 
-#[tauri::command]
-fn open_terminal_profile(repo_path: String, kind: String, command: String, args: Vec<String>) -> Result<(), String> {
-    let repo_path = repo_path.trim().to_string();
-    if repo_path.is_empty() {
-        return Err(String::from("repo_path is empty"));
-    }
-
-    let kind = kind.trim().to_lowercase();
-    match kind.as_str() {
-        "builtin_default" => open_terminal(repo_path),
-
-        "builtin_git_bash" => {
-            #[cfg(target_os = "windows")]
-            {
-                let candidates: Vec<String> = vec![
-                    std::env::var("ProgramFiles").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
-                    std::env::var("ProgramFiles(x86)").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
-                    std::env::var("LocalAppData").ok().map(|p| format!("{p}\\Programs\\Git\\git-bash.exe")),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-
-                for p in candidates {
-                    if Path::new(p.as_str()).exists() {
-                        Command::new("cmd")
-                            .current_dir(&repo_path)
-                            .args(["/C", "start", "", p.as_str()])
-                            .spawn()
-                            .map_err(|e| format!("Failed to open Git Bash: {e}"))?;
-                        return Ok(());
-                    }
-                }
-
-                if Command::new("cmd")
-                    .current_dir(&repo_path)
-                    .args(["/C", "start", "", "bash", "--login", "-i"])
-                    .spawn()
-                    .is_ok()
-                {
-                    return Ok(());
-                }
-
-                return Err(String::from("Git Bash not found."));
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                return Err(String::from("Git Bash profile is Windows-only."));
-            }
-        }
-
-        "builtin_cmd" => {
-            #[cfg(target_os = "windows")]
-            {
-                Command::new("cmd")
-                    .current_dir(&repo_path)
-                    .args(["/C", "start", "", "cmd"])
-                    .spawn()
-                    .map_err(|e| format!("Failed to open Command Prompt: {e}"))?;
-                return Ok(());
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                return Err(String::from("Command Prompt profile is Windows-only."));
-            }
-        }
-
-        "builtin_powershell" => {
-            #[cfg(target_os = "windows")]
-            {
-                Command::new("cmd")
-                    .current_dir(&repo_path)
-                    .args(["/C", "start", "", "powershell"])
-                    .spawn()
-                    .map_err(|e| format!("Failed to open PowerShell: {e}"))?;
-                return Ok(());
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                return Err(String::from("PowerShell profile is Windows-only."));
-            }
-        }
-
-        "custom" => {
-            let cmd = command.trim().to_string();
-            if cmd.is_empty() {
-                return Err(String::from("Custom terminal command is empty."));
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                let mut argv: Vec<String> = vec![String::from("/C"), String::from("start"), String::from(""), cmd];
-                argv.extend(args);
-                Command::new("cmd")
-                    .current_dir(&repo_path)
-                    .args(argv)
-                    .spawn()
-                    .map_err(|e| format!("Failed to open custom terminal: {e}"))?;
-                return Ok(());
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                Command::new(cmd)
-                    .current_dir(&repo_path)
-                    .args(args)
-                    .spawn()
-                    .map_err(|e| format!("Failed to open custom terminal: {e}"))?;
-                return Ok(());
-            }
-        }
-
-        _ => Err(format!("Unknown terminal profile kind: {kind}")),
-    }
-}
-
 fn git_command_in_repo(repo_path: &str) -> Command {
     let mut cmd = Command::new("git");
     if is_repo_session_safe(repo_path) {
@@ -167,104 +98,68 @@ fn git_command_in_repo(repo_path: &str) -> Command {
     cmd
 }
 
- #[tauri::command]
- fn git_set_user_identity(
-     repo_path: Option<String>,
-     scope: String,
-     user_name: String,
-     user_email: String,
- ) -> Result<(), String> {
-     let scope = scope.trim().to_lowercase();
-     let user_name = user_name.trim().to_string();
-     let user_email = user_email.trim().to_string();
-
-     if user_name.is_empty() && user_email.is_empty() {
-         return Err(String::from("User name and email are empty."));
-     }
-
-     if scope == "global" {
-         if !user_name.is_empty() {
-             let out = Command::new("git")
-                 .args(["config", "--global", "user.name", user_name.as_str()])
-                 .output()
-                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
-             if !out.status.success() {
-                 let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-                 return Err(if !stderr.is_empty() {
-                     format!("git config failed: {stderr}")
-                 } else {
-                     String::from("git config failed.")
-                 });
-             }
-         }
-         if !user_email.is_empty() {
-             let out = Command::new("git")
-                 .args(["config", "--global", "user.email", user_email.as_str()])
-                 .output()
-                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
-             if !out.status.success() {
-                 let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-                 return Err(if !stderr.is_empty() {
-                     format!("git config failed: {stderr}")
-                 } else {
-                     String::from("git config failed.")
-                 });
-             }
-         }
-         return Ok(());
-     }
-
-     if scope != "repo" {
-         return Err(String::from("Invalid scope. Expected 'repo' or 'global'."));
-     }
-
-     let repo_path = repo_path.unwrap_or_default();
-     if repo_path.trim().is_empty() {
-         return Err(String::from("repo_path is required for repo scope."));
-     }
-     ensure_is_git_worktree(repo_path.as_str())?;
-
-     if !user_name.is_empty() {
-         run_git(repo_path.as_str(), &["config", "user.name", user_name.as_str()])?;
-     }
-     if !user_email.is_empty() {
-         run_git(repo_path.as_str(), &["config", "user.email", user_email.as_str()])?;
-     }
-
-     Ok(())
- }
-
 #[tauri::command]
-fn git_check_worktree(repo_path: String) -> Result<(), String> {
-    ensure_is_git_worktree(repo_path.trim())
-}
+fn git_set_user_identity(
+    repo_path: Option<String>,
+    scope: String,
+    user_name: String,
+    user_email: String,
+) -> Result<(), String> {
+    let scope = scope.trim().to_lowercase();
+    let user_name = user_name.trim().to_string();
+    let user_email = user_email.trim().to_string();
 
-#[tauri::command]
-fn git_trust_repo_global(repo_path: String) -> Result<(), String> {
-    let repo_path = repo_path.trim().to_string();
-    if repo_path.is_empty() {
-        return Err(String::from("repo_path is empty"));
+    if user_name.is_empty() && user_email.is_empty() {
+        return Err(String::from("User name and email are empty."));
     }
 
-    let normalized = repo_path.replace('\\', "/").trim_end_matches('/').to_string();
-
-    let out = Command::new("git")
-        .args([
-            "config",
-            "--global",
-            "--add",
-            "safe.directory",
-            normalized.as_str(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to spawn git: {e}"))?;
-
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-        if !stderr.is_empty() {
-            return Err(format!("git config failed: {stderr}"));
+    if scope == "global" {
+        if !user_name.is_empty() {
+            let out = Command::new("git")
+                .args(["config", "--global", "user.name", user_name.as_str()])
+                .output()
+                .map_err(|e| format!("Failed to spawn git config: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                return Err(if !stderr.is_empty() {
+                    format!("git config failed: {stderr}")
+                } else {
+                    String::from("git config failed.")
+                });
+            }
         }
-        return Err(String::from("git config failed."));
+        if !user_email.is_empty() {
+            let out = Command::new("git")
+                .args(["config", "--global", "user.email", user_email.as_str()])
+                .output()
+                .map_err(|e| format!("Failed to spawn git config: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                return Err(if !stderr.is_empty() {
+                    format!("git config failed: {stderr}")
+                } else {
+                    String::from("git config failed.")
+                });
+            }
+        }
+        return Ok(());
+    }
+
+    if scope != "repo" {
+        return Err(String::from("Invalid scope. Expected 'repo' or 'global'."));
+    }
+
+    let repo_path = repo_path.unwrap_or_default();
+    if repo_path.trim().is_empty() {
+        return Err(String::from("repo_path is required for repo scope."));
+    }
+    ensure_is_git_worktree(repo_path.as_str())?;
+
+    if !user_name.is_empty() {
+        run_git(repo_path.as_str(), &["config", "user.name", user_name.as_str()])?;
+    }
+    if !user_email.is_empty() {
+        run_git(repo_path.as_str(), &["config", "user.email", user_email.as_str()])?;
     }
 
     Ok(())
@@ -458,89 +353,6 @@ fn git_add_to_gitignore(repo_path: String, pattern: String) -> Result<(), String
     Ok(())
 }
 
-#[tauri::command]
-fn git_trust_repo_session(repo_path: String) -> Result<(), String> {
-    let repo_path = repo_path.trim().to_string();
-    if repo_path.is_empty() {
-        return Err(String::from("repo_path is empty"));
-    }
-    let normalized = normalize_repo_path(repo_path.as_str());
-    let set = session_safe_directories();
-    let mut guard = set.lock().map_err(|_| String::from("Failed to lock session safe directories."))?;
-    guard.insert(normalized);
-    Ok(())
-}
-
-#[tauri::command]
-fn get_current_username() -> Result<String, String> {
-    let u = std::env::var("USERNAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| String::from("current user"));
-    Ok(u)
-}
-
-#[tauri::command]
-fn change_repo_ownership_to_current_user(repo_path: String) -> Result<(), String> {
-    let repo_path = repo_path.trim().to_string();
-    if repo_path.is_empty() {
-        return Err(String::from("repo_path is empty"));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let user = std::env::var("USERNAME").unwrap_or_default();
-        if user.trim().is_empty() {
-            return Err(String::from("Could not determine current username."));
-        }
-
-        let takeown = Command::new("cmd")
-            .args(["/C", "takeown", "/F", repo_path.as_str(), "/R", "/D", "Y"])
-            .output()
-            .map_err(|e| format!("Failed to run takeown: {e}"))?;
-
-        if !takeown.status.success() {
-            let stderr = String::from_utf8_lossy(&takeown.stderr).trim_end().to_string();
-            let stdout = String::from_utf8_lossy(&takeown.stdout).trim_end().to_string();
-            let msg = if !stderr.is_empty() { stderr } else { stdout };
-            if !msg.is_empty() {
-                return Err(format!("Failed to change ownership (takeown): {msg}"));
-            }
-            return Err(String::from("Failed to change ownership (takeown)."));
-        }
-
-        let icacls = Command::new("cmd")
-            .args([
-                "/C",
-                "icacls",
-                repo_path.as_str(),
-                "/setowner",
-                user.as_str(),
-                "/T",
-                "/C",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to run icacls: {e}"))?;
-
-        if !icacls.status.success() {
-            let stderr = String::from_utf8_lossy(&icacls.stderr).trim_end().to_string();
-            let stdout = String::from_utf8_lossy(&icacls.stdout).trim_end().to_string();
-            let msg = if !stderr.is_empty() { stderr } else { stdout };
-            if !msg.is_empty() {
-                return Err(format!("Failed to change ownership (icacls): {msg}"));
-            }
-            return Err(String::from("Failed to change ownership (icacls)."));
-        }
-
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = repo_path;
-        return Err(String::from("Changing ownership is only implemented on Windows."));
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct GitCommit {
     hash: String,
@@ -554,44 +366,10 @@ struct GitCommit {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct RepoOverview {
-    head: String,
-    head_name: String,
-    branches: Vec<String>,
-    tags: Vec<String>,
-    remotes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GitStatusEntry {
-    status: String,
-    path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GitStashEntry {
-    index: u32,
-    reference: String,
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 struct GitChangeEntry {
     status: String,
     path: String,
     old_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GitStatusSummary {
-    changed: u32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GitAheadBehind {
-    ahead: u32,
-    behind: u32,
-    upstream: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -612,14 +390,6 @@ struct PullPredictResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct GitCloneProgressEvent {
-    destination_path: String,
-    phase: Option<String>,
-    percent: Option<u32>,
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 struct GitBranchInfo {
     name: String,
     kind: String,
@@ -634,50 +404,6 @@ struct GitCommitSummary {
     date: String,
     subject: String,
     refs: String,
-}
-
-fn extract_progress_percent(message: &str) -> Option<u32> {
-    let idx = message.find('%')?;
-    let before = &message[..idx];
-    let start = before
-        .rfind(|c: char| !c.is_ascii_digit())
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let digits = before[start..].trim();
-    if digits.is_empty() {
-        return None;
-    }
-    let pct = digits.parse::<u32>().ok()?;
-    if pct > 100 {
-        return None;
-    }
-    Some(pct)
-}
-
-fn parse_git_clone_progress_line(line: &str) -> Option<(String, u32, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let without_remote = trimmed
-        .strip_prefix("remote:")
-        .map(|s| s.trim())
-        .unwrap_or(trimmed);
-
-    let pct = extract_progress_percent(without_remote)?;
-    let phase = without_remote
-        .split(':')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if phase.is_empty() {
-        return None;
-    }
-
-    Some((phase, pct, without_remote.to_string()))
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
@@ -1359,55 +1085,6 @@ fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_clone_destination_valid(destination_path: &str) -> Result<(), String> {
-    let destination_path = destination_path.trim();
-    if destination_path.is_empty() {
-        return Err(String::from("destination_path is empty"));
-    }
-
-    let dest = Path::new(destination_path);
-
-    if dest.exists() {
-        if dest.is_file() {
-            return Err(String::from("Destination path points to a file."));
-        }
-
-        let git_dir = dest.join(".git");
-        if git_dir.exists() {
-            return Err(String::from("Destination already contains a .git folder."));
-        }
-
-        let mut has_entries = false;
-        if let Ok(rd) = fs::read_dir(dest) {
-            for entry in rd.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name == "." || name == ".." {
-                    continue;
-                }
-                has_entries = true;
-                break;
-            }
-        }
-
-        if has_entries {
-            return Err(String::from("Destination folder is not empty."));
-        }
-
-        Ok(())
-    } else {
-        let parent = dest
-            .parent()
-            .ok_or_else(|| String::from("Destination folder has no parent."))?;
-        if !parent.exists() {
-            return Err(String::from("Destination parent folder does not exist."));
-        }
-        if !parent.is_dir() {
-            return Err(String::from("Destination parent path is not a directory."));
-        }
-        Ok(())
-    }
-}
-
 fn ensure_is_not_git_worktree(repo_path: &str) -> Result<(), String> {
     let check = git_command_in_repo(repo_path)
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -1419,67 +1096,6 @@ fn ensure_is_not_git_worktree(repo_path: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[tauri::command]
-fn repo_overview(repo_path: String) -> Result<RepoOverview, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-
-    let branches_raw = run_git(&repo_path, &["branch", "--format=%(refname:short)"])?;
-    let branches = branches_raw
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-
-    let tags_raw = run_git(&repo_path, &["tag", "--list"])?;
-    let mut tags: Vec<String> = tags_raw
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-    tags.reverse();
-
-    let remotes_raw = run_git(&repo_path, &["remote"])?;
-    let remotes = remotes_raw
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-
-    Ok(RepoOverview {
-        head,
-        head_name,
-        branches,
-        tags,
-        remotes,
-    })
-}
-
-#[tauri::command]
-fn git_resolve_ref(repo_path: String, reference: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let reference = reference.trim().to_string();
-    if reference.is_empty() {
-        return Err(String::from("reference is empty"));
-    }
-
-    let hash = run_git(&repo_path, &["rev-list", "-n", "1", reference.as_str()])?;
-    let hash = hash.trim().to_string();
-    if hash.is_empty() {
-        return Err(String::from("Could not resolve reference to a commit."));
-    }
-
-    Ok(hash)
 }
 
 #[tauri::command]
@@ -1540,14 +1156,12 @@ fn list_commits_impl_v2(
     ensure_is_git_worktree(repo_path)?;
 
     let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let head = head.trim().to_string();
 
     let format = "%H\x1f%P\x1f%an\x1f%ae\x1f%ad\x1f%s\x1f%D\x1e";
     let pretty = format!("--pretty=format:{format}");
 
-    let mut args: Vec<String> = vec![
-        String::from("--no-pager"),
-        String::from("log"),
-    ];
+    let mut args: Vec<String> = vec![String::from("--no-pager"), String::from("log")];
 
     if !only_head {
         args.push(String::from("--branches"));
@@ -1627,383 +1241,6 @@ fn list_commits_impl_v2(
     }
 
     Ok(commits)
-}
-
-#[tauri::command]
-fn list_commits(
-    repo_path: String,
-    max_count: Option<u32>,
-    only_head: Option<bool>,
-    history_order: Option<String>,
-) -> Result<Vec<GitCommit>, String> {
-    let max_count = max_count.unwrap_or(200).min(2000);
-    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
-    list_commits_impl_v2(&repo_path, Some(max_count), only_head.unwrap_or(false), &history_order)
-}
-
-#[tauri::command]
-fn list_commits_full(repo_path: String, only_head: Option<bool>, history_order: Option<String>) -> Result<Vec<GitCommit>, String> {
-    let history_order = history_order.unwrap_or_else(|| String::from("topo"));
-    list_commits_impl_v2(&repo_path, None, only_head.unwrap_or(false), &history_order)
-}
-
-#[tauri::command]
-fn init_repo(repo_path: String) -> Result<String, String> {
-    if repo_path.trim().is_empty() {
-        return Err(String::from("repo_path is empty"));
-    }
-
-    let git_dir = Path::new(&repo_path).join(".git");
-    if git_dir.exists() {
-        return Err(String::from("Selected path already contains a .git folder."));
-    }
-
-    ensure_is_not_git_worktree(&repo_path)?;
-
-    run_git(&repo_path, &["init"])?;
-    Ok(repo_path)
-}
-
-#[tauri::command]
-fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let out = git_command_in_repo(&repo_path)
-        .args(["status", "--porcelain", "-z"])
-        .output()
-        .map_err(|e| format!("Failed to spawn git: {e}"))?;
-
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("git command failed: {stderr}"));
-    }
-
-    let mut entries: Vec<GitStatusEntry> = Vec::new();
-    let mut i: usize = 0;
-    let b = out.stdout.as_slice();
-    while i < b.len() {
-        let start = i;
-        while i < b.len() && b[i] != 0 {
-            i += 1;
-        }
-        let rec = &b[start..i];
-        i += 1;
-        if rec.is_empty() {
-            continue;
-        }
-        if rec.len() < 3 {
-            continue;
-        }
-
-        let status_bytes = &rec[0..2];
-        let status = String::from_utf8_lossy(status_bytes).to_string();
-
-        let path_bytes = if rec.len() >= 4 { &rec[3..] } else { &[] };
-        if path_bytes.is_empty() {
-            continue;
-        }
-
-        let has_rename = status_bytes[0] == b'R'
-            || status_bytes[1] == b'R'
-            || status_bytes[0] == b'C'
-            || status_bytes[1] == b'C';
-
-        if has_rename {
-            let old_path = String::from_utf8_lossy(path_bytes).to_string();
-
-            let start2 = i;
-            while i < b.len() && b[i] != 0 {
-                i += 1;
-            }
-            let new_path_bytes = &b[start2..i];
-            i += 1;
-
-            let new_path = String::from_utf8_lossy(new_path_bytes).to_string();
-            if !new_path.trim().is_empty() {
-                entries.push(GitStatusEntry {
-                    status,
-                    path: new_path,
-                });
-            } else if !old_path.trim().is_empty() {
-                entries.push(GitStatusEntry {
-                    status,
-                    path: old_path,
-                });
-            }
-        } else {
-            let path = String::from_utf8_lossy(path_bytes).to_string();
-            if !path.trim().is_empty() {
-                entries.push(GitStatusEntry { status, path });
-            }
-        }
-    }
-
-    Ok(entries)
-}
-
-#[tauri::command]
-fn git_has_staged_changes(repo_path: String) -> Result<bool, String> {
-    ensure_is_git_worktree(&repo_path)?;
-    has_staged_changes(&repo_path)
-}
-
-#[tauri::command]
-fn git_stash_list(repo_path: String) -> Result<Vec<GitStashEntry>, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let raw = run_git(&repo_path, &["stash", "list"]).unwrap_or_default();
-    let mut out: Vec<GitStashEntry> = Vec::new();
-
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let mut parts = line.splitn(2, ':');
-        let reference = parts.next().unwrap_or_default().trim().to_string();
-        let message = parts.next().unwrap_or_default().trim().to_string();
-
-        let mut index: u32 = 0;
-        if reference.starts_with("stash@{") && reference.ends_with('}') && reference.len() >= 8 {
-            let inner = &reference[7..reference.len() - 1];
-            if let Ok(n) = inner.parse::<u32>() {
-                index = n;
-            }
-        }
-
-        if reference.is_empty() {
-            continue;
-        }
-
-        out.push(GitStashEntry {
-            index,
-            reference,
-            message,
-        });
-    }
-
-    Ok(out)
-}
-
-#[tauri::command]
-fn git_stash_show(repo_path: String, stash_ref: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let stash_ref = stash_ref.trim().to_string();
-    if stash_ref.is_empty() {
-        return Err(String::from("stash_ref is empty"));
-    }
-
-    run_git_stdout_raw(
-        &repo_path,
-        &["stash", "show", "--no-color", "-p", stash_ref.as_str()],
-    )
-}
-
-#[tauri::command]
-fn git_stash_base_commit(repo_path: String, stash_ref: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let stash_ref = stash_ref.trim().to_string();
-    if stash_ref.is_empty() {
-        return Err(String::from("stash_ref is empty"));
-    }
-
-    let spec = format!("{stash_ref}^1");
-    run_git(&repo_path, &["rev-parse", spec.as_str()])
-}
-
-#[tauri::command]
-fn git_stash_apply(repo_path: String, stash_ref: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let stash_ref = stash_ref.trim().to_string();
-    if stash_ref.is_empty() {
-        return Err(String::from("stash_ref is empty"));
-    }
-
-    run_git(&repo_path, &["stash", "apply", stash_ref.as_str()])
-}
-
-#[tauri::command]
-fn git_stash_drop(repo_path: String, stash_ref: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let stash_ref = stash_ref.trim().to_string();
-    if stash_ref.is_empty() {
-        return Err(String::from("stash_ref is empty"));
-    }
-
-    run_git(&repo_path, &["stash", "drop", stash_ref.as_str()])
-}
-
-#[tauri::command]
-fn git_stash_clear(repo_path: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-    run_git(&repo_path, &["stash", "clear"])
-}
-
-#[tauri::command]
-fn git_stash_push_paths(
-    repo_path: String,
-    message: String,
-    paths: Vec<String>,
-    include_untracked: Option<bool>,
-) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    if paths.is_empty() {
-        return Err(String::from("No files selected to stash."));
-    }
-
-    let message = if message.trim().is_empty() {
-        String::from("WIP")
-    } else {
-        message.trim().to_string()
-    };
-
-    let include_untracked = include_untracked.unwrap_or(false);
-
-    let mut args: Vec<&str> = Vec::new();
-    args.push("stash");
-    args.push("push");
-    if include_untracked {
-        args.push("-u");
-    }
-    args.push("-m");
-    args.push(message.as_str());
-    args.push("--");
-    for p in &paths {
-        if !p.trim().is_empty() {
-            args.push(p);
-        }
-    }
-
-    let out = git_command_in_repo(&repo_path)
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to spawn git stash push: {e}"))?;
-
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("git stash push failed: {stderr}"));
-    }
-
-    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
-}
-
-#[tauri::command]
-fn git_stash_push_patch(repo_path: String, message: String, path: String, keep_patch: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-
-    let mut keep_patch = keep_patch.replace("\r\n", "\n");
-    if !keep_patch.is_empty() && !keep_patch.ends_with('\n') {
-        keep_patch.push('\n');
-    }
-
-    if has_staged_changes(&repo_path)? {
-        return Err(String::from(
-            "Index has staged changes. Unstage/commit them before using partial stash.",
-        ));
-    }
-
-    let mut keep_patch_reversed = false;
-    if !keep_patch.is_empty() {
-        if let Err(e) = run_git_with_stdin(
-            &repo_path,
-            &[
-                "apply",
-                "--whitespace=nowarn",
-                "--unidiff-zero",
-                "--ignore-space-change",
-                "-R",
-            ],
-            keep_patch.as_str(),
-        ) {
-            run_git_with_stdin(
-                &repo_path,
-                &[
-                    "apply",
-                    "--whitespace=nowarn",
-                    "--unidiff-zero",
-                    "--ignore-space-change",
-                    "-C",
-                    "0",
-                    "--3way",
-                    "--recount",
-                    "-R",
-                ],
-                keep_patch.as_str(),
-            )
-            .map_err(|_e2| e)?;
-        }
-        keep_patch_reversed = true;
-    }
-
-    let message = if message.trim().is_empty() {
-        String::from("WIP")
-    } else {
-        message.trim().to_string()
-    };
-
-    let stash_out = git_command_in_repo(&repo_path)
-        .args(["stash", "push", "-m", message.as_str(), "--", path.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git stash push: {e}"))?;
-
-    if !stash_out.status.success() {
-        if keep_patch_reversed {
-            let _ = run_git_with_stdin(
-                &repo_path,
-                &[
-                    "apply",
-                    "--whitespace=nowarn",
-                    "--unidiff-zero",
-                    "--ignore-space-change",
-                ],
-                keep_patch.as_str(),
-            );
-        }
-        let stderr = String::from_utf8_lossy(&stash_out.stderr);
-        return Err(format!("git stash push failed: {stderr}"));
-    }
-
-    if keep_patch_reversed {
-        if let Err(e) = run_git_with_stdin(
-            &repo_path,
-            &[
-                "apply",
-                "--whitespace=nowarn",
-                "--unidiff-zero",
-                "--ignore-space-change",
-            ],
-            keep_patch.as_str(),
-        ) {
-            run_git_with_stdin(
-                &repo_path,
-                &[
-                    "apply",
-                    "--whitespace=nowarn",
-                    "--unidiff-zero",
-                    "--ignore-space-change",
-                    "-C",
-                    "0",
-                    "--3way",
-                    "--recount",
-                ],
-                keep_patch.as_str(),
-            )
-            .map_err(|_e2| e)?;
-        }
-    }
-
-    Ok(String::from_utf8_lossy(&stash_out.stdout).trim_end().to_string())
 }
 
 #[tauri::command]
@@ -2673,155 +1910,8 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
     }
 
     let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+
     Ok(new_head)
-}
-
-#[tauri::command]
-fn git_status_summary(repo_path: String) -> Result<GitStatusSummary, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let raw = run_git(&repo_path, &["status", "--porcelain"]).unwrap_or_default();
-    let changed = raw
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .count() as u32;
-
-    Ok(GitStatusSummary { changed })
-}
-
-#[tauri::command]
-fn git_ahead_behind(repo_path: String, remote_name: Option<String>) -> Result<GitAheadBehind, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-
-    if head_name == "(detached)" {
-        return Ok(GitAheadBehind {
-            ahead: 0,
-            behind: 0,
-            upstream: None,
-        });
-    }
-
-    let upstream_out = git_command_in_repo(&repo_path)
-        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .output()
-        .map_err(|e| format!("Failed to spawn git rev-parse: {e}"))?;
-
-    let mut upstream: Option<String> = None;
-    if upstream_out.status.success() {
-        let s = String::from_utf8_lossy(&upstream_out.stdout).trim().to_string();
-        if !s.is_empty() {
-            upstream = Some(s);
-        }
-    }
-
-    if upstream.is_none() {
-        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-        let verify_ref = format!("refs/remotes/{remote_name}/{head_name}");
-        let verify_out = git_command_in_repo(&repo_path)
-            .args(["show-ref", "--verify", "--quiet", verify_ref.as_str()])
-            .output()
-            .map_err(|e| format!("Failed to spawn git show-ref: {e}"))?;
-
-        if verify_out.status.success() {
-            upstream = Some(format!("{remote_name}/{head_name}"));
-        }
-    }
-
-    let upstream = match upstream {
-        Some(u) => u,
-        None => {
-            return Ok(GitAheadBehind {
-                ahead: 0,
-                behind: 0,
-                upstream: None,
-            });
-        }
-    };
-
-    let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{upstream}...HEAD")])?;
-    let parts: Vec<&str> = raw.split_whitespace().collect();
-    let behind = parts
-        .get(0)
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-    let ahead = parts
-        .get(1)
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-
-    Ok(GitAheadBehind {
-        ahead,
-        behind,
-        upstream: Some(upstream),
-    })
-}
-
-#[tauri::command]
-fn git_get_remote_url(repo_path: String, remote_name: Option<String>) -> Result<Option<String>, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-
-    let out = git_command_in_repo(&repo_path)
-        .args(["remote", "get-url", remote_name.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
-
-    if !out.status.success() {
-        return Ok(None);
-    }
-
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if url.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(url))
-    }
-}
-
-#[tauri::command]
-fn git_set_remote_url(repo_path: String, remote_name: Option<String>, url: String) -> Result<(), String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    let url = url.trim().to_string();
-    if url.is_empty() {
-        return Err(String::from("Remote URL is empty."));
-    }
-
-    let exists_out = git_command_in_repo(&repo_path)
-        .args(["remote", "get-url", remote_name.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git remote get-url: {e}"))?;
-
-    if exists_out.status.success() {
-        run_git(
-            &repo_path,
-            &[
-                "remote",
-                "set-url",
-                remote_name.as_str(),
-                url.as_str(),
-            ],
-        )?;
-        Ok(())
-    } else {
-        run_git(
-            &repo_path,
-            &[
-                "remote",
-                "add",
-                remote_name.as_str(),
-                url.as_str(),
-            ],
-        )?;
-        Ok(())
-    }
 }
 
 #[tauri::command]
@@ -3137,46 +2227,6 @@ async fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<Str
 }
 
 #[tauri::command]
-fn git_checkout_commit(repo_path: String, commit: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let commit = commit.trim().to_string();
-    if commit.is_empty() {
-        return Err(String::from("commit is empty"));
-    }
-
-    run_git(&repo_path, &["checkout", commit.as_str()])
-}
-
-#[tauri::command]
-fn git_checkout_branch(repo_path: String, branch: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let branch = branch.trim().to_string();
-    if branch.is_empty() {
-        return Err(String::from("branch is empty"));
-    }
-
-    run_git(&repo_path, &["checkout", branch.as_str()])
-}
-
-#[tauri::command]
-fn git_list_branches(repo_path: String, include_remote: Option<bool>) -> Result<Vec<GitBranchInfo>, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let format = "%(refname:short)\x1f%(objectname)\x1f%(committerdate:iso-strict)";
-    let local_raw = run_git(&repo_path, &["for-each-ref", "--format", format, "refs/heads"])?;
-    let mut out = parse_for_each_ref(local_raw.as_str(), "local");
-
-    if include_remote.unwrap_or(true) {
-        let remote_raw = run_git(&repo_path, &["for-each-ref", "--format", format, "refs/remotes"])?;
-        out.extend(parse_for_each_ref(remote_raw.as_str(), "remote"));
-    }
-
-    Ok(out)
-}
-
-#[tauri::command]
 fn git_commit_summary(repo_path: String, commit: String) -> Result<GitCommitSummary, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -3210,187 +2260,6 @@ fn git_commit_summary(repo_path: String, commit: String) -> Result<GitCommitSumm
 }
 
 #[tauri::command]
-fn git_switch(
-    repo_path: String,
-    branch: String,
-    create: Option<bool>,
-    force: Option<bool>,
-    start_point: Option<String>,
-    track: Option<bool>,
-) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let branch = branch.trim().to_string();
-    if branch.is_empty() {
-        return Err(String::from("branch is empty"));
-    }
-
-    let create = create.unwrap_or(false);
-    let force = force.unwrap_or(false);
-    let track = track.unwrap_or(false);
-    let start_point = start_point.unwrap_or_default().trim().to_string();
-
-    if create {
-        let mut args: Vec<&str> = Vec::new();
-        args.push("switch");
-        if track {
-            args.push("--track");
-        }
-        args.push(if force { "-C" } else { "-c" });
-        args.push(branch.as_str());
-        if !start_point.is_empty() {
-            args.push(start_point.as_str());
-        }
-        return run_git(&repo_path, args.as_slice());
-    }
-
-    run_git(&repo_path, &["switch", branch.as_str()])
-}
-
-#[tauri::command]
-fn git_rename_branch(repo_path: String, old_name: String, new_name: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let old_name = old_name.trim().to_string();
-    let new_name = new_name.trim().to_string();
-    if old_name.is_empty() {
-        return Err(String::from("old_name is empty"));
-    }
-    if new_name.is_empty() {
-        return Err(String::from("new_name is empty"));
-    }
-
-    run_git(&repo_path, &["branch", "-m", old_name.as_str(), new_name.as_str()])
-}
-
-#[tauri::command]
-fn git_create_branch_advanced(
-    repo_path: String,
-    branch: String,
-    at: Option<String>,
-    checkout: Option<bool>,
-    orphan: Option<bool>,
-    clear_working_tree: Option<bool>,
-) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let branch = branch.trim().to_string();
-    if branch.is_empty() {
-        return Err(String::from("branch is empty"));
-    }
-
-    let at = at.unwrap_or_default().trim().to_string();
-    let checkout = checkout.unwrap_or(false);
-    let orphan = orphan.unwrap_or(false);
-    let clear_working_tree = clear_working_tree.unwrap_or(false);
-
-    if orphan {
-        let mut args: Vec<&str> = Vec::new();
-        args.push("switch");
-        args.push("--orphan");
-        args.push(branch.as_str());
-        if !at.is_empty() {
-            args.push(at.as_str());
-        }
-        let mut msg = run_git(&repo_path, args.as_slice())?;
-
-        if clear_working_tree {
-            let rm_out = run_git(&repo_path, &["rm", "-rf", "--ignore-unmatch", "."])?;
-            if !rm_out.trim().is_empty() {
-                if !msg.trim().is_empty() {
-                    msg.push('\n');
-                }
-                msg.push_str(rm_out.trim_end());
-            }
-
-            let clean_out = run_git(&repo_path, &["clean", "-fd"])?;
-            if !clean_out.trim().is_empty() {
-                if !msg.trim().is_empty() {
-                    msg.push('\n');
-                }
-                msg.push_str(clean_out.trim_end());
-            }
-        }
-
-        return Ok(msg);
-    }
-
-    if checkout {
-        if at.is_empty() {
-            return run_git(&repo_path, &["switch", "-c", branch.as_str()]);
-        }
-        return run_git(&repo_path, &["switch", "-c", branch.as_str(), at.as_str()]);
-    }
-
-    if at.is_empty() {
-        run_git(&repo_path, &["branch", branch.as_str()])
-    } else {
-        run_git(&repo_path, &["branch", branch.as_str(), at.as_str()])
-    }
-}
-
-#[tauri::command]
-fn git_reset_hard(repo_path: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-    run_git(&repo_path, &["reset", "--hard"])
-}
-
-#[tauri::command]
-fn git_reset(repo_path: String, mode: String, target: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let mode = mode.trim().to_lowercase();
-    let target = target.trim().to_string();
-    if target.is_empty() {
-        return Err(String::from("target is empty"));
-    }
-
-    let flag = match mode.as_str() {
-        "soft" => "--soft",
-        "mixed" => "--mixed",
-        "hard" => "--hard",
-        _ => return Err(String::from("Invalid reset mode. Use: soft, mixed or hard.")),
-    };
-
-    run_git(&repo_path, &["reset", flag, target.as_str()])
-}
-
-#[tauri::command]
-fn git_is_ancestor(repo_path: String, ancestor: String, descendant: String) -> Result<bool, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let ancestor = ancestor.trim().to_string();
-    if ancestor.is_empty() {
-        return Err(String::from("ancestor is empty"));
-    }
-
-    let descendant = descendant.trim().to_string();
-    if descendant.is_empty() {
-        return Err(String::from("descendant is empty"));
-    }
-
-    let out = git_command_in_repo(&repo_path)
-        .args(["merge-base", "--is-ancestor", ancestor.as_str(), descendant.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git merge-base: {e}"))?;
-
-    if out.status.success() {
-        return Ok(true);
-    }
-
-    if out.status.code() == Some(1) {
-        return Ok(false);
-    }
-
-    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-    Err(if !stderr.is_empty() {
-        format!("git merge-base failed: {stderr}")
-    } else {
-        String::from("git merge-base failed.")
-    })
-}
-
-#[tauri::command]
 fn git_commit_all(repo_path: String, message: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -3411,35 +2280,6 @@ fn git_commit_all(repo_path: String, message: String) -> Result<String, String> 
 
     let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
     Ok(new_head)
-}
-
-#[tauri::command]
-fn git_create_branch(repo_path: String, branch: String) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let branch = branch.trim().to_string();
-    if branch.is_empty() {
-        return Err(String::from("branch is empty"));
-    }
-
-    run_git(&repo_path, &["branch", branch.as_str()])
-}
-
-#[tauri::command]
-fn git_delete_branch(repo_path: String, branch: String, force: Option<bool>) -> Result<String, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let branch = branch.trim().to_string();
-    if branch.is_empty() {
-        return Err(String::from("branch is empty"));
-    }
-
-    let force = force.unwrap_or(false);
-    if force {
-        run_git(&repo_path, &["branch", "-D", branch.as_str()])
-    } else {
-        run_git(&repo_path, &["branch", "-d", branch.as_str()])
-    }
 }
 
 #[tauri::command]
@@ -3478,315 +2318,6 @@ fn git_cherry_pick(repo_path: String, commits: Vec<String>) -> Result<String, St
         args.push(c.as_str());
     }
     run_git(&repo_path, args.as_slice())
-}
-
-#[tauri::command]
-fn git_branches_points_at(repo_path: String, commit: String) -> Result<Vec<String>, String> {
-    ensure_is_git_worktree(&repo_path)?;
-
-    let commit = commit.trim().to_string();
-    if commit.is_empty() {
-        return Err(String::from("commit is empty"));
-    }
-
-    let raw = run_git(&repo_path, &["branch", "--format=%(refname:short)", "--points-at", commit.as_str()])?;
-    let mut out: Vec<String> = raw
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-    out.sort();
-    out.dedup();
-    Ok(out)
-}
-
-#[tauri::command]
-fn open_terminal(repo_path: String) -> Result<(), String> {
-    let repo_path = repo_path.trim().to_string();
-    if repo_path.is_empty() {
-        return Err(String::from("repo_path is empty"));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let candidates: Vec<String> = vec![
-            std::env::var("ProgramFiles").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
-            std::env::var("ProgramFiles(x86)").ok().map(|p| format!("{p}\\Git\\git-bash.exe")),
-            std::env::var("LocalAppData").ok().map(|p| format!("{p}\\Programs\\Git\\git-bash.exe")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        for p in candidates {
-            if Path::new(p.as_str()).exists() {
-                Command::new("cmd")
-                    .current_dir(&repo_path)
-                    .args(["/C", "start", "", p.as_str()])
-                    .spawn()
-                    .map_err(|e| format!("Failed to open Git Bash: {e}"))?;
-                return Ok(());
-            }
-        }
-
-        if Command::new("cmd")
-            .current_dir(&repo_path)
-            .args(["/C", "start", "", "bash", "--login", "-i"])
-            .spawn()
-            .is_ok()
-        {
-            return Ok(());
-        }
-
-        Command::new("cmd")
-            .current_dir(&repo_path)
-            .args(["/C", "start", "", "powershell"])
-            .spawn()
-            .map_err(|e| format!("Failed to open terminal: {e}"))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .args(["-a", "Terminal", repo_path.as_str()])
-            .spawn()
-            .map_err(|e| format!("Failed to open Terminal: {e}"))?;
-        return Ok(());
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let attempts: Vec<(&str, Vec<&str>)> = vec![
-            ("x-terminal-emulator", vec![]),
-            ("gnome-terminal", vec!["--working-directory", repo_path.as_str()]),
-            ("konsole", vec!["--workdir", repo_path.as_str()]),
-            ("xterm", vec!["-e", "bash", "-lc", "pwd; exec bash"]),
-        ];
-
-        for (bin, args) in attempts {
-            let mut cmd = Command::new(bin);
-            if bin == "x-terminal-emulator" {
-                cmd.current_dir(&repo_path);
-            }
-            cmd.args(args);
-            if cmd.spawn().is_ok() {
-                return Ok(());
-            }
-        }
-        return Err(String::from("Could not open a terminal emulator."));
-    }
-}
-
-#[tauri::command]
-fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, String> {
-    let repo_url = repo_url.trim().to_string();
-    if repo_url.is_empty() {
-        return Err(String::from("repo_url is empty"));
-    }
-
-    let out = Command::new("git")
-        .args(["ls-remote", "--heads", repo_url.as_str()])
-        .output()
-        .map_err(|e| format!("Failed to spawn git ls-remote: {e}"))?;
-
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("git ls-remote failed: {stderr}"));
-    }
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut branches: Vec<String> = Vec::new();
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let _hash = parts.next();
-        let reference = parts.next().unwrap_or_default();
-        if let Some(name) = reference.strip_prefix("refs/heads/") {
-            let name = name.trim();
-            if !name.is_empty() {
-                branches.push(name.to_string());
-            }
-        }
-    }
-    branches.sort();
-    branches.dedup();
-    Ok(branches)
-}
-
-#[tauri::command]
-fn git_clone_repo(
-    app: tauri::AppHandle,
-    repo_url: String,
-    destination_path: String,
-    branch: Option<String>,
-    init_submodules: Option<bool>,
-    download_full_history: Option<bool>,
-    bare: Option<bool>,
-    origin: Option<String>,
-    single_branch: Option<bool>,
-) -> Result<String, String> {
-    let repo_url = repo_url.trim().to_string();
-    let destination_path = destination_path.trim().to_string();
-    let origin = origin.unwrap_or_else(|| String::from("origin")).trim().to_string();
-    let init_submodules = init_submodules.unwrap_or(false);
-    let download_full_history = download_full_history.unwrap_or(true);
-    let bare = bare.unwrap_or(false);
-    let single_branch = single_branch.unwrap_or(false);
-
-    if repo_url.is_empty() {
-        return Err(String::from("repo_url is empty"));
-    }
-    if destination_path.is_empty() {
-        return Err(String::from("destination_path is empty"));
-    }
-    if origin.is_empty() {
-        return Err(String::from("origin is empty"));
-    }
-    if bare && init_submodules {
-        return Err(String::from("Cannot initialize submodules in a bare repository."));
-    }
-
-    ensure_clone_destination_valid(destination_path.as_str())?;
-
-    if Path::new(destination_path.as_str()).exists() {
-        ensure_is_not_git_worktree(destination_path.as_str())?;
-    }
-
-    let mut args: Vec<String> = vec![String::from("clone")];
-    args.push(String::from("--progress"));
-
-    if bare {
-        args.push(String::from("--bare"));
-    }
-
-    args.push(String::from("--origin"));
-    args.push(origin);
-
-    if single_branch {
-        args.push(String::from("--single-branch"));
-    }
-
-    if !download_full_history {
-        args.push(String::from("--depth"));
-        args.push(String::from("1"));
-    }
-
-    if let Some(b) = branch {
-        let b = b.trim().to_string();
-        if !b.is_empty() {
-            args.push(String::from("--branch"));
-            args.push(b);
-        }
-    }
-
-    args.push(repo_url);
-    args.push(destination_path.clone());
-
-    let mut child = Command::new("git")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn git clone: {e}"))?;
-
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| String::from("Failed to capture git clone stderr."))?;
-
-    let mut stderr_all: Vec<u8> = Vec::new();
-    let mut pending: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 4096];
-    let mut last_sent: Option<(String, u32)> = None;
-
-    loop {
-        let n = stderr
-            .read(&mut buf)
-            .map_err(|e| format!("Failed to read git clone progress: {e}"))?;
-        if n == 0 {
-            break;
-        }
-
-        stderr_all.extend_from_slice(&buf[..n]);
-        pending.extend_from_slice(&buf[..n]);
-
-        while let Some(pos) = pending.iter().position(|b| *b == b'\r' || *b == b'\n') {
-            let chunk: Vec<u8> = pending.drain(..=pos).collect();
-            let line = String::from_utf8_lossy(&chunk)
-                .trim_matches(&['\r', '\n'][..])
-                .trim()
-                .to_string();
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some((phase, pct, message)) = parse_git_clone_progress_line(line.as_str()) {
-                let should_emit = match &last_sent {
-                    Some((p, last_pct)) => p != &phase || *last_pct != pct,
-                    None => true,
-                };
-                if should_emit {
-                    let _ = app.emit(
-                        "git_clone_progress",
-                        GitCloneProgressEvent {
-                            destination_path: destination_path.clone(),
-                            phase: Some(phase.clone()),
-                            percent: Some(pct),
-                            message,
-                        },
-                    );
-                    last_sent = Some((phase, pct));
-                }
-            }
-        }
-    }
-
-    if !pending.is_empty() {
-        let line = String::from_utf8_lossy(&pending).trim().to_string();
-        if let Some((phase, pct, message)) = parse_git_clone_progress_line(line.as_str()) {
-            let should_emit = match &last_sent {
-                Some((p, last_pct)) => p != &phase || *last_pct != pct,
-                None => true,
-            };
-            if should_emit {
-                let _ = app.emit(
-                    "git_clone_progress",
-                    GitCloneProgressEvent {
-                        destination_path: destination_path.clone(),
-                        phase: Some(phase),
-                        percent: Some(pct),
-                        message,
-                    },
-                );
-            }
-        }
-    }
-
-    let status = child
-        .wait()
-        .map_err(|e| format!("Failed to wait for git clone: {e}"))?;
-
-    if !status.success() {
-        let stderr = String::from_utf8_lossy(stderr_all.as_slice()).trim().to_string();
-        if !stderr.is_empty() {
-            return Err(format!("git clone failed: {stderr}"));
-        }
-        return Err(String::from("git clone failed."));
-    }
-
-    if init_submodules {
-        run_git(
-            destination_path.as_str(),
-            &["submodule", "update", "--init", "--recursive"],
-        )?;
-    }
-
-    Ok(destination_path)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
