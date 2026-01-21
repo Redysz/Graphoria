@@ -1,0 +1,11 @@
+@import "./01-theme.css";
+@import "./02-base.css";
+@import "./03-shell.css";
+@import "./04-commits.css";
+@import "./05-graph.css";
+@import "./06-details-tooltip.css";
+@import "./07-modal.css";
+@import "./08-conflict.css";
+@import "./09-status.css";
+@import "./10-settings.css";
+@import "./11-diff.css";

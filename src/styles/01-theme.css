@@ -1,0 +1,87 @@
+:root {
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel-2: #f5f7fb;
+  --border: rgba(15, 15, 15, 0.12);
+  --text: #0f0f0f;
+  --muted: rgba(15, 15, 15, 0.65);
+  --menubar-text: rgba(8, 8, 8, 0.82);
+  --menu-shortcut: rgba(120, 120, 120, 0.95);
+  --accent: #2f6fed;
+  --accent-2: #1f56c6;
+  --danger: #b00020;
+
+  --topbar-grad-top: #ffffff;
+  --topbar-grad-bottom: #f5f7fb;
+  --modalheader-grad-top: #ffffff;
+  --modalheader-grad-bottom: #f5f7fb;
+
+  --app-font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --app-font-size: 14px;
+
+  font-family: var(--app-font-family);
+  font-size: var(--app-font-size);
+  line-height: 20px;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b0f17;
+  --panel: #151922;
+  --panel-2: #101624;
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f2f4f8;
+  --muted: rgba(242, 244, 248, 0.70);
+  --menubar-text: rgba(249, 250, 252, 0.85);
+  --menu-shortcut: rgba(220, 225, 235, 0.75);
+  --accent: #4b8bff;
+  --accent-2: #80b3ff;
+
+  --topbar-grad-top: #151922;
+  --topbar-grad-bottom: #101624;
+  --modalheader-grad-top: #151922;
+  --modalheader-grad-bottom: #101624;
+}
+
+:root[data-theme="blue"] {
+  --bg: #eaf2ff;
+  --panel: #f6faff;
+  --panel-2: #eaf2ff;
+  --border: rgba(10, 35, 70, 0.16);
+  --text: #0a2346;
+  --muted: rgba(10, 35, 70, 0.70);
+  --menubar-text: rgba(5, 18, 35, 0.85);
+  --menu-shortcut: rgba(60, 90, 130, 0.75);
+  --accent: #1f6feb;
+  --accent-2: #0f4fb4;
+
+  --topbar-grad-top: #f6faff;
+  --topbar-grad-bottom: #eaf2ff;
+  --modalheader-grad-top: #f6faff;
+  --modalheader-grad-bottom: #eaf2ff;
+}
+
+:root[data-theme="sepia"] {
+  --bg: #f3efe6;
+  --panel: #fffaf0;
+  --panel-2: #f5efe3;
+  --border: rgba(61, 43, 31, 0.18);
+  --text: #3d2b1f;
+  --muted: rgba(61, 43, 31, 0.70);
+  --menubar-text: rgba(31, 22, 16, 0.85);
+  --menu-shortcut: rgba(100, 90, 80, 0.78);
+  --accent: #a35b1d;
+  --accent-2: #7d4212;
+
+  --topbar-grad-top: #fffaf0;
+  --topbar-grad-bottom: #f5efe3;
+  --modalheader-grad-top: #fffaf0;
+  --modalheader-grad-bottom: #f5efe3;
+}
+

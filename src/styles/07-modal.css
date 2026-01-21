@@ -1,0 +1,113 @@
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.35);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 50;
+}
+
+.modal {
+  width: min(760px, 96vw);
+  max-height: min(80vh, 840px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.25);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(180deg, var(--modalheader-grad-top) 0%, var(--modalheader-grad-bottom) 100%);
+  border-bottom: 1px solid rgba(15, 15, 15, 0.08);
+}
+
+:root[data-modal-close="left"] .modalHeader {
+  flex-direction: row-reverse;
+}
+
+.modalBody {
+  padding: 12px;
+  overflow: auto;
+}
+
+.modalBody {
+  overflow-x: hidden;
+}
+
+.modalFooter {
+  padding: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid rgba(15, 15, 15, 0.08);
+  background: var(--panel-2);
+}
+
+.modalTextarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.modalInput {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(47, 111, 237, 0.14);
+  border: 1px solid rgba(47, 111, 237, 0.30);
+  color: var(--accent-2);
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.miniSpinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 15, 15, 0.18);
+  border-top-color: rgba(47, 111, 237, 0.9);
+  animation: miniSpinnerSpin 0.8s linear infinite;
+  display: inline-block;
+}
+
+:root[data-theme="dark"] .miniSpinner {
+  border-color: rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(128, 179, 255, 0.95);
+}
+
+@keyframes miniSpinnerSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+

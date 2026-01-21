@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { gitHeadFileContent, gitWorkingFileContent } from "./api/gitWorkingFiles";
+import { readTextFile } from "./api/system";
 
 type DiffToolMode = "repo_head" | "file_file";
 
@@ -438,8 +439,8 @@ export default function DiffToolModal(props: Props) {
         setRightLabel(rel);
 
         const [headRes, workingRes] = await Promise.allSettled([
-          invoke<string>("git_head_file_content", { repoPath: rp, path: rel }),
-          invoke<string>("git_working_file_content", { repoPath: rp, path: rel }),
+          gitHeadFileContent({ repoPath: rp, path: rel }),
+          gitWorkingFileContent({ repoPath: rp, path: rel }),
         ]);
 
         const headErr = headRes.status === "rejected" ? (typeof headRes.reason === "string" ? headRes.reason : JSON.stringify(headRes.reason)) : "";
@@ -481,8 +482,8 @@ export default function DiffToolModal(props: Props) {
       setRightLabel(r);
 
       const [left, right] = await Promise.all([
-        invoke<string>("read_text_file", { path: l }),
-        invoke<string>("read_text_file", { path: r }),
+        readTextFile(l),
+        readTextFile(r),
       ]);
 
       setLeftContent(left);
