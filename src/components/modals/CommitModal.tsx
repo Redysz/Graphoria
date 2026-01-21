@@ -20,6 +20,8 @@ type Props = {
   remoteUrl: string | null | undefined;
   diffToolName: string;
 
+  defaultFilesView?: FilesViewMode;
+
   busy: boolean;
   error: string;
 
@@ -59,6 +61,7 @@ export function CommitModal({
   activeRepoPath,
   remoteUrl,
   diffToolName,
+  defaultFilesView,
   busy,
   error,
   message,
@@ -87,7 +90,7 @@ export function CommitModal({
 }: Props) {
   const commitDisabled = busy || !message.trim() || statusEntries.filter((e) => selectedPaths[e.path]).length === 0;
 
-  const [filesView, setFilesView] = useState<FilesViewMode>("flat");
+  const [filesView, setFilesView] = useState<FilesViewMode>(defaultFilesView ?? "flat");
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
   const allSelected = useMemo(() => {

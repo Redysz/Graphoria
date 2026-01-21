@@ -4,6 +4,7 @@ import { detectAppPlatform, type AppPlatform, type ShortcutActionId, type Shortc
 
 export type ThemeName = "light" | "dark" | "blue" | "sepia";
 export type ViewMode = "graph" | "commits";
+export type WorkingFilesViewMode = "flat" | "tree";
 export type RankDir = "TB" | "LR";
 export type EdgeDirection = "to_parent" | "to_child";
 
@@ -52,6 +53,7 @@ export type GitSettings = {
   commitsOnlyHead: boolean;
   commitsHistoryOrder: GitHistoryOrder;
   showOnlineAvatars: boolean;
+  workingFilesView: WorkingFilesViewMode;
   diffTool: DiffToolSettings;
 };
 
@@ -191,6 +193,7 @@ export const defaultGitSettings: GitSettings = {
   commitsOnlyHead: false,
   commitsHistoryOrder: "topo",
   showOnlineAvatars: true,
+  workingFilesView: "flat",
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
@@ -297,7 +300,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 14,
+      version: 15,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -344,6 +347,9 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (typeof s.git.showOnlineAvatars !== "boolean") {
           s.git.showOnlineAvatars = defaultGitSettings.showOnlineAvatars;
+        }
+        if (s.git.workingFilesView !== "flat" && s.git.workingFilesView !== "tree") {
+          s.git.workingFilesView = defaultGitSettings.workingFilesView;
         }
         if (!s.graph || typeof s.graph !== "object") {
           s.graph = defaultGraphSettings;

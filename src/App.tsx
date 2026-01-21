@@ -363,6 +363,7 @@ function App() {
   const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
   const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
   const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
+  const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
   const setGit = useAppSettings((s) => s.setGit);
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
   const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
@@ -2874,7 +2875,7 @@ function App() {
               remoteUrl={remoteUrl}
               changedCount={changedCount}
               aheadCount={aheadCount}
-              stashesCount={stashes.length}
+              stashChangedCount={changedCount}
               selectedHash={selectedHash}
               headHash={headHash}
               openCommitDialog={openCommitDialog}
@@ -3542,6 +3543,7 @@ function App() {
         <StashModal
           activeRepoPath={activeRepoPath}
           diffToolName={diffTool.difftool}
+          defaultFilesView={workingFilesView}
           busy={stashBusy}
           error={stashError}
           message={stashMessage}
@@ -3641,6 +3643,7 @@ function App() {
           activeRepoPath={activeRepoPath}
           remoteUrl={remoteUrl}
           diffToolName={diffTool.difftool}
+          defaultFilesView={workingFilesView}
           busy={commitBusy}
           error={commitError}
           message={commitMessage}
