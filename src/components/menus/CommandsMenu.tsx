@@ -12,7 +12,7 @@ export function CommandsMenu(props: {
 
   changedCount: number;
   aheadCount: number;
-  stashesCount: number;
+  stashChangedCount: number;
 
   selectedHash: string;
   headHash: string;
@@ -36,7 +36,7 @@ export function CommandsMenu(props: {
     remoteUrl,
     changedCount,
     aheadCount,
-    stashesCount,
+    stashChangedCount,
     selectedHash,
     headHash,
     openCommitDialog,
@@ -108,7 +108,7 @@ export function CommandsMenu(props: {
             {menuItem(
               <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
                 <span>Stash…</span>
-                {stashesCount > 0 ? <span className="badge">{stashesCount}</span> : null}
+                {stashChangedCount > 0 ? <span className="badge">{stashChangedCount}</span> : null}
               </span>,
               shortcutLabel("cmd.stash"),
             )}

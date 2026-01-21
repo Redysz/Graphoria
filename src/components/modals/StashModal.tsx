@@ -1,8 +1,19 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { GitStatusEntry } from "../../types/git";
 import { parseUnifiedDiff } from "../../DiffView";
 import { fileExtLower, imageMimeFromExt } from "../../utils/filePreview";
 import { statusBadge } from "../../utils/text";
+
+type FilesViewMode = "flat" | "tree";
+
+type TreeNode = {
+  kind: "folder" | "file";
+  name: string;
+  key: string;
+  children?: TreeNode[];
+  file?: GitStatusEntry;
+  leafPaths: string[];
+};
 
 type HunkRange = {
   index: number;
@@ -15,6 +26,8 @@ type Props = {
   activeRepoPath: string;
 
   diffToolName: string;
+
+  defaultFilesView?: FilesViewMode;
 
   busy: boolean;
   error: string;
@@ -58,6 +71,7 @@ type Props = {
 export function StashModal({
   activeRepoPath,
   diffToolName,
+  defaultFilesView,
   busy,
   error,
   message,
@@ -92,6 +106,96 @@ export function StashModal({
     (advancedMode
       ? !previewPath || (hunksByPath[previewPath]?.length ?? 0) === 0
       : statusEntries.filter((e) => selectedPaths[e.path]).length === 0);
+
+  const [filesView, setFilesView] = useState<FilesViewMode>(defaultFilesView ?? "flat");
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+
+  const allSelected = useMemo(() => {
+    if (statusEntries.length === 0) return false;
+    for (const e of statusEntries) {
+      if (!selectedPaths[e.path]) return false;
+    }
+    return true;
+  }, [selectedPaths, statusEntries]);
+
+  const treeRoots = useMemo<TreeNode[]>(() => {
+    const root = { children: new Map<string, any>(), leafPaths: [] as string[] };
+
+    for (const entry of statusEntries) {
+      const norm = entry.path.replace(/\\/g, "/");
+      const parts = norm.split("/").filter(Boolean);
+      let cursor = root;
+      let prefix = "";
+      for (let i = 0; i < parts.length; i += 1) {
+        const part = parts[i] ?? "";
+        const isLeaf = i === parts.length - 1;
+        if (isLeaf) {
+          cursor.leafPaths.push(entry.path);
+          cursor.children.set(`file:${norm}`, {
+            kind: "file",
+            name: part,
+            key: `file:${norm}`,
+            file: entry,
+            leafPaths: [entry.path],
+          } satisfies TreeNode);
+        } else {
+          prefix = prefix ? `${prefix}/${part}` : part;
+          const key = `dir:${prefix}`;
+          if (!cursor.children.has(key)) {
+            cursor.children.set(key, {
+              kind: "folder",
+              name: part,
+              key,
+              children: new Map<string, any>(),
+              leafPaths: [],
+            });
+          }
+          cursor.leafPaths.push(entry.path);
+          cursor = cursor.children.get(key);
+        }
+      }
+    }
+
+    function toSortedNodes(m: Map<string, any>): TreeNode[] {
+      const nodes: TreeNode[] = [];
+      for (const v of m.values()) {
+        if (v.kind === "folder") {
+          nodes.push({
+            kind: "folder",
+            name: v.name,
+            key: v.key,
+            leafPaths: v.leafPaths,
+            children: toSortedNodes(v.children),
+          });
+        } else {
+          nodes.push(v as TreeNode);
+        }
+      }
+      nodes.sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      return nodes;
+    }
+
+    return toSortedNodes(root.children);
+  }, [statusEntries]);
+
+  function setAllSelected(nextChecked: boolean) {
+    const next: Record<string, boolean> = {};
+    for (const e of statusEntries) next[e.path] = nextChecked;
+    setSelectedPaths(next);
+  }
+
+  function folderSelectionState(leafPaths: string[]) {
+    let selected = 0;
+    for (const p of leafPaths) if (selectedPaths[p]) selected += 1;
+    return {
+      all: leafPaths.length > 0 && selected === leafPaths.length,
+      none: selected === 0,
+      some: selected > 0 && selected < leafPaths.length,
+    };
+  }
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -142,14 +246,17 @@ export function StashModal({
                   </label>
                   <button
                     type="button"
-                    onClick={() => {
-                      const next: Record<string, boolean> = {};
-                      for (const e of statusEntries) next[e.path] = true;
-                      setSelectedPaths(next);
-                    }}
+                    onClick={() => setAllSelected(!allSelected)}
                     disabled={busy || statusEntries.length === 0}
                   >
-                    Select all
+                    {allSelected ? "Deselect all" : "Select all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilesView((prev) => (prev === "flat" ? "tree" : "flat"))}
+                    disabled={busy || statusEntries.length === 0}
+                  >
+                    {filesView === "flat" ? "Tree view" : "Flat view"}
                   </button>
                 </div>
               </div>
@@ -158,95 +265,251 @@ export function StashModal({
                 <div style={{ opacity: 0.7, marginTop: 8 }}>No changes to stash.</div>
               ) : (
                 <div className="statusList">
-                  {statusEntries.map((e) => (
-                    <div
-                      key={e.path}
-                      className="statusRow"
-                      onClick={() => {
-                        setPreviewPath(e.path);
-                        setPreviewStatus(e.status);
-                      }}
-                      onContextMenu={(ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        setPreviewPath(e.path);
-                        setPreviewStatus(e.status);
-                        onOpenWorkingFileContextMenu(e.path, e.status, ev.clientX, ev.clientY);
-                      }}
-                      style={
-                        e.path === previewPath
-                          ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
-                          : undefined
-                      }
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!selectedPaths[e.path]}
-                        onClick={(ev) => ev.stopPropagation()}
-                        onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
-                        disabled={busy}
-                      />
-                      <span className="statusCode" title={e.status}>
-                        {statusBadge(e.status)}
-                      </span>
-                      <span className="statusPath">{e.path}</span>
-                      <span className="statusActions">
-                        <button
-                          type="button"
-                          className="statusActionBtn"
-                          title="Reset file / Discard changes"
-                          disabled={!activeRepoPath || busy}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            onDiscard(e.path, e.status);
+                  {filesView === "flat"
+                    ? statusEntries.map((e) => (
+                        <div
+                          key={e.path}
+                          className="statusRow"
+                          onClick={() => {
+                            setPreviewPath(e.path);
+                            setPreviewStatus(e.status);
                           }}
-                        >
-                          R
-                        </button>
-                        <button
-                          type="button"
-                          className="statusActionBtn"
-                          title="Delete file"
-                          disabled={!activeRepoPath || busy}
-                          onClick={(ev) => {
+                          onContextMenu={(ev) => {
+                            ev.preventDefault();
                             ev.stopPropagation();
-                            onDelete(e.path);
+                            setPreviewPath(e.path);
+                            setPreviewStatus(e.status);
+                            onOpenWorkingFileContextMenu(e.path, e.status, ev.clientX, ev.clientY);
                           }}
+                          style={
+                            e.path === previewPath
+                              ? { background: "rgba(47, 111, 237, 0.12)", borderColor: "rgba(47, 111, 237, 0.35)" }
+                              : undefined
+                          }
                         >
-                          D
-                        </button>
-                        <button
-                          type="button"
-                          className="statusActionBtn"
-                          title="Copy path (absolute)"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            if (!activeRepoPath) return;
-                            const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                            const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                            onCopyText(abs);
-                          }}
-                        >
-                          C
-                        </button>
-                        <button
-                          type="button"
-                          className="statusActionBtn"
-                          title="Reveal in File Explorer"
-                          disabled={!activeRepoPath || busy}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            if (!activeRepoPath) return;
-                            const sep = activeRepoPath.includes("\\") ? "\\" : "/";
-                            const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
-                            onRevealInExplorer(abs);
-                          }}
-                        >
-                          E
-                        </button>
-                      </span>
-                    </div>
-                  ))}
+                          <input
+                            type="checkbox"
+                            checked={!!selectedPaths[e.path]}
+                            onClick={(ev) => ev.stopPropagation()}
+                            onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                            disabled={busy}
+                          />
+                          <span className="statusCode" title={e.status}>
+                            {statusBadge(e.status)}
+                          </span>
+                          <span className="statusPath">{e.path}</span>
+                          <span className="statusActions">
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reset file / Discard changes"
+                              disabled={!activeRepoPath || busy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                onDiscard(e.path, e.status);
+                              }}
+                            >
+                              R
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Delete file"
+                              disabled={!activeRepoPath || busy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                onDelete(e.path);
+                              }}
+                            >
+                              D
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Copy path (absolute)"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                onCopyText(abs);
+                              }}
+                            >
+                              C
+                            </button>
+                            <button
+                              type="button"
+                              className="statusActionBtn"
+                              title="Reveal in File Explorer"
+                              disabled={!activeRepoPath || busy}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                if (!activeRepoPath) return;
+                                const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                onRevealInExplorer(abs);
+                              }}
+                            >
+                              E
+                            </button>
+                          </span>
+                        </div>
+                      ))
+                    : (() => {
+                        const rows: ReactNode[] = [];
+                        const renderNodes = (nodes: TreeNode[], depth: number) => {
+                          for (const n of nodes) {
+                            if (n.kind === "folder") {
+                              const s = folderSelectionState(n.leafPaths);
+                              const expanded = expandedFolders[n.key] ?? true;
+
+                              rows.push(
+                                <div
+                                  key={n.key}
+                                  className="statusRow"
+                                  onClick={() =>
+                                    setExpandedFolders((prev) => ({
+                                      ...prev,
+                                      [n.key]: !(prev[n.key] ?? true),
+                                    }))
+                                  }
+                                  style={{ paddingLeft: 8 + depth * 16 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={s.all}
+                                    ref={(el) => {
+                                      if (!el) return;
+                                      el.indeterminate = s.some;
+                                    }}
+                                    onClick={(ev) => ev.stopPropagation()}
+                                    onChange={(ev) => {
+                                      const checked = ev.target.checked;
+                                      setSelectedPaths((prev) => {
+                                        const next = { ...prev };
+                                        for (const p of n.leafPaths) next[p] = checked;
+                                        return next;
+                                      });
+                                    }}
+                                    disabled={busy}
+                                  />
+                                  <span className="statusCode" title="folder">
+                                    {expanded ? "v" : ">"}
+                                  </span>
+                                  <span className="statusPath" style={{ fontWeight: 800, opacity: 0.9 }}>
+                                    {n.name}
+                                  </span>
+                                  <span className="statusActions" />
+                                </div>
+                              );
+
+                              if (expanded && n.children && n.children.length > 0) {
+                                renderNodes(n.children, depth + 1);
+                              }
+                              continue;
+                            }
+
+                            const e = n.file;
+                            if (!e) continue;
+                            rows.push(
+                              <div
+                                key={e.path}
+                                className="statusRow"
+                                onClick={() => {
+                                  setPreviewPath(e.path);
+                                  setPreviewStatus(e.status);
+                                }}
+                                onContextMenu={(ev) => {
+                                  ev.preventDefault();
+                                  ev.stopPropagation();
+                                  setPreviewPath(e.path);
+                                  setPreviewStatus(e.status);
+                                  onOpenWorkingFileContextMenu(e.path, e.status, ev.clientX, ev.clientY);
+                                }}
+                                style={
+                                  e.path === previewPath
+                                    ? {
+                                        background: "rgba(47, 111, 237, 0.12)",
+                                        borderColor: "rgba(47, 111, 237, 0.35)",
+                                        paddingLeft: 8 + depth * 16,
+                                      }
+                                    : { paddingLeft: 8 + depth * 16 }
+                                }
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={!!selectedPaths[e.path]}
+                                  onClick={(ev) => ev.stopPropagation()}
+                                  onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                                  disabled={busy}
+                                />
+                                <span className="statusCode" title={e.status}>
+                                  {statusBadge(e.status)}
+                                </span>
+                                <span className="statusPath">{n.name}</span>
+                                <span className="statusActions">
+                                  <button
+                                    type="button"
+                                    className="statusActionBtn"
+                                    title="Reset file / Discard changes"
+                                    disabled={!activeRepoPath || busy}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      onDiscard(e.path, e.status);
+                                    }}
+                                  >
+                                    R
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="statusActionBtn"
+                                    title="Delete file"
+                                    disabled={!activeRepoPath || busy}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      onDelete(e.path);
+                                    }}
+                                  >
+                                    D
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="statusActionBtn"
+                                    title="Copy path (absolute)"
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      if (!activeRepoPath) return;
+                                      const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                      const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                      onCopyText(abs);
+                                    }}
+                                  >
+                                    C
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="statusActionBtn"
+                                    title="Reveal in File Explorer"
+                                    disabled={!activeRepoPath || busy}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      if (!activeRepoPath) return;
+                                      const sep = activeRepoPath.includes("\\") ? "\\" : "/";
+                                      const abs = joinPath(activeRepoPath, e.path.replace(/[\\/]/g, sep));
+                                      onRevealInExplorer(abs);
+                                    }}
+                                  >
+                                    E
+                                  </button>
+                                </span>
+                              </div>
+                            );
+                          }
+                        };
+
+                        renderNodes(treeRoots, 0);
+                        return rows;
+                      })()}
                 </div>
               )}
             </div>

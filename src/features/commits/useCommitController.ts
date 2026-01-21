@@ -92,6 +92,17 @@ export function useCommitController(opts: {
       return;
     }
 
+    const p = commitPreviewPath.trim();
+    const isDirLike = p.endsWith("/") || p.endsWith("\\");
+    if (isDirLike) {
+      setCommitPreviewDiff("");
+      setCommitPreviewContent("");
+      setCommitPreviewImageBase64("");
+      setCommitPreviewError("");
+      setCommitPreviewLoading(false);
+      return;
+    }
+
     let alive = true;
     setCommitPreviewLoading(true);
     setCommitPreviewError("");

@@ -3,6 +3,7 @@ import {
   useAppSettings,
   type ThemeName,
   type ViewMode,
+  type WorkingFilesViewMode,
   type RankDir,
   type EdgeDirection,
   type GitHistoryOrder,
@@ -433,6 +434,18 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
               {section === "git" ? (
                 <div className="settingsContentBody">
                   {applyError ? <div className="error">{applyError}</div> : null}
+                  {field(
+                    "Commit/Stash files view",
+                    <select
+                      value={git.workingFilesView}
+                      onChange={(e) => setGit({ workingFilesView: e.target.value as WorkingFilesViewMode })}
+                    >
+                      <option value="flat">Flat</option>
+                      <option value="tree">Tree</option>
+                    </select>,
+                    "Default view mode used in Commit and Stash dialogs.",
+                  )}
+
                   {field(
                     "History scope",
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
