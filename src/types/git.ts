@@ -53,6 +53,18 @@ export type PullPredictResult = {
   conflict_files: string[];
 };
 
+export type PullPredictGraphResult = {
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  action: string;
+  conflict_files: string[];
+  graph_commits: GitCommit[];
+  created_node_ids: string[];
+  head_name: string;
+  remote_name: string;
+};
+
 export type GitCloneProgressEvent = {
   destination_path: string;
   phase?: string | null;

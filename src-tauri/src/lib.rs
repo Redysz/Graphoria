@@ -85,6 +85,135 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+fn parse_git_log_records(repo_path: &str, stdout: &str) -> Vec<GitCommit> {
+    let head = run_git(repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let head = head.trim().to_string();
+
+    let mut commits = Vec::new();
+    for record in stdout.split('\x1e') {
+        let record = record.trim();
+        if record.is_empty() {
+            continue;
+        }
+
+        let mut parts = record.split('\x1f');
+        let hash = parts.next().unwrap_or_default().to_string();
+        let parents_raw = parts.next().unwrap_or_default();
+        let author = parts.next().unwrap_or_default().to_string();
+        let author_email = parts.next().unwrap_or_default().to_string();
+        let date = parts.next().unwrap_or_default().to_string();
+        let subject = parts.next().unwrap_or_default().to_string();
+        let _refs = parts.next().unwrap_or_default().to_string();
+
+        if hash.is_empty() {
+            continue;
+        }
+
+        let parents = parents_raw
+            .split_whitespace()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        commits.push(GitCommit {
+            hash: hash.clone(),
+            parents,
+            author,
+            author_email,
+            date,
+            subject,
+            refs: String::new(),
+            is_head: head == hash,
+        });
+    }
+    commits
+}
+
+fn git_log_commits_multi(repo_path: &str, revs: &[String], max_count: u32) -> Result<Vec<GitCommit>, String> {
+    if revs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let format = "%H\x1f%P\x1f%an\x1f%ae\x1f%ad\x1f%s\x1f%D\x1e";
+    let pretty = format!("--pretty=format:{format}");
+
+    let mut args: Vec<String> = vec![String::from("--no-pager"), String::from("log")];
+    args.push(String::from("--topo-order"));
+    args.push(String::from("--date=iso-strict"));
+    args.push(pretty);
+    args.push(String::from("-n"));
+    args.push(max_count.to_string());
+
+    for r in revs {
+        let t = r.trim();
+        if !t.is_empty() {
+            args.push(t.to_string());
+        }
+    }
+
+    let output = git_command_in_repo(repo_path)
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git log: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr_lower = stderr.to_lowercase();
+        if stderr_lower.contains("does not have any commits yet")
+            || stderr_lower.contains("does not have any commits")
+            || stderr_lower.contains("your current branch")
+            || stderr_lower.contains("unknown revision")
+        {
+            return Ok(Vec::new());
+        }
+        return Err(format!("git log failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_git_log_records(repo_path, stdout.as_ref()))
+}
+
+fn git_log_subjects_for_range(repo_path: &str, range: &str, max_count: u32) -> Result<Vec<String>, String> {
+    let fmt = "%H\x1f%s\x1e";
+    let pretty = format!("--pretty=format:{fmt}");
+    let max_count_s = max_count.to_string();
+    let args: Vec<String> = vec![
+        String::from("--no-pager"),
+        String::from("log"),
+        String::from("--reverse"),
+        String::from("--date=iso-strict"),
+        pretty,
+        String::from("-n"),
+        max_count_s,
+        range.to_string(),
+    ];
+
+    let output = git_command_in_repo(repo_path)
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to spawn git log: {e}"))?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    for rec in stdout.split('\x1e') {
+        let t = rec.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let mut parts = t.split('\x1f');
+        let _hash = parts.next().unwrap_or_default();
+        let subj = parts.next().unwrap_or_default().trim();
+        if !subj.is_empty() {
+            out.push(subj.to_string());
+        }
+    }
+    Ok(out)
+}
+
 static SESSION_SAFE_DIRECTORIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 fn session_safe_directories() -> &'static Mutex<HashSet<String>> {
@@ -398,6 +527,19 @@ struct PullPredictResult {
     behind: u32,
     action: String,
     conflict_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PullPredictGraphResult {
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+    action: String,
+    conflict_files: Vec<String>,
+    graph_commits: Vec<GitCommit>,
+    created_node_ids: Vec<String>,
+    head_name: String,
+    remote_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1535,6 +1677,162 @@ fn git_pull_predict(
 }
 
 #[tauri::command]
+fn git_pull_predict_graph(
+    repo_path: String,
+    remote_name: Option<String>,
+    rebase: Option<bool>,
+    max_commits: Option<u32>,
+) -> Result<PullPredictGraphResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+    let rebase = rebase.unwrap_or(false);
+    let max_commits = max_commits.unwrap_or(60).max(10).min(200);
+
+    run_git(&repo_path, &["fetch", remote_name.as_str()])?;
+
+    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+        String::from("(detached)")
+    });
+    if head_name == "(detached)" {
+        return Err(String::from("Cannot predict pull from detached HEAD."));
+    }
+
+    let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
+
+    let (ahead, behind) = match upstream.as_ref() {
+        Some(u) => {
+            let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
+                .unwrap_or_default();
+            let parts: Vec<&str> = raw.split_whitespace().collect();
+            let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            (ahead, behind)
+        }
+        None => (0, 0),
+    };
+
+    let action = match (upstream.as_ref(), ahead, behind, rebase) {
+        (None, _, _, _) => String::from("no-upstream"),
+        (Some(_), _, 0, _) => String::from("noop"),
+        (Some(_), 0, _, _) => String::from("fast-forward"),
+        (Some(_), _, _, true) => String::from("rebase"),
+        (Some(_), _, _, false) => String::from("merge-commit"),
+    };
+
+    let conflict_files = match (upstream.as_ref(), behind) {
+        (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
+        _ => Vec::new(),
+    };
+
+    let local_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default().trim().to_string();
+    let upstream_head = upstream
+        .as_ref()
+        .and_then(|u| run_git(&repo_path, &["rev-parse", u.as_str()]).ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let mut created_node_ids: Vec<String> = Vec::new();
+    let mut graph_commits: Vec<GitCommit> = Vec::new();
+    let mut predicted_head_id = local_head.clone();
+
+    if upstream.is_none() {
+        let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
+        graph_commits.append(&mut commits);
+    } else if action == "noop" {
+        let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
+        graph_commits.append(&mut commits);
+    } else if action == "fast-forward" {
+        let mut commits = if !upstream_head.is_empty() {
+            git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits)?
+        } else {
+            git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?
+        };
+        predicted_head_id = upstream_head.clone();
+        graph_commits.append(&mut commits);
+    } else if action == "merge-commit" {
+        let id = String::from("predict:merge");
+        created_node_ids.push(id.clone());
+        predicted_head_id = id.clone();
+        graph_commits.push(GitCommit {
+            hash: id,
+            parents: vec![local_head.clone(), upstream_head.clone()].into_iter().filter(|s| !s.is_empty()).collect(),
+            author: String::from("(predict)"),
+            author_email: String::new(),
+            date: String::new(),
+            subject: String::from("Merge commit"),
+            refs: String::new(),
+            is_head: true,
+        });
+
+        let revs = vec![local_head.clone(), upstream_head.clone()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>();
+        let mut commits = git_log_commits_multi(&repo_path, revs.as_slice(), max_commits.saturating_sub(1))?;
+        graph_commits.append(&mut commits);
+    } else if action == "rebase" {
+        let max_rebased = max_commits.min(40);
+        let subjects = if !upstream_head.is_empty() {
+            git_log_subjects_for_range(&repo_path, format!("{}..HEAD", upstream_head).as_str(), max_rebased)?
+        } else {
+            Vec::new()
+        };
+
+        let mut last_parent = upstream_head.clone();
+        let mut rebased: Vec<GitCommit> = Vec::new();
+        for (i, subj) in subjects.iter().enumerate() {
+            let id = format!("predict:rebase:{}", i + 1);
+            created_node_ids.push(id.clone());
+            rebased.push(GitCommit {
+                hash: id.clone(),
+                parents: if last_parent.trim().is_empty() { vec![] } else { vec![last_parent.clone()] },
+                author: String::from("(predict)"),
+                author_email: String::new(),
+                date: String::new(),
+                subject: subj.clone(),
+                refs: String::new(),
+                is_head: false,
+            });
+            last_parent = id;
+        }
+
+        rebased.reverse();
+        if let Some(first) = rebased.first() {
+            predicted_head_id = first.hash.clone();
+        }
+        graph_commits.append(&mut rebased);
+
+        if !upstream_head.is_empty() {
+            let mut commits = git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits.saturating_sub(subjects.len() as u32))?;
+            graph_commits.append(&mut commits);
+        }
+    }
+
+    for c in graph_commits.iter_mut() {
+        c.is_head = c.hash == predicted_head_id;
+        if c.is_head {
+            c.refs = format!("HEAD -> {}", head_name);
+        } else {
+            c.refs = String::new();
+        }
+    }
+
+    Ok(PullPredictGraphResult {
+        upstream,
+        ahead,
+        behind,
+        action,
+        conflict_files,
+        graph_commits,
+        created_node_ids,
+        head_name,
+        remote_name,
+    })
+}
+
+#[tauri::command]
 fn git_pull_predict_conflict_preview(repo_path: String, upstream: String, path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
@@ -1764,6 +2062,7 @@ pub fn run() {
             git_rebase_continue,
             git_rebase_abort,
             git_pull_predict,
+            git_pull_predict_graph,
             git_pull_predict_conflict_preview
         ])
         .run(tauri::generate_context!())

@@ -63,6 +63,7 @@ import {
   gitMergeContinue,
   gitPull,
   gitPullPredict,
+  gitPullPredictGraph,
   gitPullRebase,
   gitRebaseAbort,
   gitRebaseContinue,
@@ -125,7 +126,7 @@ import type {
   GitCommitSummary,
   GitStatusSummary,
   GitStashEntry,
-  PullPredictResult,
+  PullPredictGraphResult,
   RepoOverview,
 } from "./types/git";
 
@@ -325,7 +326,7 @@ function App() {
   const [pullPredictBusy, setPullPredictBusy] = useState(false);
   const [pullPredictError, setPullPredictError] = useState("");
   const [pullPredictRebase, setPullPredictRebase] = useState(false);
-  const [pullPredictResult, setPullPredictResult] = useState<PullPredictResult | null>(null);
+  const [pullPredictResult, setPullPredictResult] = useState<PullPredictGraphResult | null>(null);
 
   const [detachedHelpOpen, setDetachedHelpOpen] = useState(false);
   const [detachedBusy, setDetachedBusy] = useState(false);
@@ -2222,7 +2223,7 @@ function App() {
     setPullPredictRebase(rebase);
     setPullPredictOpen(true);
     try {
-      const res = await gitPullPredict({ repoPath: activeRepoPath, remoteName: "origin", rebase });
+      const res = await gitPullPredictGraph({ repoPath: activeRepoPath, remoteName: "origin", rebase, maxCommits: 60 });
       setPullPredictResult(res);
     } catch (e) {
       setPullPredictError(typeof e === "string" ? e : JSON.stringify(e));
