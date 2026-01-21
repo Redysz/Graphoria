@@ -231,6 +231,10 @@ pub(crate) fn git_working_file_content(repo_path: String, path: String) -> Resul
 
     let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
+    if full.is_dir() {
+        return Err(String::from("Path is a directory."));
+    }
+
     let bytes = match fs::read(full) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -256,6 +260,10 @@ pub(crate) fn git_working_file_text_preview(repo_path: String, path: String) -> 
     }
 
     let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    if full.is_dir() {
+        return Err(String::from("Path is a directory."));
+    }
     let bytes = match fs::read(full) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -305,6 +313,10 @@ pub(crate) fn git_head_vs_working_text_diff(repo_path: String, path: String, uni
     }
 
     let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    if full.is_dir() {
+        return Err(String::from("Path is a directory."));
+    }
 
     let head_spec = format!("HEAD:{path}");
     let head_bytes = match crate::git_command_in_repo(&repo_path)
@@ -368,6 +380,10 @@ pub(crate) fn git_working_file_image_base64(repo_path: String, path: String) -> 
     }
 
     let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    if full.is_dir() {
+        return Err(String::from("Path is a directory."));
+    }
     let bytes = match fs::read(full) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -393,6 +409,10 @@ pub(crate) fn git_head_vs_working_diff(repo_path: String, path: String, unified:
     }
 
     let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    if full.is_dir() {
+        return Err(String::from("Path is a directory."));
+    }
 
     let head_spec = format!("HEAD:{path}");
     let head_bytes = match crate::git_command_in_repo(&repo_path)

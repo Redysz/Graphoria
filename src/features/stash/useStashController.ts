@@ -197,6 +197,17 @@ export function useStashController(opts: {
       return;
     }
 
+    const p = stashPreviewPath.trim();
+    const isDirLike = p.endsWith("/") || p.endsWith("\\");
+    if (isDirLike) {
+      setStashPreviewDiff("");
+      setStashPreviewContent("");
+      setStashPreviewImageBase64("");
+      setStashPreviewError("");
+      setStashPreviewLoading(false);
+      return;
+    }
+
     let alive = true;
     setStashPreviewLoading(true);
     setStashPreviewError("");

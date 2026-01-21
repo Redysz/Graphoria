@@ -23,7 +23,7 @@ pub(crate) fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, Strin
     crate::ensure_is_git_worktree(&repo_path)?;
 
     let out = crate::git_command_in_repo(&repo_path)
-        .args(["status", "--porcelain", "-z"])
+        .args(["status", "--porcelain", "-z", "--untracked-files=all"])
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
@@ -105,7 +105,7 @@ pub(crate) fn git_has_staged_changes(repo_path: String) -> Result<bool, String> 
 pub(crate) fn git_status_summary(repo_path: String) -> Result<GitStatusSummary, String> {
     crate::ensure_is_git_worktree(&repo_path)?;
 
-    let raw = crate::run_git(&repo_path, &["status", "--porcelain"]).unwrap_or_default();
+    let raw = crate::run_git(&repo_path, &["status", "--porcelain", "--untracked-files=all"]).unwrap_or_default();
     let changed = raw
         .lines()
         .map(|l| l.trim())
