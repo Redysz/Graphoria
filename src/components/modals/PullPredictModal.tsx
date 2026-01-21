@@ -37,6 +37,41 @@ export function PullPredictModal({
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
 
+  const zoomTopTo100 = () => {
+    const cy = cyRef.current;
+    const el = graphRef.current;
+    if (!cy || !el) return;
+
+    const head = cy.nodes(".head").first();
+    const node = head && head.length ? head : cy.nodes().first();
+    if (!node || !node.length) return;
+
+    const rect = el.getBoundingClientRect();
+    const zoom = 1;
+    const pos = node.position();
+    const desiredRendered = { x: rect.width / 2, y: 56 };
+    const pan = {
+      x: desiredRendered.x - pos.x * zoom,
+      y: desiredRendered.y - pos.y * zoom,
+    };
+
+    cy.stop();
+    cy.animate(
+      {
+        zoom,
+        pan,
+      } as any,
+      { duration: 160 }
+    );
+  };
+
+  const fitGraphToPage = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.stop();
+    cy.fit(cy.elements(), 26);
+  };
+
   const miniElements = useMemo(() => {
     const commitsAll = result?.graph_commits ?? [];
     const commits = commitsAll.slice(0, 24);
@@ -236,7 +271,17 @@ export function PullPredictModal({
                 </div>
               </div>
               <div style={{ display: "grid", gap: 8, borderLeft: "1px solid var(--border)", paddingLeft: 12 }}>
-                <div style={{ fontWeight: 800, opacity: 0.8 }}>Predicted graph</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontWeight: 800, opacity: 0.8 }}>Predicted graph</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" onClick={zoomTopTo100} disabled={!result}>
+                      100%
+                    </button>
+                    <button type="button" onClick={fitGraphToPage} disabled={!result}>
+                      Fit
+                    </button>
+                  </div>
+                </div>
                 <div
                   ref={graphRef}
                   style={{
