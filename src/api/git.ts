@@ -7,6 +7,7 @@ import type {
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
+  PullPredictGraphResult,
   PullPredictResult,
   PullResult,
   RepoOverview,
@@ -170,6 +171,10 @@ export function gitPullRebase(params: { repoPath: string; remoteName: string }) 
 
 export function gitPullPredict(params: { repoPath: string; remoteName: string; rebase: boolean }) {
   return invoke<PullPredictResult>("git_pull_predict", params);
+}
+
+export function gitPullPredictGraph(params: { repoPath: string; remoteName: string; rebase: boolean; maxCommits?: number }) {
+  return invoke<PullPredictGraphResult>("git_pull_predict_graph", params);
 }
 
 export function gitPullPredictConflictPreview(params: { repoPath: string; upstream: string; path: string }) {
