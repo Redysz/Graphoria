@@ -1,5 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use quick_xml::events::Event as XmlEvent;
 use quick_xml::Reader as XmlReader;
 use zip::ZipArchive;
@@ -1444,6 +1444,174 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
     Ok(new_head)
 }
 
+ #[derive(Debug, Clone, Deserialize)]
+ struct GitPatchEntry {
+     path: String,
+     patch: String,
+ }
+
+ #[tauri::command]
+ fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
+     ensure_is_git_worktree(&repo_path)?;
+
+     let message = message.trim().to_string();
+     if message.is_empty() {
+         return Err(String::from("Commit message is empty."));
+     }
+
+     if patches.is_empty() {
+         return Err(String::from("No hunks selected to commit."));
+     }
+
+     let mut normalized_patches: Vec<GitPatchEntry> = Vec::new();
+     for p in patches.into_iter() {
+         let path = p.path.trim().replace('\\', "/");
+         if path.is_empty() {
+             return Err(String::from("path is empty"));
+         }
+         ensure_rel_path_safe(path.as_str())?;
+
+         let mut patch = p.patch.replace("\r\n", "\n");
+         if patch.trim().is_empty() {
+             return Err(String::from("patch is empty"));
+         }
+         if !patch.ends_with('\n') {
+             patch.push('\n');
+         }
+
+         normalized_patches.push(GitPatchEntry { path, patch });
+     }
+
+     let ms = SystemTime::now()
+         .duration_since(UNIX_EPOCH)
+         .unwrap_or_default()
+         .as_millis();
+     let pid = std::process::id();
+     let index_path = std::env::temp_dir().join(format!("graphoria_index_{pid}_{ms}.idx"));
+
+     let cleanup = || {
+         let _ = fs::remove_file(index_path.as_path());
+     };
+
+     let head_out = git_command_in_repo(&repo_path)
+         .args(["rev-parse", "--verify", "HEAD"])
+         .output();
+     let head = match head_out {
+         Ok(o) if o.status.success() => {
+             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+             if s.is_empty() { None } else { Some(s) }
+         }
+         _ => None,
+     };
+
+     let mut read_tree = git_command_in_repo(&repo_path);
+     read_tree.env("GIT_INDEX_FILE", index_path.as_os_str());
+     let read_tree_out = if head.is_some() {
+         read_tree
+             .args(["read-tree", "HEAD"])
+             .output()
+             .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
+     } else {
+         read_tree
+             .args(["read-tree", "--empty"])
+             .output()
+             .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
+     };
+
+     if !read_tree_out.status.success() {
+         cleanup();
+         let stderr = String::from_utf8_lossy(&read_tree_out.stderr);
+         return Err(format!("git read-tree failed: {stderr}"));
+     }
+
+     let run_with_stdin = |args: &[&str], stdin_data: &str| -> Result<(), String> {
+         let mut child = git_command_in_repo(&repo_path)
+             .env("GIT_INDEX_FILE", index_path.as_os_str())
+             .args(args)
+             .stdin(Stdio::piped())
+             .stdout(Stdio::piped())
+             .stderr(Stdio::piped())
+             .spawn()
+             .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+         if let Some(mut stdin) = child.stdin.take() {
+             stdin
+                 .write_all(stdin_data.as_bytes())
+                 .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+         }
+
+         let out = child
+             .wait_with_output()
+             .map_err(|e| format!("Failed to wait for git: {e}"))?;
+
+         if !out.status.success() {
+             let stderr = String::from_utf8_lossy(&out.stderr);
+             return Err(format!("git command failed: {stderr}"));
+         }
+
+         Ok(())
+     };
+
+     for p in normalized_patches.iter() {
+         let patch = p.patch.as_str();
+         if run_with_stdin(
+             &[
+                 "apply",
+                 "--cached",
+                 "--whitespace=nowarn",
+                 "--unidiff-zero",
+                 "--ignore-space-change",
+             ],
+             patch,
+         )
+         .is_err()
+         {
+             run_with_stdin(
+                 &[
+                     "apply",
+                     "--cached",
+                     "--whitespace=nowarn",
+                     "--unidiff-zero",
+                     "--ignore-space-change",
+                     "-C",
+                     "0",
+                     "--3way",
+                     "--recount",
+                 ],
+                 patch,
+             )?;
+         }
+     }
+
+     let diff_cached_out = git_command_in_repo(&repo_path)
+         .env("GIT_INDEX_FILE", index_path.as_os_str())
+         .args(["diff", "--cached", "--quiet"])
+         .output()
+         .map_err(|e| format!("Failed to spawn git diff --cached: {e}"))?;
+
+     if diff_cached_out.status.success() {
+         cleanup();
+         return Err(String::from("No hunks selected to commit."));
+     }
+
+     let commit_out = git_command_in_repo(&repo_path)
+         .env("GIT_INDEX_FILE", index_path.as_os_str())
+         .args(["commit", "-m", message.as_str()])
+         .output()
+         .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+
+     if !commit_out.status.success() {
+         cleanup();
+         let stderr = String::from_utf8_lossy(&commit_out.stderr);
+         return Err(format!("git commit failed: {stderr}"));
+     }
+
+     cleanup();
+
+     let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+     Ok(new_head)
+ }
+
 #[tauri::command]
 fn git_push(
     repo_path: String,
@@ -2051,6 +2219,7 @@ pub fn run() {
             git_delete_working_path,
             git_add_to_gitignore,
             git_commit,
+            git_commit_patch,
             git_status_summary,
             git_ahead_behind,
             git_get_remote_url,

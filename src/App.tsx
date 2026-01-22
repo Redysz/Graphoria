@@ -505,8 +505,15 @@ function App() {
     commitPreviewImageBase64,
     commitPreviewLoading,
     commitPreviewError,
+
+    commitAdvancedMode,
+    commitHunksByPath,
+    setCommitHunksByPath,
+    commitHunkRanges,
+
     refreshCommitStatusEntries,
     openCommitDialog,
+    toggleAdvancedMode: toggleCommitAdvancedMode,
     runCommit,
   } = useCommitController({
     activeRepoPath,
@@ -4049,6 +4056,10 @@ function App() {
           error={commitError}
           message={commitMessage}
           setMessage={setCommitMessage}
+          advancedMode={commitAdvancedMode}
+          onToggleAdvanced={async (next) => {
+            await toggleCommitAdvancedMode(next);
+          }}
           statusEntries={statusEntries}
           selectedPaths={selectedPaths}
           setSelectedPaths={setSelectedPaths}
@@ -4060,6 +4071,9 @@ function App() {
           previewImageBase64={commitPreviewImageBase64}
           previewDiff={commitPreviewDiff}
           previewContent={commitPreviewContent}
+          hunkRanges={commitHunkRanges}
+          hunksByPath={commitHunksByPath}
+          setHunksByPath={setCommitHunksByPath}
           alsoPush={commitAlsoPush}
           setAlsoPush={setCommitAlsoPush}
           joinPath={joinPath}

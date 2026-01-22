@@ -1,15 +1,17 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { DiffToolSettings } from "../../appSettingsStore";
-import { gitCommit, gitGetRemoteUrl, gitPush, gitStatus } from "../../api/git";
+import { gitCommit, gitCommitPatch, gitGetRemoteUrl, gitPush, gitStatus } from "../../api/git";
 import {
   gitHeadVsWorkingTextDiff,
   gitLaunchExternalDiffWorking,
   gitWorkingFileContent,
   gitWorkingFileDiff,
+  gitWorkingFileDiffUnified,
   gitWorkingFileImageBase64,
   gitWorkingFileTextPreview,
 } from "../../api/gitWorkingFiles";
 import type { GitStatusEntry, GitStatusSummary } from "../../types/git";
+import { buildPatchFromSelectedHunks, computeHunkRanges } from "../../utils/diffPatch";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "../../utils/filePreview";
 
 export function useCommitController(opts: {
@@ -20,6 +22,18 @@ export function useCommitController(opts: {
   setStatusSummaryByRepo: Dispatch<SetStateAction<Record<string, GitStatusSummary | undefined>>>;
 }) {
   const { activeRepoPath, headName, diffTool, loadRepo, setStatusSummaryByRepo } = opts;
+
+  function errorToString(e: unknown) {
+    if (typeof e === "string") return e;
+    if (e instanceof Error) return e.message || String(e);
+    try {
+      const j = JSON.stringify(e);
+      if (j && j !== "{}") return j;
+    } catch {
+      // ignore
+    }
+    return String(e);
+  }
 
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[]>([]);
@@ -36,6 +50,14 @@ export function useCommitController(opts: {
   const [commitPreviewImageBase64, setCommitPreviewImageBase64] = useState("");
   const [commitPreviewLoading, setCommitPreviewLoading] = useState(false);
   const [commitPreviewError, setCommitPreviewError] = useState("");
+
+  const [commitAdvancedMode, setCommitAdvancedMode] = useState(false);
+  const [commitHunksByPath, setCommitHunksByPath] = useState<Record<string, number[]>>({});
+
+  const commitHunkRanges = useMemo(() => {
+    if (!commitPreviewDiff) return [] as Array<{ index: number; header: string; start: number; end: number }>;
+    return computeHunkRanges(commitPreviewDiff).ranges;
+  }, [commitPreviewDiff]);
 
   async function refreshCommitStatusEntries() {
     if (!activeRepoPath) return;
@@ -59,6 +81,8 @@ export function useCommitController(opts: {
     setCommitMessage("");
     setCommitAlsoPush(false);
     setCommitModalOpen(true);
+    setCommitAdvancedMode(false);
+    setCommitHunksByPath({});
     setCommitPreviewPath("");
     setCommitPreviewStatus("");
     setCommitPreviewDiff("");
@@ -78,7 +102,7 @@ export function useCommitController(opts: {
     } catch (e) {
       setStatusEntries([]);
       setSelectedPaths({});
-      setCommitError(typeof e === "string" ? e : JSON.stringify(e));
+      setCommitError(errorToString(e));
     }
   }
 
@@ -163,12 +187,14 @@ export function useCommitController(opts: {
           return;
         }
 
-        const diff = await gitWorkingFileDiff({ repoPath: activeRepoPath, path: commitPreviewPath });
+        const diff = commitAdvancedMode
+          ? await gitWorkingFileDiffUnified({ repoPath: activeRepoPath, path: commitPreviewPath, unified: 20 })
+          : await gitWorkingFileDiff({ repoPath: activeRepoPath, path: commitPreviewPath });
         if (!alive) return;
         setCommitPreviewDiff(diff);
       } catch (e) {
         if (!alive) return;
-        setCommitPreviewError(typeof e === "string" ? e : JSON.stringify(e));
+        setCommitPreviewError(errorToString(e));
       } finally {
         if (!alive) return;
         setCommitPreviewLoading(false);
@@ -179,21 +205,112 @@ export function useCommitController(opts: {
     return () => {
       alive = false;
     };
-  }, [activeRepoPath, commitModalOpen, commitPreviewPath, commitPreviewStatus, diffTool.command, diffTool.difftool, diffTool.path]);
+  }, [
+    activeRepoPath,
+    commitModalOpen,
+    commitPreviewPath,
+    commitPreviewStatus,
+    commitAdvancedMode,
+    diffTool.command,
+    diffTool.difftool,
+    diffTool.path,
+  ]);
+
+  async function toggleAdvancedMode(next: boolean) {
+    if (next && diffTool.difftool !== "Graphoria builtin diff") {
+      setCommitError("Advanced mode requires Graphoria builtin diff.");
+      return;
+    }
+    setCommitError("");
+    setCommitAdvancedMode(next);
+  }
 
   async function runCommit() {
     if (!activeRepoPath) return;
 
-    const paths = statusEntries.filter((e) => selectedPaths[e.path]).map((e) => e.path);
-    if (paths.length === 0) {
-      setCommitError("No files selected.");
+    if (!commitAdvancedMode) {
+      const paths = statusEntries.filter((e) => selectedPaths[e.path]).map((e) => e.path);
+      if (paths.length === 0) {
+        setCommitError("No files selected.");
+        return;
+      }
+
+      setCommitBusy(true);
+      setCommitError("");
+      try {
+        await gitCommit({ repoPath: activeRepoPath, message: commitMessage, paths });
+
+        if (commitAlsoPush) {
+          const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
+
+          if (!currentRemote) {
+            setCommitError("No remote origin set. Configure Remote first.");
+            return;
+          }
+
+          if (headName === "(detached)") {
+            setCommitError("Cannot push from detached HEAD.");
+            return;
+          }
+
+          await gitPush({ repoPath: activeRepoPath, remoteName: "origin", force: false });
+        }
+
+        setCommitModalOpen(false);
+        await loadRepo(activeRepoPath);
+      } catch (e) {
+        setCommitError(errorToString(e));
+      } finally {
+        setCommitBusy(false);
+      }
+      return;
+    }
+
+    if (diffTool.difftool !== "Graphoria builtin diff") {
+      setCommitError("Advanced mode requires Graphoria builtin diff.");
+      return;
+    }
+
+    const picked: Array<{ path: string; indices: number[] }> = [];
+    for (const [p, indices] of Object.entries(commitHunksByPath)) {
+      if (!selectedPaths[p]) continue;
+      if (!indices || indices.length === 0) continue;
+      picked.push({ path: p, indices });
+    }
+    if (picked.length === 0) {
+      setCommitError("No hunks selected.");
       return;
     }
 
     setCommitBusy(true);
     setCommitError("");
     try {
-      await gitCommit({ repoPath: activeRepoPath, message: commitMessage, paths });
+      const patches: Array<{ path: string; patch: string }> = [];
+
+      for (const item of picked) {
+        const st = statusEntries.find((e) => e.path === item.path)?.status?.trim() ?? "";
+        if (st.startsWith("??")) {
+          throw new Error("Partial commit is not supported for untracked files.");
+        }
+
+        const ext = fileExtLower(item.path);
+        if (isImageExt(ext) || isDocTextPreviewExt(ext)) {
+          throw new Error("Partial commit is not supported for this file type.");
+        }
+
+        const diffText = await gitWorkingFileDiffUnified({ repoPath: activeRepoPath, path: item.path, unified: 20 });
+        const patch = buildPatchFromSelectedHunks(diffText, new Set(item.indices));
+        if (patch.trim()) {
+          patches.push({ path: item.path, patch });
+        }
+      }
+
+      if (patches.length === 0) {
+        setCommitError("No hunks selected.");
+        return;
+      }
+
+      await gitCommitPatch({ repoPath: activeRepoPath, message: commitMessage, patches });
 
       if (commitAlsoPush) {
         const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
@@ -214,7 +331,7 @@ export function useCommitController(opts: {
       setCommitModalOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
-      setCommitError(typeof e === "string" ? e : JSON.stringify(e));
+      setCommitError(errorToString(e));
     } finally {
       setCommitBusy(false);
     }
@@ -246,8 +363,15 @@ export function useCommitController(opts: {
     commitPreviewLoading,
     commitPreviewError,
 
+    commitAdvancedMode,
+    setCommitAdvancedMode,
+    commitHunksByPath,
+    setCommitHunksByPath,
+    commitHunkRanges,
+
     refreshCommitStatusEntries,
     openCommitDialog,
+    toggleAdvancedMode,
     runCommit,
   };
 }

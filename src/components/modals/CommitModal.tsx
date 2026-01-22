@@ -15,6 +15,13 @@ type TreeNode = {
   leafPaths: string[];
 };
 
+type HunkRange = {
+  index: number;
+  header: string;
+  start: number;
+  end: number;
+};
+
 type Props = {
   activeRepoPath: string;
   remoteUrl: string | null | undefined;
@@ -27,6 +34,9 @@ type Props = {
 
   message: string;
   setMessage: (v: string) => void;
+
+  advancedMode: boolean;
+  onToggleAdvanced: (next: boolean) => void | Promise<void>;
 
   statusEntries: GitStatusEntry[];
   selectedPaths: Record<string, boolean>;
@@ -41,6 +51,10 @@ type Props = {
   previewImageBase64: string;
   previewDiff: string;
   previewContent: string;
+
+  hunkRanges: HunkRange[];
+  hunksByPath: Record<string, number[]>;
+  setHunksByPath: Dispatch<SetStateAction<Record<string, number[]>>>;
 
   alsoPush: boolean;
   setAlsoPush: (v: boolean) => void;
@@ -66,6 +80,8 @@ export function CommitModal({
   error,
   message,
   setMessage,
+  advancedMode,
+  onToggleAdvanced,
   statusEntries,
   selectedPaths,
   setSelectedPaths,
@@ -77,6 +93,9 @@ export function CommitModal({
   previewImageBase64,
   previewDiff,
   previewContent,
+  hunkRanges,
+  hunksByPath,
+  setHunksByPath,
   alsoPush,
   setAlsoPush,
   joinPath,
@@ -88,7 +107,17 @@ export function CommitModal({
   onClose,
   onCommit,
 }: Props) {
-  const commitDisabled = busy || !message.trim() || statusEntries.filter((e) => selectedPaths[e.path]).length === 0;
+  const selectedFilesCount = statusEntries.filter((e) => selectedPaths[e.path]).length;
+  const selectedHunksCount = useMemo(() => {
+    let n = 0;
+    for (const [p, v] of Object.entries(hunksByPath)) {
+      if (!selectedPaths[p]) continue;
+      n += v?.length ?? 0;
+    }
+    return n;
+  }, [hunksByPath, selectedPaths]);
+
+  const commitDisabled = busy || !message.trim() || (advancedMode ? selectedHunksCount === 0 : selectedFilesCount === 0);
 
   const [filesView, setFilesView] = useState<FilesViewMode>(defaultFilesView ?? "flat");
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
@@ -168,6 +197,9 @@ export function CommitModal({
     const next: Record<string, boolean> = {};
     for (const e of statusEntries) next[e.path] = nextChecked;
     setSelectedPaths(next);
+    if (advancedMode && !nextChecked) {
+      setHunksByPath({});
+    }
   }
 
   function folderSelectionState(leafPaths: string[]) {
@@ -237,6 +269,10 @@ export function CommitModal({
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
                 <div style={{ fontWeight: 800, opacity: 0.8 }}>Files</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
+                    <input type="checkbox" checked={advancedMode} onChange={(e) => void onToggleAdvanced(e.target.checked)} disabled={busy} />
+                    Advanced
+                  </label>
                   <button type="button" onClick={() => setAllSelected(!allSelected)} disabled={busy || statusEntries.length === 0}>
                     {allSelected ? "Deselect all" : "Select all"}
                   </button>
@@ -280,7 +316,18 @@ export function CommitModal({
                             type="checkbox"
                             checked={!!selectedPaths[e.path]}
                             onClick={(ev) => ev.stopPropagation()}
-                            onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                            onChange={(ev) => {
+                              const checked = ev.target.checked;
+                              setSelectedPaths((prev) => ({ ...prev, [e.path]: checked }));
+                              if (advancedMode && !checked) {
+                                setHunksByPath((prev) => {
+                                  if (!prev[e.path]) return prev;
+                                  const next = { ...prev };
+                                  delete next[e.path];
+                                  return next;
+                                });
+                              }
+                            }}
                             disabled={busy}
                           />
                           <span className="statusCode" title={e.status}>
@@ -379,6 +426,19 @@ export function CommitModal({
                                         for (const p of n.leafPaths) next[p] = checked;
                                         return next;
                                       });
+                                      if (advancedMode && !checked) {
+                                        setHunksByPath((prev) => {
+                                          const next = { ...prev };
+                                          let changed = false;
+                                          for (const p of n.leafPaths) {
+                                            if (next[p]) {
+                                              delete next[p];
+                                              changed = true;
+                                            }
+                                          }
+                                          return changed ? next : prev;
+                                        });
+                                      }
                                     }}
                                     disabled={busy}
                                   />
@@ -429,7 +489,18 @@ export function CommitModal({
                                   type="checkbox"
                                   checked={!!selectedPaths[e.path]}
                                   onClick={(ev) => ev.stopPropagation()}
-                                  onChange={(ev) => setSelectedPaths((prev) => ({ ...prev, [e.path]: ev.target.checked }))}
+                                  onChange={(ev) => {
+                                    const checked = ev.target.checked;
+                                    setSelectedPaths((prev) => ({ ...prev, [e.path]: checked }));
+                                    if (advancedMode && !checked) {
+                                      setHunksByPath((prev) => {
+                                        if (!prev[e.path]) return prev;
+                                        const next = { ...prev };
+                                        delete next[e.path];
+                                        return next;
+                                      });
+                                    }
+                                  }}
                                   disabled={busy}
                                 />
                                 <span className="statusCode" title={e.status}>
@@ -505,7 +576,45 @@ export function CommitModal({
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>
-              <div style={{ opacity: 0.75, fontSize: 12 }}>Green: added, red: removed. Yellow/blue: detected moved lines.</div>
+              {advancedMode ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ opacity: 0.75, fontSize: 12 }}>Select hunks for the currently selected file, then commit selected hunks.</div>
+                  {hunkRanges.length > 0 ? (
+                    <div className="statusList" style={{ maxHeight: 160, overflow: "auto" }}>
+                      {hunkRanges.map((r) => {
+                        const sel = new Set(hunksByPath[previewPath] ?? []);
+                        const checked = sel.has(r.index);
+                        return (
+                          <label key={r.index} className="statusRow hunkRow" style={{ cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(ev) => {
+                                const next = ev.target.checked;
+                                if (next && previewPath) {
+                                  setSelectedPaths((prev) => ({ ...prev, [previewPath]: true }));
+                                }
+                                setHunksByPath((prev) => {
+                                  const cur = new Set(prev[previewPath] ?? []);
+                                  if (next) cur.add(r.index);
+                                  else cur.delete(r.index);
+                                  return { ...prev, [previewPath]: Array.from(cur.values()).sort((a, b) => a - b) };
+                                });
+                              }}
+                              disabled={busy || !previewPath}
+                            />
+                            <span className="hunkHeader">{r.header}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ opacity: 0.75, fontSize: 12 }}>No hunks detected for this file.</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ opacity: 0.75, fontSize: 12 }}>Green: added, red: removed. Yellow/blue: detected moved lines.</div>
+              )}
 
               {previewError ? <div className="error">{previewError}</div> : null}
               {previewLoading ? <div style={{ opacity: 0.7 }}>Loading…</div> : null}

@@ -246,6 +246,10 @@ export function gitCommit(params: { repoPath: string; message: string; paths: st
   return invoke<string>("git_commit", params);
 }
 
+ export function gitCommitPatch(params: { repoPath: string; message: string; patches: Array<{ path: string; patch: string }> }) {
+   return invoke<string>("git_commit_patch", params);
+ }
+
 export function gitPush(params: { repoPath: string; remoteName: string; branch?: string; force: boolean; withLease?: boolean }) {
   return invoke<string>("git_push", params);
 }
