@@ -161,7 +161,7 @@ export function Sidebar(props: {
         <div className="sidebarTitle">Other</div>
         <div className="sidebarList">
           <div className="sidebarItem">Submodules</div>
-          <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
             <div className="sidebarTitle" style={{ marginBottom: 0 }}>
               Stashes
             </div>

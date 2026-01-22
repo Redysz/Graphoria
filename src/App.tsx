@@ -144,6 +144,7 @@ function App() {
   const [commitsByRepo, setCommitsByRepo] = useState<Record<string, GitCommit[] | undefined>>({});
   const [commitsFullByRepo, setCommitsFullByRepo] = useState<Record<string, boolean>>({});
   const [commitsFullLoadingByRepo, setCommitsFullLoadingByRepo] = useState<Record<string, boolean>>({});
+  const [commitsHasMoreByRepo, setCommitsHasMoreByRepo] = useState<Record<string, boolean | undefined>>({});
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [statusSummaryByRepo, setStatusSummaryByRepo] = useState<Record<string, GitStatusSummary | undefined>>({});
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
@@ -439,6 +440,7 @@ function App() {
     setSelectedHash,
 
     setCommitsByRepo,
+    setCommitsHasMoreByRepo,
     setOverviewByRepo,
     setStatusSummaryByRepo,
     setRemoteUrlByRepo,
@@ -503,6 +505,7 @@ function App() {
     setCommitsByRepo,
     setCommitsFullByRepo,
     setCommitsFullLoadingByRepo,
+    setCommitsHasMoreByRepo,
     setRemoteUrlByRepo,
     setStatusSummaryByRepo,
     setAheadBehindByRepo,
@@ -3091,7 +3094,7 @@ function App() {
                       <button type="button" onClick={focusOnNewest} disabled={!activeRepoPath || commitsAll.length === 0}>
                         Focus on newest
                       </button>
-                      {!activeRepoPath || commitsFullByRepo[activeRepoPath] ? null : (
+                      {!activeRepoPath || commitsFullByRepo[activeRepoPath] || commitsHasMoreByRepo[activeRepoPath] !== true ? null : (
                         <button
                           type="button"
                           onClick={() => void loadFullHistory()}

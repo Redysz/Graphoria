@@ -22,6 +22,7 @@ export function useRepoOpenClose(opts: {
   setCommitsByRepo: Dispatch<SetStateAction<Record<string, GitCommit[] | undefined>>>;
   setCommitsFullByRepo: Dispatch<SetStateAction<Record<string, boolean>>>;
   setCommitsFullLoadingByRepo: Dispatch<SetStateAction<Record<string, boolean>>>;
+  setCommitsHasMoreByRepo: Dispatch<SetStateAction<Record<string, boolean | undefined>>>;
   setRemoteUrlByRepo: Dispatch<SetStateAction<Record<string, string | null | undefined>>>;
   setStatusSummaryByRepo: Dispatch<SetStateAction<Record<string, GitStatusSummary | undefined>>>;
   setAheadBehindByRepo: Dispatch<SetStateAction<Record<string, GitAheadBehind | undefined>>>;
@@ -51,6 +52,7 @@ export function useRepoOpenClose(opts: {
     setCommitsByRepo,
     setCommitsFullByRepo,
     setCommitsFullLoadingByRepo,
+    setCommitsHasMoreByRepo,
     setRemoteUrlByRepo,
     setStatusSummaryByRepo,
     setAheadBehindByRepo,
@@ -140,6 +142,11 @@ export function useRepoOpenClose(opts: {
         delete next[path];
         return next;
       });
+      setCommitsHasMoreByRepo((prev) => {
+        const next = { ...prev };
+        delete next[path];
+        return next;
+      });
       setRemoteUrlByRepo((prev) => {
         const next = { ...prev };
         delete next[path];
@@ -188,6 +195,7 @@ export function useRepoOpenClose(opts: {
       setCommitsByRepo,
       setCommitsFullByRepo,
       setCommitsFullLoadingByRepo,
+      setCommitsHasMoreByRepo,
       setErrorByRepo,
       setPullErrorByRepo,
       setOverviewByRepo,
