@@ -12,6 +12,7 @@ export function ToolsMenu(props: {
 
   setTerminalMenuOpen: (next: boolean) => void;
   setDiffToolModalOpen: (next: boolean) => void;
+  openCommitSearch: () => void;
   openCleanOldBranchesDialog: () => void | Promise<void>;
 
   confirmClearAllStashes: () => void | Promise<void>;
@@ -28,6 +29,7 @@ export function ToolsMenu(props: {
     stashesCount,
     setTerminalMenuOpen,
     setDiffToolModalOpen,
+    openCommitSearch,
     openCleanOldBranchesDialog,
     confirmClearAllStashes,
     menuItem,
@@ -67,6 +69,17 @@ export function ToolsMenu(props: {
             }}
           >
             {menuItem("Diff tool…", shortcutLabel("tool.diffTool"))}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setToolsMenuOpen(false);
+              openCommitSearch();
+            }}
+            disabled={!activeRepoPath}
+            title={!activeRepoPath ? "No repository" : "Search commits"}
+          >
+            {menuItem("Commit search…", shortcutLabel("tool.commitSearch"))}
           </button>
           <button
             type="button"

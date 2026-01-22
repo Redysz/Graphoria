@@ -46,6 +46,8 @@ import {
   gitCherryPick,
   gitCloneRepo,
   gitCommitAll,
+  gitCommitChanges,
+  gitCommitFileDiff,
   initRepo,
   gitCommitSummary,
   gitBranchesPointsAt,
@@ -183,6 +185,34 @@ function App() {
   const [goToText, setGoToText] = useState<string>("");
   const [goToTargetView, setGoToTargetView] = useState<"graph" | "commits">("graph");
   const [goToError, setGoToError] = useState<string>("");
+
+  const [commitSearchOpen, setCommitSearchOpen] = useState(false);
+  const [commitSearchText, setCommitSearchText] = useState("");
+  const [commitSearchInSubject, setCommitSearchInSubject] = useState(true);
+  const [commitSearchInHash, setCommitSearchInHash] = useState(true);
+  const [commitSearchInAuthor, setCommitSearchInAuthor] = useState(true);
+  const [commitSearchInDiff, setCommitSearchInDiff] = useState(false);
+  const [commitSearchAuthorFilter, setCommitSearchAuthorFilter] = useState("");
+  const [commitSearchDateFrom, setCommitSearchDateFrom] = useState("");
+  const [commitSearchDateTo, setCommitSearchDateTo] = useState("");
+  const [commitSearchDiffBusy, setCommitSearchDiffBusy] = useState(false);
+  const [commitSearchDiffMatches, setCommitSearchDiffMatches] = useState<Record<string, boolean>>({});
+  const commitSearchDiffCacheRef = useRef<Map<string, Map<string, boolean>>>(new Map());
+  const commitSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const closeCommitSearch = () => {
+    setCommitSearchOpen(false);
+    setCommitSearchText("");
+    setCommitSearchDiffBusy(false);
+    setCommitSearchDiffMatches({});
+  };
+
+  function openCommitSearch() {
+    if (!activeRepoPath) return;
+    setViewMode("commits");
+    setCommitSearchOpen(true);
+  }
+
   const [graphButtonsVisible, setGraphButtonsVisible] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("Confirm");
@@ -768,6 +798,215 @@ function App() {
 
   const commitsAll = commitsByRepo[activeRepoPath] ?? [];
 
+  const commitSearchAuthors = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of commitsAll) {
+      const a = (c.author ?? "").trim();
+      if (a) set.add(a);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [commitsAll]);
+
+  const commitSearchQuery = useMemo(() => commitSearchText.trim(), [commitSearchText]);
+  const commitSearchQueryLower = useMemo(() => commitSearchQuery.toLowerCase(), [commitSearchQuery]);
+  const commitSearchActive = commitSearchOpen && commitSearchQueryLower.length >= 3;
+
+  const commitSearchFromTs = useMemo(() => {
+    const t = commitSearchDateFrom.trim();
+    if (!t) return null;
+    const ts = new Date(`${t}T00:00:00.000`).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }, [commitSearchDateFrom]);
+
+  const commitSearchToTs = useMemo(() => {
+    const t = commitSearchDateTo.trim();
+    if (!t) return null;
+    const ts = new Date(`${t}T23:59:59.999`).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }, [commitSearchDateTo]);
+
+  const commitsForList = useMemo(() => {
+    if (!commitSearchActive) return commitsAll;
+
+    const q = commitSearchQueryLower;
+    const wantSubject = commitSearchInSubject;
+    const wantHash = commitSearchInHash;
+    const wantAuthor = commitSearchInAuthor;
+    const wantDiff = commitSearchInDiff;
+    const authorExact = commitSearchAuthorFilter.trim();
+    const fromTs = commitSearchFromTs;
+    const toTs = commitSearchToTs;
+
+    const matchesDateAuthorScope = (c: GitCommit) => {
+      if (authorExact && (c.author ?? "") !== authorExact) return false;
+      if (fromTs !== null || toTs !== null) {
+        const ts = Date.parse(c.date);
+        if (Number.isFinite(ts)) {
+          if (fromTs !== null && ts < fromTs) return false;
+          if (toTs !== null && ts > toTs) return false;
+        }
+      }
+      return true;
+    };
+
+    const filtered: GitCommit[] = [];
+    for (const c of commitsAll) {
+      if (!matchesDateAuthorScope(c)) continue;
+
+      let match = false;
+      if (wantSubject && (c.subject ?? "").toLowerCase().includes(q)) match = true;
+      if (!match && wantHash && (c.hash ?? "").toLowerCase().includes(q)) match = true;
+      if (!match && wantAuthor && (c.author ?? "").toLowerCase().includes(q)) match = true;
+      if (!match && wantDiff && commitSearchDiffMatches[c.hash]) match = true;
+
+      if (match) filtered.push(c);
+    }
+    return filtered;
+  }, [
+    commitSearchActive,
+    commitSearchAuthorFilter,
+    commitSearchDiffMatches,
+    commitSearchFromTs,
+    commitSearchInAuthor,
+    commitSearchInDiff,
+    commitSearchInHash,
+    commitSearchInSubject,
+    commitSearchQueryLower,
+    commitSearchToTs,
+    commitsAll,
+  ]);
+
+  useEffect(() => {
+    if (!commitSearchOpen) return;
+    if (activeRepoPath.trim() === "") return;
+
+    const id = window.setTimeout(() => {
+      const el = commitSearchInputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.select();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [activeRepoPath, commitSearchOpen, viewMode]);
+
+  useEffect(() => {
+    if (!commitSearchOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeCommitSearch();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [commitSearchOpen]);
+
+  useEffect(() => {
+    if (!commitSearchOpen) return;
+    if (!commitSearchInDiff || !commitSearchActive) {
+      setCommitSearchDiffBusy(false);
+      setCommitSearchDiffMatches({});
+      return;
+    }
+
+    let alive = true;
+    setCommitSearchDiffBusy(true);
+    setCommitSearchDiffMatches({});
+    const q = commitSearchQueryLower;
+    const fromTs = commitSearchFromTs;
+    const toTs = commitSearchToTs;
+    const authorExact = commitSearchAuthorFilter.trim();
+
+    const candidates = commitsAll.filter((c) => {
+      if (authorExact && (c.author ?? "") !== authorExact) return false;
+      if (fromTs !== null || toTs !== null) {
+        const ts = Date.parse(c.date);
+        if (Number.isFinite(ts)) {
+          if (fromTs !== null && ts < fromTs) return false;
+          if (toTs !== null && ts > toTs) return false;
+        }
+      }
+      return true;
+    });
+
+    const run = async () => {
+      const cache = commitSearchDiffCacheRef.current;
+      for (let idx = 0; idx < candidates.length; idx++) {
+        if (!alive) return;
+
+        const c = candidates[idx];
+        const byQuery = cache.get(c.hash) ?? new Map<string, boolean>();
+        cache.set(c.hash, byQuery);
+        const cached = byQuery.get(q);
+        if (typeof cached === "boolean") {
+          if (cached) {
+            setCommitSearchDiffMatches((prev) => (prev[c.hash] ? prev : { ...prev, [c.hash]: true }));
+          }
+          continue;
+        }
+
+        let matched = false;
+        try {
+          const changes = await gitCommitChanges({ repoPath: activeRepoPath, commit: c.hash });
+          if (!alive) return;
+
+          for (const ch of changes) {
+            const p = `${ch.path ?? ""} ${ch.old_path ?? ""}`.toLowerCase();
+            if (p.includes(q)) {
+              matched = true;
+              break;
+            }
+          }
+
+          if (!matched) {
+            const limit = 8;
+            for (let i = 0; i < Math.min(limit, changes.length); i++) {
+              const p = (changes[i]?.path ?? "").trim();
+              if (!p) continue;
+              const diff = await gitCommitFileDiff({ repoPath: activeRepoPath, commit: c.hash, path: p });
+              if (!alive) return;
+              if ((diff ?? "").toLowerCase().includes(q)) {
+                matched = true;
+                break;
+              }
+            }
+          }
+        } catch {
+          matched = false;
+        }
+
+        byQuery.set(q, matched);
+        if (matched) {
+          setCommitSearchDiffMatches((prev) => (prev[c.hash] ? prev : { ...prev, [c.hash]: true }));
+        }
+
+        if (idx % 10 === 0) {
+          await new Promise((r) => window.setTimeout(r, 0));
+        }
+      }
+    };
+
+    void run().finally(() => {
+      if (!alive) return;
+      setCommitSearchDiffBusy(false);
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [
+    activeRepoPath,
+    commitSearchActive,
+    commitSearchAuthorFilter,
+    commitSearchFromTs,
+    commitSearchInDiff,
+    commitSearchOpen,
+    commitSearchQueryLower,
+    commitSearchToTs,
+    commitsAll,
+  ]);
+
   const commitLaneLayout = useMemo(() => {
     if (viewMode !== "commits") return { rows: [] as CommitLaneRow[], maxLanes: 0 };
     if (commitsAll.length === 0) return { rows: [] as CommitLaneRow[], maxLanes: 0 };
@@ -1051,6 +1290,7 @@ function App() {
       loadRepo,
       runFetch,
       openTerminalProfile,
+      openCommitSearch,
     };
   });
 
@@ -2978,6 +3218,7 @@ function App() {
               stashesCount={stashes.length}
               setTerminalMenuOpen={setTerminalMenuOpen}
               setDiffToolModalOpen={setDiffToolModalOpen}
+              openCommitSearch={openCommitSearch}
               openCleanOldBranchesDialog={openCleanOldBranchesDialog}
               confirmClearAllStashes={async () => {
                 const ok = await confirmDialog({
@@ -3186,103 +3427,187 @@ function App() {
                 {commitsAll.length === 0 ? (
                   <div style={{ opacity: 0.7 }}>No commits loaded.</div>
                 ) : (
-                  <div className="commitsList">
-                    {commitsAll.map((c) => (
-                      <button
-                        key={c.hash}
-                        data-commit-hash={c.hash}
-                        type="button"
-                        onClick={() => setSelectedHash(c.hash)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setSelectedHash(c.hash);
-                          openCommitContextMenu(c.hash, e.clientX, e.clientY);
-                        }}
-                        className={
-                          c.hash === selectedHash ? "commitRow commitRowSelected" : "commitRow"
-                        }
-                      >
-                        <div className="commitRowGrid">
-                          <div
-                            className="commitGraphCell"
-                            style={{
-                              width:
-                                commitLaneLayout.maxLanes > 0
-                                  ? Math.max(28, 20 + Math.min(commitLaneLayout.maxLanes, 10) * 12 + 56)
-                                  : 28,
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {commitSearchOpen ? (
+                      <div className="commitSearchPanel">
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                          <input
+                            ref={commitSearchInputRef}
+                            className="modalInput"
+                            value={commitSearchText}
+                            onChange={(e) => setCommitSearchText(e.target.value)}
+                            placeholder="Search commits…"
+                            style={{ flex: "1 1 320px" }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                closeCommitSearch();
+                              }
                             }}
-                          >
-                            {commitLaneLayout.rows.length ? (
-                              <CommitLaneSvg
-                                row={commitLaneRowByHash.get(c.hash) ?? {
-                                  hash: c.hash,
-                                  lane: 0,
-                                  activeTop: [],
-                                  activeBottom: [],
-                                  parentLanes: [],
-                                  joinLanes: [],
-                                }}
-                                maxLanes={commitLaneLayout.maxLanes}
-                                theme={theme}
-                                selected={c.hash === selectedHash}
-                                isHead={c.is_head}
-                                showMergeStub={commitsHistoryOrder === "first_parent" && c.parents.length > 1}
-                                mergeParentCount={c.parents.length}
-                                nodeBg={commitLaneNodeBg}
-                                palette={commitLanePalette}
-                                refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}
-                              />
-                            ) : null}
+                          />
+                          <button type="button" onClick={closeCommitSearch}>
+                            Close
+                          </button>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                            <input
+                              type="checkbox"
+                              checked={commitSearchInSubject}
+                              onChange={(e) => setCommitSearchInSubject(e.target.checked)}
+                            />
+                            Name
+                          </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                            <input type="checkbox" checked={commitSearchInHash} onChange={(e) => setCommitSearchInHash(e.target.checked)} />
+                            Hash
+                          </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                            <input
+                              type="checkbox"
+                              checked={commitSearchInAuthor}
+                              onChange={(e) => setCommitSearchInAuthor(e.target.checked)}
+                            />
+                            Author
+                          </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                            <input type="checkbox" checked={commitSearchInDiff} onChange={(e) => setCommitSearchInDiff(e.target.checked)} />
+                            Diff
+                            <span style={{ fontSize: 12, opacity: 0.7 }}>(slow)</span>
+                            {commitSearchDiffBusy ? <span className="miniSpinner" /> : null}
+                          </label>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 900, opacity: 0.75, fontSize: 12 }}>Author</div>
+                            <select value={commitSearchAuthorFilter} onChange={(e) => setCommitSearchAuthorFilter(e.target.value)}>
+                              <option value="">All</option>
+                              {commitSearchAuthors.map((a) => (
+                                <option key={a} value={a}>
+                                  {a}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                          <div
-                            className="commitAvatar"
-                            style={
-                              {
-                                ["--avatar-c1" as any]: `hsl(${fnv1a32(c.author) % 360} 72% ${theme === "dark" ? 58 : 46}%)`,
-                                ["--avatar-c2" as any]: `hsl(${(fnv1a32(c.author + "::2") + 28) % 360} 72% ${theme === "dark" ? 48 : 38}%)`,
-                              } as CSSProperties
-                            }
-                            title={c.author}
-                          >
-                            {(() => {
-                              const email = (c.author_email ?? "").trim().toLowerCase();
-                              const canUse = Boolean(showOnlineAvatars && email && !avatarFailedByEmail[email]);
-                              const url = canUse ? `https://www.gravatar.com/avatar/${md5Hex(email)}?d=404&s=64` : null;
-                              return (
-                                <>
-                                  <span className="commitAvatarText">{authorInitials(c.author)}</span>
-                                  {url ? (
-                                    <img
-                                      className="commitAvatarImg"
-                                      src={url}
-                                      alt={c.author}
-                                      loading="lazy"
-                                      decoding="async"
-                                      referrerPolicy="no-referrer"
-                                      draggable={false}
-                                      onError={() => {
-                                        setAvatarFailedByEmail((prev) => ({ ...prev, [email]: true }));
-                                      }}
-                                    />
-                                  ) : null}
-                                </>
-                              );
-                            })()}
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 900, opacity: 0.75, fontSize: 12 }}>From</div>
+                            <input type="date" value={commitSearchDateFrom} onChange={(e) => setCommitSearchDateFrom(e.target.value)} />
                           </div>
-                          <div className="commitRowMain">
-                            <div className="commitRowTop">
-                              <span className="commitHash">{shortHash(c.hash)}</span>
-                              <span className="commitSubject">{truncate(c.subject, 100)}</span>
-                              {c.is_head ? <span className="commitHead">(HEAD)</span> : null}
-                            </div>
-                            <div className="commitMeta">
-                              {c.author} — {c.date}
-                            </div>
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 900, opacity: 0.75, fontSize: 12 }}>To</div>
+                            <input type="date" value={commitSearchDateTo} onChange={(e) => setCommitSearchDateTo(e.target.value)} />
                           </div>
                         </div>
-                      </button>
-                    ))}
+
+                        <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>Type at least 3 characters to search.</div>
+                      </div>
+                    ) : null}
+
+                    {commitSearchActive && commitsForList.length === 0 ? (
+                      <div style={{ opacity: 0.7 }}>No matching commits.</div>
+                    ) : null}
+
+                    <div className="commitsList">
+                      {commitsForList.map((c) => (
+                        <button
+                          key={c.hash}
+                          data-commit-hash={c.hash}
+                          type="button"
+                          onClick={() => setSelectedHash(c.hash)}
+                          onContextMenu={(e) => {
+                            if (!activeRepoPath || loading) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openCommitContextMenu(c.hash, e.clientX, e.clientY);
+                          }}
+                          className={c.hash === selectedHash ? "commitRow commitRowSelected" : "commitRow"}
+                        >
+                          <div className="commitRowGrid">
+                            <div
+                              className="commitGraphCell"
+                              style={{
+                                width:
+                                  commitLaneLayout.maxLanes > 0
+                                    ? Math.max(28, 20 + Math.min(commitLaneLayout.maxLanes, 10) * 12 + 56)
+                                    : 28,
+                              }}
+                            >
+                              {commitLaneLayout.rows.length ? (
+                                <CommitLaneSvg
+                                  row={commitLaneRowByHash.get(c.hash) ?? {
+                                    hash: c.hash,
+                                    lane: 0,
+                                    activeTop: [],
+                                    activeBottom: [],
+                                    parentLanes: [],
+                                    joinLanes: [],
+                                  }}
+                                  maxLanes={commitLaneLayout.maxLanes}
+                                  theme={theme}
+                                  selected={c.hash === selectedHash}
+                                  isHead={c.is_head}
+                                  showMergeStub={commitsHistoryOrder === "first_parent" && c.parents.length > 1}
+                                  mergeParentCount={c.parents.length}
+                                  nodeBg={commitLaneNodeBg}
+                                  palette={commitLanePalette}
+                                  refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}
+                                />
+                              ) : null}
+                            </div>
+                            <div
+                              className="commitAvatar"
+                              style={
+                                {
+                                  ["--avatar-c1" as any]: `hsl(${fnv1a32(c.author) % 360} 72% ${theme === "dark" ? 58 : 46}%)`,
+                                  ["--avatar-c2" as any]: `hsl(${(fnv1a32(c.author + "::2") + 28) % 360} 72% ${theme === "dark" ? 48 : 38}%)`,
+                                } as CSSProperties
+                              }
+                              title={c.author}
+                            >
+                              {(() => {
+                                const email = (c.author_email ?? "").trim().toLowerCase();
+                                const canUse = Boolean(showOnlineAvatars && email && !avatarFailedByEmail[email]);
+                                const url = canUse ? `https://www.gravatar.com/avatar/${md5Hex(email)}?d=404&s=64` : null;
+                                return (
+                                  <>
+                                    <span className="commitAvatarText">{authorInitials(c.author)}</span>
+                                    {url ? (
+                                      <img
+                                        className="commitAvatarImg"
+                                        src={url}
+                                        alt={c.author}
+                                        loading="lazy"
+                                        decoding="async"
+                                        referrerPolicy="no-referrer"
+                                        draggable={false}
+                                        onError={() => {
+                                          setAvatarFailedByEmail((prev) => ({ ...prev, [email]: true }));
+                                        }}
+                                      />
+                                    ) : null}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                            <div className="commitRowMain">
+                              <div className="commitRowTop">
+                                <span className="commitHash">{shortHash(c.hash)}</span>
+                                <span className="commitSubject">{truncate(c.subject, 100)}</span>
+                                {c.is_head ? <span className="commitHead">(HEAD)</span> : null}
+                              </div>
+                              <div className="commitMeta">
+                                {c.author} — {c.date}
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
