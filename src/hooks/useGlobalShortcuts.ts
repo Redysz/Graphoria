@@ -332,6 +332,7 @@ export function useGlobalShortcuts(
       if (actionId === "cmd.stash" && !s.activeRepoPath) return;
       if (actionId === "cmd.checkoutBranch" && !s.activeRepoPath) return;
       if (actionId === "cmd.reset" && !s.activeRepoPath) return;
+      if (actionId === "tool.commitSearch" && !s.activeRepoPath) return;
 
       switch (actionId) {
         case "repo.prev":
@@ -414,6 +415,9 @@ export function useGlobalShortcuts(
           return;
         case "tool.diffTool":
           s.setDiffToolModalOpen(true);
+          return;
+        case "tool.commitSearch":
+          s.openCommitSearch();
           return;
         case "view.toggleStashesOnGraph":
           s.setGraph({ showStashesOnGraph: !s.graphSettings.showStashesOnGraph });

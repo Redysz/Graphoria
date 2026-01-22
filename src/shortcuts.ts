@@ -33,7 +33,8 @@ export type ShortcutActionId =
   | "cmd.terminalMenu"
   | "cmd.pullMenu"
   | "repo.fetch"
-  | "tool.diffTool";
+  | "tool.diffTool"
+  | "tool.commitSearch";
 
 export type ShortcutSpec = string;
 
@@ -71,6 +72,7 @@ export const shortcutActions: Array<{ id: ShortcutActionId; label: string }> = [
   { id: "cmd.pullMenu", label: "Pull menu" },
   { id: "repo.fetch", label: "Fetch" },
   { id: "tool.diffTool", label: "Diff tool" },
+  { id: "tool.commitSearch", label: "Commit search" },
 ];
 
 export function detectAppPlatform(): AppPlatform {

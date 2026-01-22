@@ -121,6 +121,7 @@ function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutAct
   const goToCommit = platform === "macos" ? "Meta+Shift+C" : "Ctrl+C";
   const goToTag = platform === "macos" ? "Meta+Shift+T" : "Ctrl+T";
   const pullMenu = platform === "macos" ? "Meta+P" : "Ctrl+P";
+  const commitSearch = platform === "macos" ? "Meta+F" : "Ctrl+F";
 
   return {
     "repo.prev": "<",
@@ -162,6 +163,7 @@ function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutAct
     "cmd.pullMenu": pullMenu,
     "repo.fetch": "Alt+F",
     "tool.diffTool": "Alt+D",
+    "tool.commitSearch": commitSearch,
   };
 }
 
@@ -300,7 +302,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 15,
+      version: 16,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
