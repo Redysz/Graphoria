@@ -1,4 +1,6 @@
 import { useEffect, type MutableRefObject } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { eventToShortcutSpec, type ShortcutActionId } from "../shortcuts";
 
@@ -7,6 +9,12 @@ export function useGlobalShortcuts(
   fullscreenRestoreRef: MutableRefObject<{ pos: any; size: any } | null>
 ) {
   useEffect(() => {
+    const handledEvents = new WeakSet<KeyboardEvent>();
+
+    const isEscapeKey = (e: KeyboardEvent) => e.key === "Escape" || e.key === "Esc" || e.code === "Escape";
+    const isEnterKey = (e: KeyboardEvent) =>
+      e.key === "Enter" || e.key === "Return" || e.key === "NumpadEnter" || e.code === "Enter" || e.code === "NumpadEnter";
+
     const isTextEntryTarget = (t: EventTarget | null) => {
       const el = t instanceof HTMLElement ? t : null;
       if (!el) return false;
@@ -14,6 +22,88 @@ export function useGlobalShortcuts(
       const tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
       return !!el.closest("input,textarea,select,[contenteditable='true']");
+    };
+
+    const isTextareaTarget = (t: EventTarget | null) => {
+      const el = t instanceof HTMLElement ? t : null;
+      if (!el) return false;
+      if (el.tagName === "TEXTAREA") return true;
+      return !!el.closest("textarea");
+    };
+
+    const isContentEditableTarget = (t: EventTarget | null) => {
+      const el = t instanceof HTMLElement ? t : null;
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      return !!el.closest("[contenteditable='true']");
+    };
+
+    const findTopModalOverlay = () => {
+      const dialogs = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "[role='dialog'][aria-modal='true'], .modalOverlay[aria-modal='true'], .modalOverlay"
+        )
+      );
+      if (dialogs.length === 0) return null;
+
+      const visible = dialogs.filter((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+        return el.getClientRects().length > 0;
+      });
+
+      const list = visible.length > 0 ? visible : dialogs;
+      return list[list.length - 1] ?? null;
+    };
+
+    const clickModalButton = (kind: "cancel" | "default") => {
+      const overlay = findTopModalOverlay();
+      if (!overlay) return false;
+
+      const modal = (overlay.querySelector(".modal") as HTMLElement | null) ?? overlay;
+
+      const isEnabledButton = (el: Element | null) => el instanceof HTMLButtonElement && !el.disabled;
+
+      if (kind === "cancel") {
+        const cancelAttr = modal.querySelector("button[data-modal-cancel='true']");
+        if (isEnabledButton(cancelAttr)) {
+          (cancelAttr as HTMLButtonElement).click();
+          return true;
+        }
+
+        const headerButtons = Array.from(modal.querySelectorAll<HTMLButtonElement>(".modalHeader button"));
+        const closeBtn = headerButtons.find((b) => /^(close|cancel)$/i.test((b.textContent ?? "").trim()));
+        if (closeBtn && !closeBtn.disabled) {
+          closeBtn.click();
+          return true;
+        }
+
+        const footerButtons = Array.from(modal.querySelectorAll<HTMLButtonElement>(".modalFooter button"));
+        const first = footerButtons[0];
+        if (first && !first.disabled) {
+          first.click();
+          return true;
+        }
+
+        return false;
+      }
+
+      const defaultAttr = modal.querySelector("button[data-modal-default='true']");
+      if (defaultAttr instanceof HTMLButtonElement) {
+        if (defaultAttr.disabled) return false;
+        defaultAttr.click();
+        return true;
+      }
+
+      const footerButtons = Array.from(modal.querySelectorAll<HTMLButtonElement>(".modalFooter button"));
+      const last = footerButtons.length > 0 ? footerButtons[footerButtons.length - 1] : null;
+      if (last instanceof HTMLButtonElement) {
+        if (last.disabled) return false;
+        last.click();
+        return true;
+      }
+
+      return false;
     };
 
     const isShortcutCaptureTarget = (t: EventTarget | null) => {
@@ -31,7 +121,8 @@ export function useGlobalShortcuts(
       if (primary && !e.altKey && (key === "r" || key === "p" || key === "f" || key === "g")) return true;
       if (primary && !e.altKey && (key === "t" || key === "n" || key === "w" || key === "o" || key === "s")) return true;
       if (primary && !e.altKey && (key === "l" || key === "k" || key === "u")) return true;
-      if (primary && e.shiftKey && !e.altKey && (key === "i" || key === "j" || key === "c")) return true;
+      if (primary && e.shiftKey && !e.altKey && (key === "j" || key === "c")) return true;
+      if (primary && e.shiftKey && !e.altKey && key === "i") return !import.meta.env.DEV;
       return false;
     };
 
@@ -54,14 +145,57 @@ export function useGlobalShortcuts(
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (handledEvents.has(e)) return;
       const s = runtimeRef.current;
 
       const inShortcutCapture = isShortcutCaptureTarget(e.target) || isShortcutCaptureTarget(document.activeElement);
       if (inShortcutCapture) return;
 
+      if ((e.key === "F12" || e.code === "F12") && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+        if (import.meta.env.DEV) {
+          e.preventDefault();
+          e.stopPropagation();
+          handledEvents.add(e);
+          void (async () => {
+            try {
+              await invoke<void>("open_devtools_main");
+              return;
+            } catch {}
+
+            const wv: any = getCurrentWebviewWindow();
+            if (typeof wv.openDevtools === "function") {
+              await wv.openDevtools();
+              return;
+            }
+            if (typeof wv.openDevTools === "function") {
+              await wv.openDevTools();
+              return;
+            }
+            if (typeof wv.toggleDevtools === "function") {
+              await wv.toggleDevtools();
+              return;
+            }
+            if (typeof wv.toggleDevTools === "function") {
+              await wv.toggleDevTools();
+              return;
+            }
+          })();
+        }
+        return;
+      }
+
+      if (import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === "i" || e.key === "I")) {
+        e.preventDefault();
+        e.stopPropagation();
+        handledEvents.add(e);
+        void invoke<void>("open_devtools_main");
+        return;
+      }
+
       if (e.key === "F12") {
         e.preventDefault();
         e.stopPropagation();
+        handledEvents.add(e);
         void toggleFullscreen();
         return;
       }
@@ -101,27 +235,31 @@ export function useGlobalShortcuts(
         const profiles = (s.terminalSettings?.profiles ?? []) as Array<{ id: string }>;
         const max = profiles.length;
 
-        if (e.key === "Escape") {
+        if (isEscapeKey(e)) {
           e.preventDefault();
           e.stopPropagation();
+          handledEvents.add(e);
           s.setTerminalMenuOpen(false);
           return;
         }
         if (max > 0 && e.key === "ArrowDown") {
           e.preventDefault();
           e.stopPropagation();
+          handledEvents.add(e);
           s.setTerminalMenuIndex((i: number) => Math.min(max - 1, i + 1));
           return;
         }
         if (max > 0 && e.key === "ArrowUp") {
           e.preventDefault();
           e.stopPropagation();
+          handledEvents.add(e);
           s.setTerminalMenuIndex((i: number) => Math.max(0, i - 1));
           return;
         }
-        if (max > 0 && e.key === "Enter") {
+        if (max > 0 && isEnterKey(e)) {
           e.preventDefault();
           e.stopPropagation();
+          handledEvents.add(e);
           const p = profiles[Math.max(0, Math.min(max - 1, s.terminalMenuIndex))];
           if (!p) return;
           s.setTerminalMenuOpen(false);
@@ -131,7 +269,43 @@ export function useGlobalShortcuts(
         }
       }
 
-      if (anyModalOpen) return;
+      const modalInDom = !!findTopModalOverlay();
+      if (anyModalOpen || modalInDom) {
+        if (isEscapeKey(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          handledEvents.add(e);
+          clickModalButton("cancel");
+          return;
+        }
+
+        if (
+          isEnterKey(e) &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          !(e as any).isComposing &&
+          !isTextareaTarget(e.target) &&
+          !isTextareaTarget(document.activeElement) &&
+          !isContentEditableTarget(e.target) &&
+          !isContentEditableTarget(document.activeElement)
+        ) {
+          const t = e.target instanceof HTMLElement ? e.target : null;
+          const tag = (t?.tagName ?? "").toUpperCase();
+          if (tag !== "BUTTON" && tag !== "A") {
+            const didClick = clickModalButton("default");
+            if (didClick) {
+              e.preventDefault();
+              e.stopPropagation();
+              handledEvents.add(e);
+              return;
+            }
+          }
+        }
+
+        return;
+      }
       if (inTextEntry) return;
 
       const spec = eventToShortcutSpec(e);
@@ -274,7 +448,15 @@ export function useGlobalShortcuts(
       }
     };
 
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keydown", onKeyDown, false);
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keydown", onKeyDown, false);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keydown", onKeyDown, false);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keydown", onKeyDown, false);
+    };
   }, [fullscreenRestoreRef, runtimeRef]);
 }

@@ -1054,6 +1054,79 @@ function App() {
     };
   });
 
+  const findTopModalOverlayForFocus = () => {
+    const dialogs = Array.from(
+      document.querySelectorAll<HTMLElement>("[role='dialog'][aria-modal='true'], .modalOverlay[aria-modal='true'], .modalOverlay")
+    );
+    if (dialogs.length === 0) return null;
+
+    const visible = dialogs.filter((el) => {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+      return el.getClientRects().length > 0;
+    });
+    const list = visible.length > 0 ? visible : dialogs;
+    return list[list.length - 1] ?? null;
+  };
+
+  const anyModalOpenForFocus =
+    !!gitTrustOpen ||
+    !!diffToolModalOpen ||
+    !!cleanOldBranchesOpen ||
+    !!settingsOpen ||
+    !!goToOpen ||
+    !!confirmOpen ||
+    !!cloneModalOpen ||
+    !!commitModalOpen ||
+    !!stashModalOpen ||
+    !!stashViewOpen ||
+    !!remoteModalOpen ||
+    !!pushModalOpen ||
+    !!resetModalOpen ||
+    !!createBranchOpen ||
+    !!renameBranchOpen ||
+    !!switchBranchOpen ||
+    !!pullConflictOpen ||
+    !!pullPredictOpen ||
+    !!filePreviewOpen ||
+    !!detachedHelpOpen ||
+    !!cherryStepsOpen ||
+    !!previewZoomSrc;
+
+  useEffect(() => {
+    if (!anyModalOpenForFocus) return;
+    const id = window.setTimeout(() => {
+      const overlay = findTopModalOverlayForFocus();
+      if (!overlay) return;
+
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (active && overlay.contains(active) && active !== document.body && active !== document.documentElement) return;
+
+      overlay.tabIndex = -1;
+      overlay.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [anyModalOpenForFocus]);
+
+  useEffect(() => {
+    const onMouseDownCapture = (ev: MouseEvent) => {
+      const overlay = findTopModalOverlayForFocus();
+      if (!overlay) return;
+
+      const target = ev.target instanceof HTMLElement ? ev.target : null;
+      if (!target) return;
+      if (!overlay.contains(target)) return;
+
+      if (target.closest("input,textarea,select,button,a,[tabindex],[contenteditable='true']")) return;
+
+      overlay.tabIndex = -1;
+      overlay.focus({ preventScroll: true });
+    };
+
+    document.addEventListener("mousedown", onMouseDownCapture, true);
+    return () => document.removeEventListener("mousedown", onMouseDownCapture, true);
+  }, []);
+
   const isDetached = overview?.head_name === "(detached)";
   const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
 
