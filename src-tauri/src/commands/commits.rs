@@ -5,7 +5,7 @@ pub(crate) fn list_commits(
     only_head: Option<bool>,
     history_order: Option<String>,
 ) -> Result<Vec<crate::GitCommit>, String> {
-    let max_count = max_count.unwrap_or(200).min(2000);
+    let max_count = max_count.unwrap_or(200).min(2001);
     let history_order = history_order.unwrap_or_else(|| String::from("topo"));
     crate::list_commits_impl_v2(&repo_path, Some(max_count), only_head.unwrap_or(false), &history_order)
 }

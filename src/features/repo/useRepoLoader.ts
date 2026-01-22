@@ -15,6 +15,7 @@ export function useRepoLoader(opts: {
   setSelectedHash: Dispatch<SetStateAction<string>>;
 
   setCommitsByRepo: Dispatch<SetStateAction<Record<string, GitCommit[] | undefined>>>;
+  setCommitsHasMoreByRepo: Dispatch<SetStateAction<Record<string, boolean | undefined>>>;
   setOverviewByRepo: Dispatch<SetStateAction<Record<string, RepoOverview | undefined>>>;
   setStatusSummaryByRepo: Dispatch<SetStateAction<Record<string, GitStatusSummary | undefined>>>;
   setRemoteUrlByRepo: Dispatch<SetStateAction<Record<string, string | null | undefined>>>;
@@ -36,6 +37,7 @@ export function useRepoLoader(opts: {
     setError,
     setSelectedHash,
     setCommitsByRepo,
+    setCommitsHasMoreByRepo,
     setOverviewByRepo,
     setStatusSummaryByRepo,
     setRemoteUrlByRepo,
@@ -64,10 +66,19 @@ export function useRepoLoader(opts: {
       try {
         const commitsPromise = fullHistory
           ? listCommitsFull({ repoPath: path, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder })
-          : listCommits({ repoPath: path, maxCount: 1200, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
+          : listCommits({ repoPath: path, maxCount: 2001, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
         const cs = await commitsPromise;
-        setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
+
+        if (fullHistory) {
+          setCommitsHasMoreByRepo((prev) => ({ ...prev, [path]: false }));
+          setCommitsByRepo((prev) => ({ ...prev, [path]: cs }));
+        } else {
+          const hasMore = cs.length > 2000;
+          const trimmed = hasMore ? cs.slice(0, 2000) : cs;
+          setCommitsHasMoreByRepo((prev) => ({ ...prev, [path]: hasMore }));
+          setCommitsByRepo((prev) => ({ ...prev, [path]: trimmed }));
+        }
 
         if (shouldUpdateSelection) {
           const headHash = cs.find((c) => c.is_head)?.hash || "";
@@ -97,6 +108,7 @@ export function useRepoLoader(opts: {
       } catch (e) {
         setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
         setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
+        setCommitsHasMoreByRepo((prev) => ({ ...prev, [path]: undefined }));
         setRemoteUrlByRepo((prev) => ({ ...prev, [path]: undefined }));
         setStatusSummaryByRepo((prev) => ({ ...prev, [path]: undefined }));
         setAheadBehindByRepo((prev) => ({ ...prev, [path]: undefined }));
@@ -131,6 +143,7 @@ export function useRepoLoader(opts: {
       commitsOnlyHead,
       setAheadBehindByRepo,
       setCommitsByRepo,
+      setCommitsHasMoreByRepo,
       setError,
       setGitTrustActionError,
       setGitTrustDetails,

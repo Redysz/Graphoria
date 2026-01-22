@@ -12,6 +12,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tauri::Manager;
+
 mod commands;
 
 use commands::terminal::{open_terminal, open_terminal_profile};
@@ -1978,12 +1980,31 @@ fn git_merge_branch(repo_path: String, branch: String) -> Result<String, String>
     run_git(&repo_path, &["merge", branch.as_str()])
 }
 
+#[tauri::command]
+fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    {
+        let wv = app
+            .get_webview_window("main")
+            .ok_or_else(|| String::from("main webview window not found"))?;
+        wv.open_devtools();
+        Ok(())
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        Err(String::from("devtools is disabled in release builds"))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            open_devtools_main,
             greet,
             repo_overview,
             list_commits,
