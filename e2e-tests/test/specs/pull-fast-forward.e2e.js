@@ -15,6 +15,28 @@ function run(cmd, args, cwd) {
   return (out.stdout ?? "").trim();
 }
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function rmWithRetry(p) {
+  const max = process.platform === "win32" ? 50 : 10;
+  for (let i = 0; i < max; i++) {
+    try {
+      await fs.rm(p, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      const code = e?.code;
+      if (code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY") {
+        await wait(100 * (i + 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  try {
+    await fs.rm(p, { recursive: true, force: true });
+  } catch {}
+}
+
 async function setupBareRemoteWithBehindClone() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "graphoria-e2e-pull-"));
 
@@ -67,7 +89,8 @@ describe("Graphoria pull", () => {
 
   after(async () => {
     if (env?.root) {
-      await fs.rm(env.root, { recursive: true, force: true });
+      await wait(500);
+      await rmWithRetry(env.root);
     }
   });
 

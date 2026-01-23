@@ -16,6 +16,28 @@ function run(cmd, args, cwd) {
   return (out.stdout ?? "").trim();
 }
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function rmWithRetry(p) {
+  const max = process.platform === "win32" ? 30 : 10;
+  for (let i = 0; i < max; i++) {
+    try {
+      await fs.rm(p, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      const code = e?.code;
+      if (code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY") {
+        await wait(100 * (i + 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  try {
+    await fs.rm(p, { recursive: true, force: true });
+  } catch {}
+}
+
 async function createMiniRepo() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "graphoria-e2e-"));
 
@@ -49,7 +71,7 @@ describe("Graphoria", () => {
 
   after(async () => {
     if (repo?.dir) {
-      await fs.rm(repo.dir, { recursive: true, force: true });
+      await rmWithRetry(repo.dir);
     }
   });
 
@@ -87,7 +109,7 @@ describe("Graphoria", () => {
     assert.ok(detailsText.includes("Refs"));
     assert.ok(/HEAD\s*->\s*(master|main)/i.test(detailsText));
 
-    const graphButton = await $(".mainHeader button=Graph");
+    const graphButton = await $(".mainHeader").$("button=Graph");
     await graphButton.click();
 
     const cyCanvas = await $(".cyCanvas");
