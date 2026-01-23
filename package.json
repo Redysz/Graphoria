@@ -11,7 +11,7 @@
     "test": "vitest",
     "test:frontend": "vitest",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "test:e2e": "npm --prefix e2e-tests test"
+    "test:e2e": "npm --prefix e2e-tests install && npm --prefix e2e-tests test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

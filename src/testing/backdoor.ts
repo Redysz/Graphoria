@@ -36,8 +36,11 @@ export function installTestBackdoor(opts: {
     });
   }
 
+  (window as any).__graphoria_test_backdoor_installed = true;
+
   return () => {
     window.removeEventListener(GRAPHORIA_OPEN_REPO_EVENT, openRepoHandler);
     window.removeEventListener(GRAPHORIA_RESET_SETTINGS_EVENT, resetHandler);
+    (window as any).__graphoria_test_backdoor_installed = false;
   };
 }

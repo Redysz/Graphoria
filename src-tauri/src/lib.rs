@@ -2258,3 +2258,152 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn git(repo_dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(repo_dir)
+            .args(args)
+            .output()
+            .unwrap();
+
+        if !out.status.success() {
+            panic!(
+                "git failed: {:?}\nstdout: {}\nstderr: {}",
+                args,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+    }
+
+    fn init_repo(dir: &Path) {
+        git(dir, &["init"]);
+        git(dir, &["config", "user.name", "Graphoria Test"]);
+        git(dir, &["config", "user.email", "graphoria@test.local"]);
+    }
+
+    fn commit_file(repo_dir: &Path, rel_path: &str, content: &str, message: &str, author: (&str, &str)) -> String {
+        let p = repo_dir.join(rel_path);
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&p, content).unwrap();
+        git(repo_dir, &["add", "--", rel_path]);
+        let author_arg = format!("--author={} <{}>", author.0, author.1);
+        git(repo_dir, &["commit", "-m", message, author_arg.as_str()]);
+        git(repo_dir, &["rev-parse", "HEAD"])
+    }
+
+    fn repo_path(td: &TempDir, child: &str) -> PathBuf {
+        let p = td.path().join(child);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn test_list_commits_impl_v2_parses_author_and_refs() {
+        let td = TempDir::new().unwrap();
+        let repo = repo_path(&td, "repo");
+        init_repo(&repo);
+
+        let h1 = commit_file(
+            &repo,
+            "a.txt",
+            "one\n",
+            "Initial commit",
+            ("Alice", "alice@example.com"),
+        );
+        git(&repo, &["tag", "v1.0.0", h1.as_str()]);
+
+        let _h2 = commit_file(
+            &repo,
+            "b.txt",
+            "two\n",
+            "Second commit",
+            ("Bob", "bob@example.com"),
+        );
+
+        git_trust_repo_session(repo.to_string_lossy().to_string()).unwrap();
+
+        let commits = list_commits_impl_v2(repo.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.len() >= 2);
+
+        let head_hash = run_git(repo.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+        let head_hash = head_hash.trim().to_string();
+
+        let head = commits.iter().find(|c| c.hash == head_hash).unwrap();
+        assert!(head.is_head);
+        assert_eq!(head.author, "Bob");
+        assert_eq!(head.author_email, "bob@example.com");
+        assert!(!head.refs.trim().is_empty());
+
+        let tagged = commits.iter().find(|c| c.subject == "Initial commit").unwrap();
+        assert_eq!(tagged.author, "Alice");
+        assert_eq!(tagged.author_email, "alice@example.com");
+        assert!(tagged.refs.contains("tag: v1.0.0"));
+    }
+
+    #[test]
+    fn test_git_pull_fast_forward_updates_head() {
+        let td = TempDir::new().unwrap();
+
+        let remote = repo_path(&td, "remote.git");
+        git(&remote, &["init", "--bare"]);
+
+        let seed = repo_path(&td, "seed");
+        init_repo(&seed);
+        commit_file(
+            &seed,
+            "readme.md",
+            "seed\n",
+            "Seed",
+            ("Seeder", "seeder@example.com"),
+        );
+
+        let branch = git(&seed, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        git(&seed, &["remote", "add", "origin", remote.to_string_lossy().as_ref()]);
+        git(&seed, &["push", "-u", "origin", branch.as_str()]);
+
+        let repo_a = repo_path(&td, "repo-a");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), repo_a.to_string_lossy().as_ref()]);
+        git(&repo_a, &["config", "user.name", "Graphoria Test"]);
+        git(&repo_a, &["config", "user.email", "graphoria@test.local"]);
+
+        let repo_b = repo_path(&td, "repo-b");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), repo_b.to_string_lossy().as_ref()]);
+        git(&repo_b, &["config", "user.name", "Graphoria Test"]);
+        git(&repo_b, &["config", "user.email", "graphoria@test.local"]);
+
+        commit_file(
+            &repo_a,
+            "change.txt",
+            "new\n",
+            "New commit",
+            ("Pusher", "pusher@example.com"),
+        );
+        git(&repo_a, &["push", "origin", branch.as_str()]);
+
+        git_trust_repo_session(repo_b.to_string_lossy().to_string()).unwrap();
+        let before = run_git(repo_b.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+
+        let result = git_pull(repo_b.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.operation, "merge");
+
+        let after = run_git(repo_b.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(before.trim(), after.trim());
+
+        let commits = list_commits_impl_v2(repo_b.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.iter().any(|c| c.subject == "New commit"));
+    }
+}
