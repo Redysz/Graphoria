@@ -104,6 +104,7 @@ export function TopToolbar(props: {
           onClick={() => void startPull("merge")}
           disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
           title={!remoteUrl ? "No remote origin" : "git pull (merge)"}
+          data-testid="pull-merge"
           style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
         >
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -116,6 +117,7 @@ export function TopToolbar(props: {
           onClick={() => setPullMenuOpen((v) => !v)}
           disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
           title="More pull options"
+          data-testid="pull-menu"
           style={{
             borderTopLeftRadius: 0,
             borderBottomLeftRadius: 0,
@@ -137,6 +139,7 @@ export function TopToolbar(props: {
               }}
               disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
               title="git pull --merge"
+              data-testid="pull-option-merge"
             >
               Pull --merge
             </button>
@@ -148,6 +151,7 @@ export function TopToolbar(props: {
               }}
               disabled={!activeRepoPath || loading || pullBusy || !remoteUrl}
               title="git pull --rebase"
+              data-testid="pull-option-rebase"
             >
               Pull --rebase
             </button>
@@ -159,6 +163,7 @@ export function TopToolbar(props: {
               }}
               disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
               title="Predict if git pull will create merge commit and whether there may be conflicts"
+              data-testid="pull-option-merge-predict"
             >
               Pull --merge predict
             </button>
@@ -170,6 +175,7 @@ export function TopToolbar(props: {
               }}
               disabled={!activeRepoPath || loading || pullPredictBusy || !remoteUrl}
               title="Predict if git pull --rebase will have conflicts"
+              data-testid="pull-option-rebase-predict"
             >
               Pull --rebase predict
             </button>
@@ -181,6 +187,7 @@ export function TopToolbar(props: {
               }}
               disabled={!activeRepoPath || loading || pullBusy || pullPredictBusy || !remoteUrl}
               title="Tries pull --rebase; if conflicts predicted, falls back to normal pull (merge)."
+              data-testid="pull-option-autochoose"
             >
               Pull rebase/merge autochoose
             </button>

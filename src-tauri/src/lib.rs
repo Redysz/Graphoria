@@ -6,10 +6,10 @@ use zip::ZipArchive;
 use calamine::Reader;
 use std::io::{Read, Write};
 use std::fs;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
@@ -217,13 +217,32 @@ fn git_log_subjects_for_range(repo_path: &str, range: &str, max_count: u32) -> R
 }
 
 static SESSION_SAFE_DIRECTORIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static REPO_GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
 fn session_safe_directories() -> &'static Mutex<HashSet<String>> {
     SESSION_SAFE_DIRECTORIES.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn repo_git_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    REPO_GIT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn normalize_repo_path(p: &str) -> String {
     p.trim().replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+fn with_repo_git_lock<T>(repo_path: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let key = normalize_repo_path(repo_path);
+    let lock = {
+        let map = repo_git_locks();
+        let mut guard = map
+            .lock()
+            .map_err(|_| String::from("Failed to lock repo git lock map."))?;
+        guard.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+    };
+
+    let _guard = lock.lock().map_err(|_| String::from("Failed to lock repo operation mutex."))?;
+    f()
 }
 
 fn is_repo_session_safe(repo_path: &str) -> bool {
@@ -1651,109 +1670,113 @@ fn git_push(
 fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-    if head_name == "(detached)" {
-        return Err(String::from("Cannot pull from detached HEAD."));
-    }
-
-    let (ok, stdout, stderr) = run_git_status(&repo_path, &["pull", remote_name.as_str(), head_name.as_str()])?;
-    if ok {
-        return Ok(PullResult {
-            status: String::from("ok"),
-            operation: String::from("merge"),
-            message: if !stdout.is_empty() { stdout } else { stderr },
-            conflict_files: Vec::new(),
+    with_repo_git_lock(&repo_path, || {
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+            String::from("(detached)")
         });
-    }
+        if head_name == "(detached)" {
+            return Err(String::from("Cannot pull from detached HEAD."));
+        }
 
-    let message = if !stderr.is_empty() {
-        stderr.clone()
-    } else {
-        stdout.clone()
-    };
+        let (ok, stdout, stderr) = run_git_status(&repo_path, &["pull", remote_name.as_str(), head_name.as_str()])?;
+        if ok {
+            return Ok(PullResult {
+                status: String::from("ok"),
+                operation: String::from("merge"),
+                message: if !stdout.is_empty() { stdout } else { stderr },
+                conflict_files: Vec::new(),
+            });
+        }
 
-    let merge_in_progress = is_merge_in_progress(&repo_path);
-    let rebase_in_progress = is_rebase_in_progress(&repo_path);
-    let mut conflict_files = list_unmerged_files(&repo_path);
-    if conflict_files.is_empty() {
-        conflict_files = parse_conflict_files(message.as_str());
-    }
-
-    if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
-        let op = if merge_in_progress {
-            "merge"
-        } else if rebase_in_progress {
-            "rebase"
+        let message = if !stderr.is_empty() {
+            stderr.clone()
         } else {
-            "merge"
+            stdout.clone()
         };
-        return Ok(PullResult {
-            status: String::from("conflicts"),
-            operation: op.to_string(),
-            message,
-            conflict_files,
-        });
-    }
 
-    Err(if !stderr.is_empty() { stderr } else { stdout })
+        let merge_in_progress = is_merge_in_progress(&repo_path);
+        let rebase_in_progress = is_rebase_in_progress(&repo_path);
+        let mut conflict_files = list_unmerged_files(&repo_path);
+        if conflict_files.is_empty() {
+            conflict_files = parse_conflict_files(message.as_str());
+        }
+
+        if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+            let op = if merge_in_progress {
+                "merge"
+            } else if rebase_in_progress {
+                "rebase"
+            } else {
+                "merge"
+            };
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: op.to_string(),
+                message,
+                conflict_files,
+            });
+        }
+
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    })
 }
 
 #[tauri::command]
 fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-    if head_name == "(detached)" {
-        return Err(String::from("Cannot pull from detached HEAD."));
-    }
-
-    let (ok, stdout, stderr) =
-        run_git_status(&repo_path, &["pull", "--rebase", remote_name.as_str(), head_name.as_str()])?;
-    if ok {
-        return Ok(PullResult {
-            status: String::from("ok"),
-            operation: String::from("rebase"),
-            message: if !stdout.is_empty() { stdout } else { stderr },
-            conflict_files: Vec::new(),
+    with_repo_git_lock(&repo_path, || {
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+            String::from("(detached)")
         });
-    }
+        if head_name == "(detached)" {
+            return Err(String::from("Cannot pull from detached HEAD."));
+        }
 
-    let message = if !stderr.is_empty() {
-        stderr.clone()
-    } else {
-        stdout.clone()
-    };
+        let (ok, stdout, stderr) =
+            run_git_status(&repo_path, &["pull", "--rebase", remote_name.as_str(), head_name.as_str()])?;
+        if ok {
+            return Ok(PullResult {
+                status: String::from("ok"),
+                operation: String::from("rebase"),
+                message: if !stdout.is_empty() { stdout } else { stderr },
+                conflict_files: Vec::new(),
+            });
+        }
 
-    let merge_in_progress = is_merge_in_progress(&repo_path);
-    let rebase_in_progress = is_rebase_in_progress(&repo_path);
-    let mut conflict_files = list_unmerged_files(&repo_path);
-    if conflict_files.is_empty() {
-        conflict_files = parse_conflict_files(message.as_str());
-    }
-
-    if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
-        let op = if rebase_in_progress {
-            "rebase"
-        } else if merge_in_progress {
-            "merge"
+        let message = if !stderr.is_empty() {
+            stderr.clone()
         } else {
-            "rebase"
+            stdout.clone()
         };
-        return Ok(PullResult {
-            status: String::from("conflicts"),
-            operation: op.to_string(),
-            message,
-            conflict_files,
-        });
-    }
 
-    Err(if !stderr.is_empty() { stderr } else { stdout })
+        let merge_in_progress = is_merge_in_progress(&repo_path);
+        let rebase_in_progress = is_rebase_in_progress(&repo_path);
+        let mut conflict_files = list_unmerged_files(&repo_path);
+        if conflict_files.is_empty() {
+            conflict_files = parse_conflict_files(message.as_str());
+        }
+
+        if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+            let op = if rebase_in_progress {
+                "rebase"
+            } else if merge_in_progress {
+                "merge"
+            } else {
+                "rebase"
+            };
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: op.to_string(),
+                message,
+                conflict_files,
+            });
+        }
+
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    })
 }
 
 #[tauri::command]
@@ -1799,50 +1822,52 @@ fn git_pull_predict(
 ) -> Result<PullPredictResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    let rebase = rebase.unwrap_or(false);
+    with_repo_git_lock(&repo_path, || {
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        let rebase = rebase.unwrap_or(false);
 
-    run_git(&repo_path, &["fetch", remote_name.as_str()])?;
+        run_git(&repo_path, &["fetch", remote_name.as_str()])?;
 
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-    if head_name == "(detached)" {
-        return Err(String::from("Cannot predict pull from detached HEAD."));
-    }
-
-    let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
-    let (ahead, behind) = match upstream.as_ref() {
-        Some(u) => {
-            let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
-                .unwrap_or_default();
-            let parts: Vec<&str> = raw.split_whitespace().collect();
-            let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-            let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-            (ahead, behind)
+        let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+            String::from("(detached)")
+        });
+        if head_name == "(detached)" {
+            return Err(String::from("Cannot predict pull from detached HEAD."));
         }
-        None => (0, 0),
-    };
 
-    let action = match (upstream.as_ref(), ahead, behind, rebase) {
-        (None, _, _, _) => String::from("no-upstream"),
-        (Some(_), _, 0, _) => String::from("noop"),
-        (Some(_), 0, _, _) => String::from("fast-forward"),
-        (Some(_), _, _, true) => String::from("rebase"),
-        (Some(_), _, _, false) => String::from("merge-commit"),
-    };
+        let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
+        let (ahead, behind) = match upstream.as_ref() {
+            Some(u) => {
+                let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
+                    .unwrap_or_default();
+                let parts: Vec<&str> = raw.split_whitespace().collect();
+                let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                (ahead, behind)
+            }
+            None => (0, 0),
+        };
 
-    let conflict_files = match (upstream.as_ref(), behind) {
-        (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
-        _ => Vec::new(),
-    };
+        let action = match (upstream.as_ref(), ahead, behind, rebase) {
+            (None, _, _, _) => String::from("no-upstream"),
+            (Some(_), _, 0, _) => String::from("noop"),
+            (Some(_), 0, _, _) => String::from("fast-forward"),
+            (Some(_), _, _, true) => String::from("rebase"),
+            (Some(_), _, _, false) => String::from("merge-commit"),
+        };
 
-    Ok(PullPredictResult {
-        upstream,
-        ahead,
-        behind,
-        action,
-        conflict_files,
+        let conflict_files = match (upstream.as_ref(), behind) {
+            (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
+            _ => Vec::new(),
+        };
+
+        Ok(PullPredictResult {
+            upstream,
+            ahead,
+            behind,
+            action,
+            conflict_files,
+        })
     })
 }
 
@@ -1855,53 +1880,54 @@ fn git_pull_predict_graph(
 ) -> Result<PullPredictGraphResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
-    let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-    let rebase = rebase.unwrap_or(false);
-    let max_commits = max_commits.unwrap_or(60).max(10).min(200);
+    with_repo_git_lock(&repo_path, || {
+        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+        let rebase = rebase.unwrap_or(false);
+        let max_commits = max_commits.unwrap_or(60).max(10).min(200);
 
-    run_git(&repo_path, &["fetch", remote_name.as_str()])?;
+        run_git(&repo_path, &["fetch", remote_name.as_str()])?;
 
-    let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-        String::from("(detached)")
-    });
-    if head_name == "(detached)" {
-        return Err(String::from("Cannot predict pull from detached HEAD."));
-    }
-
-    let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
-
-    let (ahead, behind) = match upstream.as_ref() {
-        Some(u) => {
-            let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
-                .unwrap_or_default();
-            let parts: Vec<&str> = raw.split_whitespace().collect();
-            let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-            let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-            (ahead, behind)
+        let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+            String::from("(detached)")
+        });
+        if head_name == "(detached)" {
+            return Err(String::from("Cannot predict pull from detached HEAD."));
         }
-        None => (0, 0),
-    };
 
-    let action = match (upstream.as_ref(), ahead, behind, rebase) {
-        (None, _, _, _) => String::from("no-upstream"),
-        (Some(_), _, 0, _) => String::from("noop"),
-        (Some(_), 0, _, _) => String::from("fast-forward"),
-        (Some(_), _, _, true) => String::from("rebase"),
-        (Some(_), _, _, false) => String::from("merge-commit"),
-    };
+        let upstream = infer_upstream(&repo_path, remote_name.as_str(), head_name.as_str());
 
-    let conflict_files = match (upstream.as_ref(), behind) {
-        (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
-        _ => Vec::new(),
-    };
+        let (ahead, behind) = match upstream.as_ref() {
+            Some(u) => {
+                let raw = run_git(&repo_path, &["rev-list", "--left-right", "--count", &format!("{u}...HEAD")])
+                    .unwrap_or_default();
+                let parts: Vec<&str> = raw.split_whitespace().collect();
+                let behind = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                let ahead = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                (ahead, behind)
+            }
+            None => (0, 0),
+        };
 
-    let local_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default().trim().to_string();
-    let upstream_head = upstream
-        .as_ref()
-        .and_then(|u| run_git(&repo_path, &["rev-parse", u.as_str()]).ok())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        let action = match (upstream.as_ref(), ahead, behind, rebase) {
+            (None, _, _, _) => String::from("no-upstream"),
+            (Some(_), _, 0, _) => String::from("noop"),
+            (Some(_), 0, _, _) => String::from("fast-forward"),
+            (Some(_), _, _, true) => String::from("rebase"),
+            (Some(_), _, _, false) => String::from("merge-commit"),
+        };
+
+        let conflict_files = match (upstream.as_ref(), behind) {
+            (Some(u), b) if b > 0 => predict_merge_conflicts(&repo_path, u.as_str()),
+            _ => Vec::new(),
+        };
+
+        let local_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default().trim().to_string();
+        let upstream_head = upstream
+            .as_ref()
+            .and_then(|u| run_git(&repo_path, &["rev-parse", u.as_str()]).ok())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
     let mut created_node_ids: Vec<String> = Vec::new();
     let mut graph_commits: Vec<GitCommit> = Vec::new();
@@ -1989,16 +2015,17 @@ fn git_pull_predict_graph(
         }
     }
 
-    Ok(PullPredictGraphResult {
-        upstream,
-        ahead,
-        behind,
-        action,
-        conflict_files,
-        graph_commits,
-        created_node_ids,
-        head_name,
-        remote_name,
+        Ok(PullPredictGraphResult {
+            upstream,
+            ahead,
+            behind,
+            action,
+            conflict_files,
+            graph_commits,
+            created_node_ids,
+            head_name,
+            remote_name,
+        })
     })
 }
 
@@ -2073,8 +2100,10 @@ async fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<Str
     tauri::async_runtime::spawn_blocking(move || {
         ensure_is_git_worktree(&repo_path)?;
 
-        let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
-        run_git(&repo_path, &["fetch", remote_name.as_str()])
+        with_repo_git_lock(&repo_path, || {
+            let remote_name = remote_name.unwrap_or_else(|| String::from("origin"));
+            run_git(&repo_path, &["fetch", remote_name.as_str()])
+        })
     })
     .await
     .map_err(|e| format!("Failed to run git fetch: {e}"))?
@@ -2257,4 +2286,393 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn git(repo_dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(repo_dir)
+            .args(args)
+            .output()
+            .unwrap();
+
+        if !out.status.success() {
+            panic!(
+                "git failed: {:?}\nstdout: {}\nstderr: {}",
+                args,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+    }
+
+    fn init_repo(dir: &Path) {
+        git(dir, &["init"]);
+        git(dir, &["config", "user.name", "Graphoria Test"]);
+        git(dir, &["config", "user.email", "graphoria@test.local"]);
+    }
+
+    fn set_user(dir: &Path, name: &str, email: &str) {
+        git(dir, &["config", "user.name", name]);
+        git(dir, &["config", "user.email", email]);
+    }
+
+    fn write_file(repo_dir: &Path, rel_path: &str, content: &str) {
+        let p = repo_dir.join(rel_path);
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&p, content).unwrap();
+    }
+
+    fn commit_via_graphoria(repo_dir: &Path, rel_path: &str, content: &str, message: &str) -> String {
+        write_file(repo_dir, rel_path, content);
+        git_commit(
+            repo_dir.to_string_lossy().to_string(),
+            message.to_string(),
+            vec![rel_path.to_string()],
+        )
+        .unwrap()
+    }
+
+    fn push_via_graphoria(repo_dir: &Path, remote: &str, branch: &str) {
+        git_push(
+            repo_dir.to_string_lossy().to_string(),
+            Some(remote.to_string()),
+            Some(branch.to_string()),
+            Some(false),
+            Some(true),
+        )
+        .unwrap();
+    }
+
+    fn head_hash(repo_dir: &Path) -> String {
+        git(repo_dir, &["rev-parse", "HEAD"]).trim().to_string()
+    }
+
+    fn head_parents(repo_dir: &Path) -> Vec<String> {
+        let raw = git(repo_dir, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        raw.split_whitespace().map(|s| s.to_string()).collect()
+    }
+
+    fn commit_file(repo_dir: &Path, rel_path: &str, content: &str, message: &str, author: (&str, &str)) -> String {
+        let p = repo_dir.join(rel_path);
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&p, content).unwrap();
+        git(repo_dir, &["add", "--", rel_path]);
+        let author_arg = format!("--author={} <{}>", author.0, author.1);
+        git(repo_dir, &["commit", "-m", message, author_arg.as_str()]);
+        git(repo_dir, &["rev-parse", "HEAD"])
+    }
+
+    fn repo_path(td: &TempDir, child: &str) -> PathBuf {
+        let p = td.path().join(child);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    struct TwoUserEnv {
+        _td: TempDir,
+        _remote: PathBuf,
+        alice: PathBuf,
+        bob: PathBuf,
+        branch: String,
+    }
+
+    fn setup_two_user_env() -> TwoUserEnv {
+        let td = TempDir::new().unwrap();
+
+        let remote = repo_path(&td, "remote.git");
+        git(&remote, &["init", "--bare"]);
+
+        let seed = repo_path(&td, "seed");
+        init_repo(&seed);
+        git(&seed, &["branch", "-M", "master"]);
+        set_user(&seed, "Seeder", "seeder@example.com");
+        commit_via_graphoria(&seed, "readme.md", "seed\n", "Seed");
+        git(&seed, &["remote", "add", "origin", remote.to_string_lossy().as_ref()]);
+        push_via_graphoria(&seed, "origin", "master");
+
+        let alice = repo_path(&td, "alice");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), alice.to_string_lossy().as_ref()]);
+        set_user(&alice, "Alice", "alice@example.com");
+
+        let bob = repo_path(&td, "bob");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), bob.to_string_lossy().as_ref()]);
+        set_user(&bob, "Bob", "bob@example.com");
+
+        TwoUserEnv {
+            _td: td,
+            _remote: remote,
+            alice,
+            bob,
+            branch: String::from("master"),
+        }
+    }
+
+    fn trust_repo(repo_dir: &Path) {
+        git_trust_repo_session(repo_dir.to_string_lossy().to_string()).unwrap();
+    }
+
+    #[test]
+    fn test_list_commits_impl_v2_parses_author_and_refs() {
+        let td = TempDir::new().unwrap();
+        let repo = repo_path(&td, "repo");
+        init_repo(&repo);
+
+        let h1 = commit_file(
+            &repo,
+            "a.txt",
+            "one\n",
+            "Initial commit",
+            ("Alice", "alice@example.com"),
+        );
+        git(&repo, &["tag", "v1.0.0", h1.as_str()]);
+
+        let _h2 = commit_file(
+            &repo,
+            "b.txt",
+            "two\n",
+            "Second commit",
+            ("Bob", "bob@example.com"),
+        );
+
+        git_trust_repo_session(repo.to_string_lossy().to_string()).unwrap();
+
+        let commits = list_commits_impl_v2(repo.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.len() >= 2);
+
+        let head_hash = run_git(repo.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+        let head_hash = head_hash.trim().to_string();
+
+        let head = commits.iter().find(|c| c.hash == head_hash).unwrap();
+        assert!(head.is_head);
+        assert_eq!(head.author, "Bob");
+        assert_eq!(head.author_email, "bob@example.com");
+        assert!(!head.refs.trim().is_empty());
+
+        let tagged = commits.iter().find(|c| c.subject == "Initial commit").unwrap();
+        assert_eq!(tagged.author, "Alice");
+        assert_eq!(tagged.author_email, "alice@example.com");
+        assert!(tagged.refs.contains("tag: v1.0.0"));
+    }
+
+    #[test]
+    fn test_git_pull_fast_forward_updates_head() {
+        let td = TempDir::new().unwrap();
+
+        let remote = repo_path(&td, "remote.git");
+        git(&remote, &["init", "--bare"]);
+
+        let seed = repo_path(&td, "seed");
+        init_repo(&seed);
+        commit_file(
+            &seed,
+            "readme.md",
+            "seed\n",
+            "Seed",
+            ("Seeder", "seeder@example.com"),
+        );
+
+        let branch = git(&seed, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        git(&seed, &["remote", "add", "origin", remote.to_string_lossy().as_ref()]);
+        git(&seed, &["push", "-u", "origin", branch.as_str()]);
+
+        let repo_a = repo_path(&td, "repo-a");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), repo_a.to_string_lossy().as_ref()]);
+        git(&repo_a, &["config", "user.name", "Graphoria Test"]);
+        git(&repo_a, &["config", "user.email", "graphoria@test.local"]);
+
+        let repo_b = repo_path(&td, "repo-b");
+        git(td.path(), &["clone", remote.to_string_lossy().as_ref(), repo_b.to_string_lossy().as_ref()]);
+        git(&repo_b, &["config", "user.name", "Graphoria Test"]);
+        git(&repo_b, &["config", "user.email", "graphoria@test.local"]);
+
+        commit_file(
+            &repo_a,
+            "change.txt",
+            "new\n",
+            "New commit",
+            ("Pusher", "pusher@example.com"),
+        );
+        git(&repo_a, &["push", "origin", branch.as_str()]);
+
+        git_trust_repo_session(repo_b.to_string_lossy().to_string()).unwrap();
+        let before = run_git(repo_b.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+
+        let result = git_pull(repo_b.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.operation, "merge");
+
+        let after = run_git(repo_b.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(before.trim(), after.trim());
+
+        let commits = list_commits_impl_v2(repo_b.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.iter().any(|c| c.subject == "New commit"));
+    }
+
+    #[test]
+    fn test_git_pull_merge_no_conflicts_creates_merge_commit() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "bob.txt", "bob-1\n", "Bob local");
+        let bob_before = head_hash(&env.bob);
+
+        commit_via_graphoria(&env.alice, "alice.txt", "alice-1\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+        let alice_head = head_hash(&env.alice);
+
+        trust_repo(&env.bob);
+        let result = git_pull(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.operation, "merge");
+
+        let bob_after = head_hash(&env.bob);
+        assert_ne!(bob_before, bob_after);
+
+        let parents = head_parents(&env.bob);
+        assert_eq!(parents.len(), 3);
+        assert!(parents.iter().any(|p| p == &alice_head));
+
+        let commits = list_commits_impl_v2(env.bob.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.iter().any(|c| c.subject == "Bob local"));
+        assert!(commits.iter().any(|c| c.subject == "Alice upstream"));
+    }
+
+    #[test]
+    fn test_git_pull_rebase_no_conflicts_rebases_local_commit() {
+        let env = setup_two_user_env();
+
+        let bob_local = commit_via_graphoria(&env.bob, "bob.txt", "bob-1\n", "Bob local");
+
+        commit_via_graphoria(&env.alice, "alice.txt", "alice-1\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+        let alice_head = head_hash(&env.alice);
+
+        trust_repo(&env.bob);
+        let result = git_pull_rebase(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.operation, "rebase");
+
+        let bob_after = head_hash(&env.bob);
+        assert_ne!(bob_local.trim(), bob_after.trim());
+
+        let parents = head_parents(&env.bob);
+        assert_eq!(parents.len(), 2);
+        assert_eq!(parents[1].trim(), alice_head.trim());
+
+        let commits = list_commits_impl_v2(env.bob.to_string_lossy().as_ref(), Some(50), false, "topo").unwrap();
+        assert!(commits.iter().any(|c| c.subject == "Bob local"));
+        assert!(commits.iter().any(|c| c.subject == "Alice upstream"));
+    }
+
+    #[test]
+    fn test_git_pull_predict_merge_no_conflicts_reports_empty_conflicts() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "bob.txt", "bob-1\n", "Bob local");
+        commit_via_graphoria(&env.alice, "alice.txt", "alice-1\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+
+        trust_repo(&env.bob);
+        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
+        assert!(pred.behind > 0);
+        assert!(pred.conflict_files.is_empty());
+    }
+
+    #[test]
+    fn test_git_pull_predict_merge_conflicts_reports_conflicting_path() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "base\n", "Base");
+        push_via_graphoria(&env.bob, "origin", env.branch.as_str());
+
+        git(&env.alice, &["pull", "--ff-only"]);
+        git(&env.bob, &["pull", "--ff-only"]);
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "bob-change\n", "Bob local");
+        commit_via_graphoria(&env.alice, "conflict.txt", "alice-change\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+
+        trust_repo(&env.bob);
+        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
+        assert!(pred.behind > 0);
+        assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
+    }
+
+    #[test]
+    fn test_git_pull_predict_rebase_conflicts_reports_conflicting_path() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "base\n", "Base");
+        push_via_graphoria(&env.bob, "origin", env.branch.as_str());
+
+        git(&env.alice, &["pull", "--ff-only"]);
+        git(&env.bob, &["pull", "--ff-only"]);
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "bob-change\n", "Bob local");
+        commit_via_graphoria(&env.alice, "conflict.txt", "alice-change\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+
+        trust_repo(&env.bob);
+        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        assert!(pred.behind > 0);
+        assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
+    }
+
+    #[test]
+    fn test_pull_autochoose_prefers_rebase_without_conflicts() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "bob.txt", "bob-1\n", "Bob local");
+        commit_via_graphoria(&env.alice, "alice.txt", "alice-1\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+
+        trust_repo(&env.bob);
+        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        assert!(pred.behind > 0);
+        assert!(pred.conflict_files.is_empty());
+
+        let result = git_pull_rebase(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.operation, "rebase");
+        let parents = head_parents(&env.bob);
+        assert_eq!(parents.len(), 2);
+    }
+
+    #[test]
+    fn test_pull_autochoose_falls_back_to_merge_when_conflicts_predicted() {
+        let env = setup_two_user_env();
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "base\n", "Base");
+        push_via_graphoria(&env.bob, "origin", env.branch.as_str());
+
+        git(&env.alice, &["pull", "--ff-only"]);
+        git(&env.bob, &["pull", "--ff-only"]);
+
+        commit_via_graphoria(&env.bob, "conflict.txt", "bob-change\n", "Bob local");
+        commit_via_graphoria(&env.alice, "conflict.txt", "alice-change\n", "Alice upstream");
+        push_via_graphoria(&env.alice, "origin", env.branch.as_str());
+
+        trust_repo(&env.bob);
+        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        assert!(pred.behind > 0);
+        assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
+
+        let result = git_pull(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        assert_eq!(result.operation, "merge");
+        assert_eq!(result.status, "conflicts");
+        assert!(result.conflict_files.iter().any(|p| p == "conflict.txt"));
+    }
 }

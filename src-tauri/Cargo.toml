@@ -28,3 +28,6 @@ zip = "0.6"
 quick-xml = "0.31"
 pdf-extract = "0.7"
 calamine = "0.32"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -13,6 +14,7 @@ import type { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
+import { installTestBackdoor } from "./testing/backdoor";
 import {
   detectAppPlatform,
   formatShortcutSpecForDisplay,
@@ -390,19 +392,20 @@ function App() {
   const modalClosePosition = useAppSettings((s) => s.appearance.modalClosePosition);
   const graphSettings = useAppSettings((s) => s.graph);
   const setGraph = useAppSettings((s) => s.setGraph);
-  const diffTool = useAppSettings((s) => s.git.diffTool);
-  const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
-  const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
-  const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
-  const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
-  const setGit = useAppSettings((s) => s.setGit);
-  const tooltipSettings = useAppSettings((s) => s.general.tooltips);
-  const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
-  const setGeneral = useAppSettings((s) => s.setGeneral);
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
   const terminalSettings = useAppSettings((s) => s.terminal);
   const setTerminal = useAppSettings((s) => s.setTerminal);
+  const resetSettings = useAppSettings((s) => s.resetSettings);
+  const setGit = useAppSettings((s) => s.setGit);
+  const setGeneral = useAppSettings((s) => s.setGeneral);
+  const showOnlineAvatars = useAppSettings((s) => s.git.showOnlineAvatars);
+  const commitsOnlyHead = useAppSettings((s) => s.git.commitsOnlyHead);
+  const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
+  const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
+  const diffTool = useAppSettings((s) => s.git.diffTool);
+  const tooltipSettings = useAppSettings((s) => s.general.tooltips);
+  const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
   const shortcutBindings = useAppSettings((s) => s.shortcuts.bindings);
 
   const shortcutPlatform = useMemo(() => detectAppPlatform(), []);
@@ -426,9 +429,14 @@ function App() {
 
   const viewMode = activeRepoPath ? (viewModeByRepo[activeRepoPath] ?? defaultViewMode) : defaultViewMode;
 
+  const setViewModeForRepo = (repoPath: string, next: "graph" | "commits") => {
+    if (!repoPath) return;
+    setViewModeByRepo((prev) => ({ ...prev, [repoPath]: next }));
+  };
+
   const setViewMode = (next: "graph" | "commits") => {
     if (!activeRepoPath) return;
-    setViewModeByRepo((prev) => ({ ...prev, [activeRepoPath]: next }));
+    setViewModeForRepo(activeRepoPath, next);
   };
 
   const [selectedHash, setSelectedHash] = useState<string>("");
@@ -556,6 +564,22 @@ function App() {
 
     loadRepo,
   });
+
+  const closeAllRepositories = useCallback(async () => {
+    const list = [...repos];
+    for (const p of list) {
+      await closeRepository(p);
+    }
+  }, [closeRepository, repos]);
+
+  useEffect(() => {
+    return installTestBackdoor({
+      openRepository,
+      closeAllRepositories,
+      setViewModeForRepo,
+      resetSettings,
+    });
+  }, [closeAllRepositories, openRepository, resetSettings, setViewModeForRepo]);
 
   const lastSidebarWidthRef = useRef<number>(280);
   const lastDetailsHeightRef = useRef<number>(280);
