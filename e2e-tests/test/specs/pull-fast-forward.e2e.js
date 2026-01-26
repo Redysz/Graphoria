@@ -104,6 +104,10 @@ describe("Graphoria pull", () => {
     );
 
     await browser.execute(() => {
+      window.dispatchEvent(new CustomEvent("graphoria-close-all-repos"));
+    });
+
+    await browser.execute(() => {
       window.dispatchEvent(new CustomEvent("graphoria-reset-settings"));
     });
 
@@ -117,7 +121,7 @@ describe("Graphoria pull", () => {
     const beforeRow = await $(`[data-commit-hash="${env.headBefore}"]`);
     await beforeRow.waitForExist({ timeout: 60000 });
 
-    const pullButton = await $(".toolbar button[title=\"git pull (merge)\"]");
+    const pullButton = await $("[data-testid=\"pull-merge\"]");
     await pullButton.waitForExist({ timeout: 60000 });
     await pullButton.waitForEnabled({ timeout: 60000 });
     await pullButton.click();

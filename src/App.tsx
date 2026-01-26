@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -564,13 +565,21 @@ function App() {
     loadRepo,
   });
 
+  const closeAllRepositories = useCallback(async () => {
+    const list = [...repos];
+    for (const p of list) {
+      await closeRepository(p);
+    }
+  }, [closeRepository, repos]);
+
   useEffect(() => {
     return installTestBackdoor({
       openRepository,
+      closeAllRepositories,
       setViewModeForRepo,
       resetSettings,
     });
-  }, [openRepository, resetSettings, setViewModeForRepo]);
+  }, [closeAllRepositories, openRepository, resetSettings, setViewModeForRepo]);
 
   const lastSidebarWidthRef = useRef<number>(280);
   const lastDetailsHeightRef = useRef<number>(280);

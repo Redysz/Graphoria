@@ -164,7 +164,17 @@ export const config = {
       },
     },
   ],
-  reporters: ["spec"],
+  reporters: [
+    "spec",
+    [
+      "junit",
+      {
+        outputDir: "./reports/junit",
+        addFileAttribute: true,
+        outputFileFormat: (opts) => `results-${opts.cid}.xml`,
+      },
+    ],
+  ],
   framework: "mocha",
   mochaOpts: {
     ui: "bdd",
