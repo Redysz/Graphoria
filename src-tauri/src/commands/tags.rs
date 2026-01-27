@@ -291,7 +291,7 @@ pub(crate) fn git_push_tags(
     }
     args.push(remote_name);
     for t in tags {
-        args.push(t);
+        args.push(format!("refs/tags/{}", t));
     }
 
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();

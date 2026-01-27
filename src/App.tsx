@@ -1748,6 +1748,45 @@ function App() {
     }
   }
 
+  async function pushSingleTagToOrigin(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin").catch(() => null);
+    if (!currentRemote) {
+      setError("No remote origin set. Configure Remote first.");
+      return;
+    }
+
+    const info = tagsToPushByRepo[activeRepoPath];
+    const isMoved = (info?.movedTags ?? []).some((x) => x.trim() === t);
+
+    let force = false;
+    if (isMoved) {
+      const ok = await confirmDialog({
+        title: "Force push tag",
+        message: `Tag '${t}' already exists on origin but points to a different commit.\n\nPush it with --force?`,
+        okLabel: "Force push",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+      force = true;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitPushTags({ repoPath: activeRepoPath, remoteName: "origin", tags: [t], force });
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runCreateTag() {
     if (!activeRepoPath) return;
     const name = createTagName.trim();
@@ -2326,7 +2365,7 @@ function App() {
 
   function openTagContextMenu(tag: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 230;
+    const menuH = 270;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setTagContextMenu({
@@ -4162,6 +4201,7 @@ function App() {
         focusTagOnGraph={(tag) => void focusTagOnGraph(tag)}
         focusTagOnCommits={(tag) => void focusTagOnCommits(tag)}
         renameTag={(tag) => openRenameTagDialog(tag)}
+        pushTagToOrigin={(tag) => void pushSingleTagToOrigin(tag)}
         deleteLocalTag={(tag) => void deleteLocalTag(tag)}
         deleteRemoteTag={(tag) => void deleteRemoteTag(tag)}
       />

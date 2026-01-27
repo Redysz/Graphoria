@@ -155,7 +155,7 @@ export function CommandsMenu(props: {
               void pushTags();
             }}
             disabled={!activeRepoPath || loading || !remoteUrl || pushTagsCount <= 0}
-            title={!remoteUrl ? "No remote origin" : pushTagsCount <= 0 ? "No tags to push" : "Push tags to origin"}
+            title={!remoteUrl ? "No remote origin" : pushTagsCount <= 0 ? "No tags to push" : "Push all tags to origin"}
           >
             {menuItem(
               <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
