@@ -153,6 +153,7 @@ function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutAct
     "cmd.push": "Alt+P",
     "cmd.stash": "Alt+S",
     "cmd.createBranch": "Alt+B",
+    "cmd.createTag": platform === "macos" ? "Ctrl+Alt+T" : "Ctrl+Alt+T",
     "cmd.checkoutBranch": "Alt+Shift+B",
     "cmd.reset": "Alt+R",
 
@@ -302,7 +303,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 16,
+      version: 17,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;

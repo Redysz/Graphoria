@@ -21,6 +21,9 @@ export function CommandsMenu(props: {
   openPushDialog: () => void | Promise<void>;
   openStashDialog: () => void | Promise<void>;
   openCreateBranchDialog: (at: string) => void;
+  openCreateTagDialog: (at: string) => void;
+  pushTagsCount: number;
+  pushTags: () => void | Promise<void>;
   openSwitchBranchDialog: () => void | Promise<void>;
   openResetDialog: () => void;
 
@@ -43,6 +46,9 @@ export function CommandsMenu(props: {
     openPushDialog,
     openStashDialog,
     openCreateBranchDialog,
+    openCreateTagDialog,
+    pushTagsCount,
+    pushTags,
     openSwitchBranchDialog,
     openResetDialog,
     menuItem,
@@ -126,6 +132,37 @@ export function CommandsMenu(props: {
             title={!activeRepoPath ? "No repository" : "Create a new branch"}
           >
             {menuItem("Create branch…", shortcutLabel("cmd.createBranch"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
+              setCommandsMenuOpen(false);
+              if (!at) return;
+              openCreateTagDialog(at);
+            }}
+            disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
+            title={!activeRepoPath ? "No repository" : "Create a new tag"}
+          >
+            {menuItem("Create tag…", shortcutLabel("cmd.createTag"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              void pushTags();
+            }}
+            disabled={!activeRepoPath || loading || !remoteUrl || pushTagsCount <= 0}
+            title={!remoteUrl ? "No remote origin" : pushTagsCount <= 0 ? "No tags to push" : "Push all tags to origin"}
+          >
+            {menuItem(
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                <span>Push tags</span>
+                {pushTagsCount > 0 ? <span className="badge">{pushTagsCount}</span> : null}
+              </span>,
+            )}
           </button>
 
           <button

@@ -15,6 +15,9 @@ export function Sidebar(props: {
   deleteBranch: (branchName: string) => void | Promise<void>;
 
   openTagContextMenu: (tagName: string, x: number, y: number) => void;
+  focusTagOnGraph: (tagName: string) => void | Promise<void>;
+  openRenameTagDialog: (tagName: string) => void | Promise<void>;
+  deleteLocalTag: (tagName: string) => void | Promise<void>;
   expandTags: () => void;
 
   stashes: GitStashEntry[];
@@ -34,6 +37,9 @@ export function Sidebar(props: {
     openRenameBranchDialog,
     deleteBranch,
     openTagContextMenu,
+    focusTagOnGraph,
+    openRenameTagDialog,
+    deleteLocalTag,
     expandTags,
     stashes,
     openStashView,
@@ -122,16 +128,50 @@ export function Sidebar(props: {
         <div className="sidebarTitle">Tags</div>
         <div className="sidebarList">
           {(tagsExpanded ? overview?.tags ?? [] : (overview?.tags ?? []).slice(0, 10)).map((t) => (
-            <div
-              key={t}
-              className="sidebarItem"
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                openTagContextMenu(t, e.clientX, e.clientY);
-              }}
-            >
-              {t}
+            <div key={t} className="sidebarItem tagRow" title={t}>
+              <button
+                type="button"
+                className="tagMain"
+                onClick={() => void focusTagOnGraph(t)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openTagContextMenu(t, e.clientX, e.clientY);
+                }}
+                disabled={!activeRepoPath || loading}
+              >
+                <span className="tagLabel">{t}</span>
+              </button>
+
+              <span className="tagActions">
+                <button
+                  type="button"
+                  className="tagActionBtn"
+                  onClick={() => void focusTagOnGraph(t)}
+                  title="Focus on graph"
+                  disabled={!activeRepoPath || loading}
+                >
+                  F
+                </button>
+                <button
+                  type="button"
+                  className="tagActionBtn"
+                  onClick={() => void openRenameTagDialog(t)}
+                  title="Rename tag"
+                  disabled={!activeRepoPath || loading}
+                >
+                  R
+                </button>
+                <button
+                  type="button"
+                  className="tagActionBtn"
+                  onClick={() => void deleteLocalTag(t)}
+                  title="Delete local tag"
+                  disabled={!activeRepoPath || loading}
+                >
+                  D
+                </button>
+              </span>
             </div>
           ))}
           {!tagsExpanded && (overview?.tags ?? []).length > 10 ? (

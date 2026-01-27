@@ -13,8 +13,14 @@ export function TagContextMenu(props: {
   onClose: () => void;
   focusTagOnGraph: (tag: string) => void;
   focusTagOnCommits: (tag: string) => void;
+  renameTag: (tag: string) => void;
+
+  pushTagToOrigin: (tag: string) => void;
+
+  deleteLocalTag: (tag: string) => void;
+  deleteRemoteTag: (tag: string) => void;
 }) {
-  const { menu, menuRef, onClose, focusTagOnGraph, focusTagOnCommits } = props;
+  const { menu, menuRef, onClose, focusTagOnGraph, focusTagOnCommits, renameTag, pushTagToOrigin, deleteLocalTag, deleteRemoteTag } = props;
 
   if (!menu) return null;
 
@@ -49,6 +55,47 @@ export function TagContextMenu(props: {
         }}
       >
         Focus on commits
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const tag = menu.tag;
+          onClose();
+          renameTag(tag);
+        }}
+      >
+        Rename tag
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          const tag = menu.tag;
+          onClose();
+          pushTagToOrigin(tag);
+        }}
+      >
+        Push this tag
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const tag = menu.tag;
+          onClose();
+          deleteLocalTag(tag);
+        }}
+      >
+        Delete local tag
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const tag = menu.tag;
+          onClose();
+          deleteRemoteTag(tag);
+        }}
+      >
+        Delete tag on remote
       </button>
     </div>
   );

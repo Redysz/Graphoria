@@ -293,7 +293,25 @@
   position: relative;
 }
 
+.tagRow {
+  justify-content: space-between;
+  position: relative;
+}
+
 .stashMain {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  transition: padding-right 0.12s ease-out;
+}
+
+.tagMain {
   flex: 1;
   min-width: 0;
   display: block;
@@ -336,6 +354,14 @@
   white-space: nowrap;
 }
 
+.tagLabel {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stashActions {
   display: flex;
   gap: 6px;
@@ -350,6 +376,17 @@
 }
 
 .branchActions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.tagActions {
   display: flex;
   gap: 6px;
   opacity: 0;
@@ -382,6 +419,17 @@
   padding-right: 86px;
 }
 
+.tagRow:hover .tagActions,
+.tagRow:focus-within .tagActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tagRow:hover .tagMain,
+.tagRow:focus-within .tagMain {
+  padding-right: 86px;
+}
+
 .stashActionBtn {
   border: 1px solid transparent;
   background: transparent;
@@ -400,12 +448,26 @@
   height: 22px;
 }
 
+.tagActionBtn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 0 6px;
+  border-radius: 6px;
+  height: 22px;
+}
+
 .stashActionBtn:hover {
   border-color: rgba(47, 111, 237, 0.35);
   background: rgba(47, 111, 237, 0.12);
 }
 
 .branchActionBtn:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(47, 111, 237, 0.12);
+}
+
+.tagActionBtn:hover {
   border-color: rgba(47, 111, 237, 0.35);
   background: rgba(47, 111, 237, 0.12);
 }

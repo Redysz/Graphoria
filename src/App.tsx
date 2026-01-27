@@ -43,6 +43,12 @@ import { useSystemHelpers } from "./features/system/useSystemHelpers";
 import {
   gitCreateBranchAdvanced,
   gitCreateBranch,
+  gitCreateTag,
+  gitDeleteTag,
+  gitDeleteRemoteTag,
+  gitRenameTag,
+  gitPushTags,
+  gitListRemoteTagTargets,
   gitCheckoutBranch,
   gitCheckoutCommit,
   gitCherryPick,
@@ -104,12 +110,14 @@ import { ConfirmModal } from "./components/modals/ConfirmModal";
 import { ResetModal } from "./components/modals/ResetModal";
 import { CleanOldBranchesModal } from "./components/modals/CleanOldBranchesModal";
 import { RenameBranchModal } from "./components/modals/RenameBranchModal";
+import { RenameTagModal } from "./components/modals/RenameTagModal";
 import { SwitchBranchModal } from "./components/modals/SwitchBranchModal";
 import { PreviewZoomModal } from "./components/modals/PreviewZoomModal";
 import { PullConflictModal } from "./components/modals/PullConflictModal";
 import { CherryStepsModal } from "./components/modals/CherryStepsModal";
 import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
+import { CreateTagModal } from "./components/modals/CreateTagModal";
 import { FilePreviewModal } from "./components/modals/FilePreviewModal";
 import { ChangesModal } from "./components/modals/ChangesModal";
 import { RemoteModal } from "./components/modals/RemoteModal";
@@ -152,6 +160,7 @@ function App() {
   const [remoteUrlByRepo, setRemoteUrlByRepo] = useState<Record<string, string | null | undefined>>({});
   const [statusSummaryByRepo, setStatusSummaryByRepo] = useState<Record<string, GitStatusSummary | undefined>>({});
   const [aheadBehindByRepo, setAheadBehindByRepo] = useState<Record<string, GitAheadBehind | undefined>>({});
+  const [tagsToPushByRepo, setTagsToPushByRepo] = useState<Record<string, { newTags: string[]; movedTags: string[] } | undefined>>({});
   const [indicatorsUpdatingByRepo, setIndicatorsUpdatingByRepo] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string>("");
@@ -321,11 +330,28 @@ function App() {
   const [createBranchCommitError, setCreateBranchCommitError] = useState<string>("");
   const [createBranchCommitSummary, setCreateBranchCommitSummary] = useState<GitCommitSummary | null>(null);
 
+  const [createTagOpen, setCreateTagOpen] = useState(false);
+  const [createTagName, setCreateTagName] = useState<string>("");
+  const [createTagAt, setCreateTagAt] = useState<string>("");
+  const [createTagAnnotated, setCreateTagAnnotated] = useState<boolean>(false);
+  const [createTagMessage, setCreateTagMessage] = useState<string>("");
+  const [createTagForce, setCreateTagForce] = useState<boolean>(false);
+  const [createTagPushToOrigin, setCreateTagPushToOrigin] = useState<boolean>(false);
+  const [createTagBusy, setCreateTagBusy] = useState<boolean>(false);
+  const [createTagError, setCreateTagError] = useState<string>("");
+
   const [renameBranchOpen, setRenameBranchOpen] = useState(false);
   const [renameBranchOld, setRenameBranchOld] = useState<string>("");
   const [renameBranchNew, setRenameBranchNew] = useState<string>("");
   const [renameBranchBusy, setRenameBranchBusy] = useState(false);
   const [renameBranchError, setRenameBranchError] = useState<string>("");
+
+  const [renameTagOpen, setRenameTagOpen] = useState(false);
+  const [renameTagOld, setRenameTagOld] = useState<string>("");
+  const [renameTagNew, setRenameTagNew] = useState<string>("");
+  const [renameTagOnRemote, setRenameTagOnRemote] = useState<boolean>(false);
+  const [renameTagBusy, setRenameTagBusy] = useState(false);
+  const [renameTagError, setRenameTagError] = useState<string>("");
 
   const [switchBranchOpen, setSwitchBranchOpen] = useState(false);
   const [switchBranchMode, setSwitchBranchMode] = useState<"local" | "remote">("local");
@@ -1153,6 +1179,13 @@ function App() {
   const changedCount = statusSummaryByRepo[activeRepoPath]?.changed ?? 0;
   const aheadCount = aheadBehindByRepo[activeRepoPath]?.ahead ?? 0;
   const behindCount = aheadBehindByRepo[activeRepoPath]?.behind ?? 0;
+  const tagsToPush = tagsToPushByRepo[activeRepoPath];
+  const pushTagsCount = (tagsToPush?.newTags?.length ?? 0) + (tagsToPush?.movedTags?.length ?? 0);
+  const unsyncedTagNames = useMemo(() => {
+    const a = tagsToPush?.newTags ?? [];
+    const b = tagsToPush?.movedTags ?? [];
+    return [...a, ...b];
+  }, [tagsToPush?.movedTags, tagsToPush?.newTags]);
   const indicatorsUpdating = indicatorsUpdatingByRepo[activeRepoPath] ?? false;
   const stashes = stashesByRepo[activeRepoPath] ?? [];
 
@@ -1274,7 +1307,9 @@ function App() {
       pushModalOpen,
       resetModalOpen,
       createBranchOpen,
+      createTagOpen,
       renameBranchOpen,
+      renameTagOpen,
       switchBranchOpen,
       pullConflictOpen,
       pullPredictOpen,
@@ -1315,6 +1350,7 @@ function App() {
       openStashDialog,
       openSwitchBranchDialog,
       openCreateBranchDialog,
+      openCreateTagDialog,
       openResetDialog,
       pickRepository,
       initializeProject,
@@ -1355,7 +1391,9 @@ function App() {
     !!pushModalOpen ||
     !!resetModalOpen ||
     !!createBranchOpen ||
+    !!createTagOpen ||
     !!renameBranchOpen ||
+    !!renameTagOpen ||
     !!switchBranchOpen ||
     !!pullConflictOpen ||
     !!pullPredictOpen ||
@@ -1633,10 +1671,11 @@ function App() {
   }, [commitsAll, selectedHash]);
 
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
+  const stashChangedCount = stashStatusEntries.length;
 
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 420;
+    const menuH = 460;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setCommitContextMenu({
@@ -1709,6 +1748,123 @@ function App() {
     }
   }
 
+  async function pushSingleTagToOrigin(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin").catch(() => null);
+    if (!currentRemote) {
+      setError("No remote origin set. Configure Remote first.");
+      return;
+    }
+
+    const info = tagsToPushByRepo[activeRepoPath];
+    const isMoved = (info?.movedTags ?? []).some((x) => x.trim() === t);
+
+    let force = false;
+    if (isMoved) {
+      const ok = await confirmDialog({
+        title: "Force push tag",
+        message: `Tag '${t}' already exists on origin but points to a different commit.\n\nPush it with --force?`,
+        okLabel: "Force push",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+      force = true;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitPushTags({ repoPath: activeRepoPath, remoteName: "origin", tags: [t], force });
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runCreateTag() {
+    if (!activeRepoPath) return;
+    const name = createTagName.trim();
+    if (!name) {
+      setCreateTagError("Tag name is empty.");
+      return;
+    }
+
+    const at = createTagAt.trim() || "HEAD";
+    const msg = createTagMessage;
+
+    let pushForce = false;
+    if (createTagPushToOrigin) {
+      const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin").catch(() => null);
+      if (!currentRemote) {
+        setCreateTagError("No remote origin set. Configure Remote first.");
+        return;
+      }
+
+      const resolvedTarget = await gitResolveRef({ repoPath: activeRepoPath, reference: at }).catch(() => "");
+      const resolvedTargetTrimmed = resolvedTarget.trim();
+      if (!resolvedTargetTrimmed) {
+        setCreateTagError(`Cannot resolve target '${at}'.`);
+        return;
+      }
+
+      const remoteTags = await gitListRemoteTagTargets({ repoPath: activeRepoPath, remoteName: "origin" });
+      const remoteTarget = (remoteTags ?? [])
+        .find((t) => (t?.name ?? "").trim() === name)
+        ?.target?.trim();
+
+      if (remoteTarget && remoteTarget !== resolvedTargetTrimmed) {
+        const ok = await confirmDialog({
+          title: "Force push tag",
+          message: `Tag '${name}' already exists on origin but points to a different commit.\n\nPush it with --force?`,
+          okLabel: "Force push",
+          cancelLabel: "Cancel",
+        });
+        if (!ok) return;
+        pushForce = true;
+      }
+    }
+
+    setCreateTagBusy(true);
+    setCreateTagError("");
+    setError("");
+    try {
+      await gitCreateTag({
+        repoPath: activeRepoPath,
+        tag: name,
+        target: at,
+        annotated: createTagAnnotated,
+        message: createTagAnnotated ? msg : undefined,
+        force: createTagForce,
+      });
+
+      if (createTagPushToOrigin) {
+        try {
+          await gitPushTags({ repoPath: activeRepoPath, remoteName: "origin", tags: [name], force: pushForce });
+        } catch (e) {
+          const err = typeof e === "string" ? e : JSON.stringify(e);
+          setCreateTagError(`Tag created locally, but push failed: ${err}`);
+          await loadRepo(activeRepoPath);
+          await refreshIndicators(activeRepoPath);
+          return;
+        }
+      }
+
+      setCreateTagOpen(false);
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setCreateTagError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCreateTagBusy(false);
+    }
+  }
+
   async function deleteWorkingFile(mode: "commit" | "stash", path: string) {
     if (!activeRepoPath) return;
     if (mode === "commit" ? commitBusy : stashBusy) return;
@@ -1764,6 +1920,18 @@ function App() {
     setCreateBranchCommitError("");
     setCreateBranchCommitSummary(null);
     setCreateBranchOpen(true);
+  }
+
+  function openCreateTagDialog(at: string) {
+    setCreateTagError("");
+    setCreateTagBusy(false);
+    setCreateTagName("");
+    setCreateTagAt(at.trim());
+    setCreateTagAnnotated(false);
+    setCreateTagMessage("");
+    setCreateTagForce(false);
+    setCreateTagPushToOrigin(false);
+    setCreateTagOpen(true);
   }
 
   async function runGitReset(mode: GitResetMode, target: string) {
@@ -1959,6 +2127,43 @@ function App() {
       setRenameBranchError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setRenameBranchBusy(false);
+    }
+  }
+
+  async function runRenameTag() {
+    if (!activeRepoPath) return;
+    const oldTag = renameTagOld.trim();
+    const newTag = renameTagNew.trim();
+    if (!oldTag) {
+      setRenameTagError("Old tag name is empty.");
+      return;
+    }
+    if (!newTag) {
+      setRenameTagError("New tag name is empty.");
+      return;
+    }
+
+    const onRemote = renameTagOnRemote;
+    if (onRemote) {
+      const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
+      if (!currentRemote) {
+        setRenameTagError("No remote origin set. Configure Remote first, or disable rename on origin.");
+        return;
+      }
+    }
+
+    setRenameTagBusy(true);
+    setRenameTagError("");
+    setError("");
+    try {
+      await gitRenameTag({ repoPath: activeRepoPath, oldTag, newTag, renameOnRemote: onRemote, remoteName: "origin" });
+      setRenameTagOpen(false);
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setRenameTagError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setRenameTagBusy(false);
     }
   }
 
@@ -2160,7 +2365,7 @@ function App() {
 
   function openTagContextMenu(tag: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 110;
+    const menuH = 270;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setTagContextMenu({
@@ -2168,6 +2373,73 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
+  }
+
+  function openRenameTagDialog(oldName: string) {
+    setRenameTagError("");
+    setRenameTagBusy(false);
+    setRenameTagOld(oldName);
+    setRenameTagNew(oldName);
+    setRenameTagOnRemote(false);
+    setRenameTagOpen(true);
+  }
+
+  async function deleteLocalTag(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const ok = await confirmDialog({
+      title: "Delete local tag",
+      message: `Delete local tag '${t}'?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitDeleteTag({ repoPath: activeRepoPath, tag: t });
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteRemoteTag(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
+    if (!currentRemote) {
+      setError("No remote origin set. Configure Remote first.");
+      return;
+    }
+
+    const ok = await confirmDialog({
+      title: "Delete remote tag",
+      message: `Delete tag '${t}' on remote origin?\n\nThis will remove the tag from remote, but it may still exist locally. Continue?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitDeleteRemoteTag({ repoPath: activeRepoPath, remoteName: "origin", tag: t });
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function checkoutCommit(hash: string) {
@@ -2750,6 +3022,7 @@ function App() {
     remoteNames: overview?.remotes ?? [],
     stashBaseByRepo,
     stashesByRepo,
+    unsyncedTagNames,
 
     selectedHash,
     headHash,
@@ -2759,6 +3032,7 @@ function App() {
     openCommitContextMenu,
     openStashContextMenu,
     openRefBadgeContextMenu,
+    openTagContextMenu,
 
     closeCommitContextMenu: () => setCommitContextMenu(null),
     closeStashContextMenu: () => setStashContextMenu(null),
@@ -2772,6 +3046,7 @@ function App() {
     setStatusSummaryByRepo,
     setRemoteUrlByRepo,
     setAheadBehindByRepo,
+    setTagsToPushByRepo,
   });
 
   useEffect(() => {
@@ -3049,6 +3324,40 @@ function App() {
     }
   }
 
+  async function pushTagsToOrigin() {
+    if (!activeRepoPath) return;
+    if (!remoteUrl) return;
+    const info = tagsToPushByRepo[activeRepoPath];
+    const newTags = (info?.newTags ?? []).filter((t) => t.trim());
+    const movedTags = (info?.movedTags ?? []).filter((t) => t.trim());
+    const tags = [...newTags, ...movedTags];
+    if (tags.length === 0) return;
+
+    let force = false;
+    if (movedTags.length > 0) {
+      const ok = await confirmDialog({
+        title: "Force push tags",
+        message: `Some tags already exist on origin but point to a different commit:\n\n${movedTags.join("\n")}\n\nPush them with --force?`,
+        okLabel: "Force push",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+      force = true;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitPushTags({ repoPath: activeRepoPath, remoteName: "origin", tags, force });
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const menuToggle = (opts: { label: string; checked: boolean; disabled?: boolean; shortcutText?: string; onChange: (next: boolean) => void }) => {
     const { label, checked, disabled, shortcutText, onChange } = opts;
     return (
@@ -3222,13 +3531,16 @@ function App() {
               remoteUrl={remoteUrl}
               changedCount={changedCount}
               aheadCount={aheadCount}
-              stashChangedCount={changedCount}
+              stashChangedCount={stashChangedCount}
               selectedHash={selectedHash}
               headHash={headHash}
               openCommitDialog={openCommitDialog}
               openPushDialog={openPushDialog}
               openStashDialog={openStashDialog}
               openCreateBranchDialog={openCreateBranchDialog}
+              openCreateTagDialog={openCreateTagDialog}
+              pushTagsCount={pushTagsCount}
+              pushTags={pushTagsToOrigin}
               openSwitchBranchDialog={openSwitchBranchDialog}
               openResetDialog={openResetDialog}
               menuItem={menuItem}
@@ -3349,6 +3661,9 @@ function App() {
             openRenameBranchDialog={openRenameBranchDialog}
             deleteBranch={deleteBranch}
             openTagContextMenu={openTagContextMenu}
+            focusTagOnGraph={focusTagOnGraph}
+            openRenameTagDialog={openRenameTagDialog}
+            deleteLocalTag={deleteLocalTag}
             expandTags={() => {
               if (!activeRepoPath) return;
               setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
@@ -3690,6 +4005,10 @@ function App() {
           setCommitContextMenu(null);
           openCreateBranchDialog(hash);
         }}
+        onCreateTag={(hash) => {
+          setCommitContextMenu(null);
+          openCreateTagDialog(hash);
+        }}
         onReset={(mode, hash) => {
           setCommitContextMenu(null);
           void runCommitContextReset(mode, hash);
@@ -3787,6 +4106,21 @@ function App() {
         />
       ) : null}
 
+      {renameTagOpen ? (
+        <RenameTagModal
+          oldName={renameTagOld}
+          newName={renameTagNew}
+          setNewName={setRenameTagNew}
+          renameOnRemote={renameTagOnRemote}
+          setRenameOnRemote={setRenameTagOnRemote}
+          busy={renameTagBusy}
+          error={renameTagError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setRenameTagOpen(false)}
+          onRename={() => void runRenameTag()}
+        />
+      ) : null}
+
       {filePreviewOpen ? (
         <FilePreviewModal
           path={filePreviewPath}
@@ -3866,6 +4200,10 @@ function App() {
         onClose={() => setTagContextMenu(null)}
         focusTagOnGraph={(tag) => void focusTagOnGraph(tag)}
         focusTagOnCommits={(tag) => void focusTagOnCommits(tag)}
+        renameTag={(tag) => openRenameTagDialog(tag)}
+        pushTagToOrigin={(tag) => void pushSingleTagToOrigin(tag)}
+        deleteLocalTag={(tag) => void deleteLocalTag(tag)}
+        deleteRemoteTag={(tag) => void deleteRemoteTag(tag)}
       />
 
       {detachedHelpOpen ? (
@@ -3915,6 +4253,27 @@ function App() {
           activeRepoPath={activeRepoPath}
           onClose={() => setCreateBranchOpen(false)}
           onCreate={() => void runCreateBranch()}
+        />
+      ) : null}
+
+      {createTagOpen ? (
+        <CreateTagModal
+          tag={createTagName}
+          setTag={setCreateTagName}
+          at={createTagAt}
+          annotated={createTagAnnotated}
+          setAnnotated={setCreateTagAnnotated}
+          message={createTagMessage}
+          setMessage={setCreateTagMessage}
+          force={createTagForce}
+          setForce={setCreateTagForce}
+          pushToOrigin={createTagPushToOrigin}
+          setPushToOrigin={setCreateTagPushToOrigin}
+          busy={createTagBusy}
+          error={createTagError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setCreateTagOpen(false)}
+          onCreate={() => void runCreateTag()}
         />
       ) : null}
 

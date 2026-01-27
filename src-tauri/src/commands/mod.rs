@@ -15,3 +15,5 @@ pub(crate) mod stashes;
 pub(crate) mod diff;
 
 pub(crate) mod reflog;
+
+pub(crate) mod tags;
