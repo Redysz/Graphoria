@@ -13,6 +13,9 @@ type Props = {
   force: boolean;
   setForce: (v: boolean) => void;
 
+  pushToOrigin: boolean;
+  setPushToOrigin: (v: boolean) => void;
+
   busy: boolean;
   error: string;
 
@@ -32,6 +35,8 @@ export function CreateTagModal({
   setMessage,
   force,
   setForce,
+  pushToOrigin,
+  setPushToOrigin,
   busy,
   error,
   activeRepoPath,
@@ -103,6 +108,16 @@ export function CreateTagModal({
                   title="Overwrite an existing tag with the same name (git tag -f)"
                 />
                 Force (overwrite tag with the same name)
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                <input
+                  type="checkbox"
+                  checked={pushToOrigin}
+                  onChange={(e) => setPushToOrigin(e.target.checked)}
+                  disabled={busy}
+                />
+                Push tag to origin
               </label>
             </div>
           </div>

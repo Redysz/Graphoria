@@ -24,6 +24,7 @@ export function CommitContextMenu(props: {
   onCopyHash: (hash: string) => void;
   onCheckoutCommit: (hash: string) => void;
   onCreateBranch: (hash: string) => void;
+  onCreateTag: (hash: string) => void;
   onReset: (mode: "soft" | "mixed" | "hard", hash: string) => void;
 
   onCheckoutBranch: (branch: string) => void;
@@ -43,6 +44,7 @@ export function CommitContextMenu(props: {
     onCopyHash,
     onCheckoutCommit,
     onCreateBranch,
+    onCreateTag,
     onReset,
     onCheckoutBranch,
     onResetHardAndCheckoutBranch,
@@ -74,6 +76,10 @@ export function CommitContextMenu(props: {
 
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onCreateBranch(menu.hash)}>
         Create branch…
+      </button>
+
+      <button type="button" disabled={!activeRepoPath || loading} onClick={() => onCreateTag(menu.hash)}>
+        Create tag…
       </button>
 
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onReset("soft", menu.hash)}>

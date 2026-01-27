@@ -20,6 +20,7 @@ export type UseCyGraphParams = {
   remoteNames: string[];
   stashBaseByRepo: Record<string, Record<string, string>>;
   stashesByRepo: Record<string, GitStashEntry[] | undefined>;
+  unsyncedTagNames: string[];
 
   selectedHash: string;
   headHash: string;
@@ -29,6 +30,7 @@ export type UseCyGraphParams = {
   openCommitContextMenu: (hash: string, x: number, y: number) => void;
   openStashContextMenu: (stashRef: string, stashMessage: string, x: number, y: number) => void;
   openRefBadgeContextMenu: (kind: "remote" | "branch", label: string, x: number, y: number) => void;
+  openTagContextMenu: (tag: string, x: number, y: number) => void;
 
   closeCommitContextMenu: () => void;
   closeStashContextMenu: () => void;
@@ -47,12 +49,14 @@ export function useCyGraph({
   remoteNames,
   stashBaseByRepo,
   stashesByRepo,
+  unsyncedTagNames,
   selectedHash,
   headHash,
   setSelectedHash,
   openCommitContextMenu,
   openStashContextMenu,
   openRefBadgeContextMenu,
+  openTagContextMenu,
   closeCommitContextMenu,
   closeStashContextMenu,
   closeBranchContextMenu,
@@ -132,6 +136,12 @@ export function useCyGraph({
     cy.$("edge.refEdge").remove();
     cy.$("node.stashBadge").remove();
     cy.$("edge.stashEdge").remove();
+
+    const unsyncedTagSet = new Set(
+      (unsyncedTagNames ?? [])
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+    );
 
     const sideOffsetX = 240;
     const gapY = 30;
@@ -263,7 +273,7 @@ export function useCyGraph({
               x: pos.x + side * (sideOffsetX + col * colGapX),
               y: baseY + row * gapY,
             },
-            classes: `refBadge ref-${r.kind}`,
+            classes: `refBadge ref-${r.kind}${r.kind === "tag" && unsyncedTagSet.has(r.label) ? " ref-tag-unsynced" : ""}`,
             locked: true,
             grabbable: false,
             selectable: false,
@@ -430,6 +440,7 @@ export function useCyGraph({
     graphSettings.showRemoteBranchesOnGraph,
     stashBaseByRepo,
     stashesByRepo,
+    unsyncedTagNames,
     theme,
     viewMode,
     remoteNames,
@@ -554,6 +565,13 @@ export function useCyGraph({
           },
         },
         {
+          selector: "node.refBadge.ref-tag-unsynced",
+          style: {
+            "border-style": "dashed",
+            "border-width": "2px",
+          },
+        },
+        {
           selector: "node.refBadge.ref-branch",
           style: {
             "background-color": palette.refBranchBg,
@@ -640,6 +658,9 @@ export function useCyGraph({
         if (kind === "remote" || kind === "branch") {
           closeRefBadgeContextMenu();
           openRefBadgeContextMenu(kind as "remote" | "branch", label, oe.clientX, oe.clientY);
+        } else if (kind === "tag") {
+          closeRefBadgeContextMenu();
+          openTagContextMenu(label, oe.clientX, oe.clientY);
         }
         return;
       }

@@ -17,6 +17,11 @@ export type RepoOverview = {
   remotes: string[];
 };
 
+export type GitTagTarget = {
+  name: string;
+  target: string;
+};
+
 export type GitStatusEntry = {
   status: string;
   path: string;

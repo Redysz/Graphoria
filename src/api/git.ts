@@ -7,6 +7,7 @@ import type {
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
+  GitTagTarget,
   PullPredictGraphResult,
   PullPredictResult,
   PullResult,
@@ -166,6 +167,28 @@ export function gitDeleteTag(params: { repoPath: string; tag: string }) {
 
 export function gitDeleteRemoteTag(params: { repoPath: string; remoteName?: string; tag: string }) {
   return invoke<string>("git_delete_remote_tag", params);
+}
+
+export function gitListTagTargets(repoPath: string) {
+  return invoke<GitTagTarget[]>("git_list_tag_targets", { repoPath });
+}
+
+export function gitListRemoteTagTargets(params: { repoPath: string; remoteName?: string }) {
+  return invoke<GitTagTarget[]>("git_list_remote_tag_targets", params);
+}
+
+export function gitPushTags(params: { repoPath: string; remoteName?: string; tags: string[]; force?: boolean }) {
+  return invoke<string>("git_push_tags", params);
+}
+
+export function gitRenameTag(params: {
+  repoPath: string;
+  oldTag: string;
+  newTag: string;
+  renameOnRemote?: boolean;
+  remoteName?: string;
+}) {
+  return invoke<string>("git_rename_tag", params);
 }
 
 export function gitMergeBranch(params: { repoPath: string; branch: string }) {
