@@ -21,6 +21,7 @@ export function CommandsMenu(props: {
   openPushDialog: () => void | Promise<void>;
   openStashDialog: () => void | Promise<void>;
   openCreateBranchDialog: (at: string) => void;
+  openCreateTagDialog: (at: string) => void;
   openSwitchBranchDialog: () => void | Promise<void>;
   openResetDialog: () => void;
 
@@ -43,6 +44,7 @@ export function CommandsMenu(props: {
     openPushDialog,
     openStashDialog,
     openCreateBranchDialog,
+    openCreateTagDialog,
     openSwitchBranchDialog,
     openResetDialog,
     menuItem,
@@ -126,6 +128,20 @@ export function CommandsMenu(props: {
             title={!activeRepoPath ? "No repository" : "Create a new branch"}
           >
             {menuItem("Create branch…", shortcutLabel("cmd.createBranch"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
+              setCommandsMenuOpen(false);
+              if (!at) return;
+              openCreateTagDialog(at);
+            }}
+            disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
+            title={!activeRepoPath ? "No repository" : "Create a new tag"}
+          >
+            {menuItem("Create tag…", shortcutLabel("cmd.createTag"))}
           </button>
 
           <button

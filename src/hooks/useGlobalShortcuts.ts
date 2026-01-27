@@ -222,6 +222,7 @@ export function useGlobalShortcuts(
         !!s.pushModalOpen ||
         !!s.resetModalOpen ||
         !!s.createBranchOpen ||
+        !!s.createTagOpen ||
         !!s.renameBranchOpen ||
         !!s.switchBranchOpen ||
         !!s.pullConflictOpen ||
@@ -330,6 +331,7 @@ export function useGlobalShortcuts(
       if (actionId === "cmd.commit" && !s.activeRepoPath) return;
       if (actionId === "cmd.push" && !s.activeRepoPath) return;
       if (actionId === "cmd.stash" && !s.activeRepoPath) return;
+      if (actionId === "cmd.createTag" && !s.activeRepoPath) return;
       if (actionId === "cmd.checkoutBranch" && !s.activeRepoPath) return;
       if (actionId === "cmd.reset" && !s.activeRepoPath) return;
       if (actionId === "tool.commitSearch" && !s.activeRepoPath) return;
@@ -386,6 +388,12 @@ export function useGlobalShortcuts(
           const at = (s.selectedHash?.trim() ? s.selectedHash.trim() : s.headHash?.trim()).trim();
           if (!at) return;
           s.openCreateBranchDialog(at);
+          return;
+        }
+        case "cmd.createTag": {
+          const at = (s.selectedHash?.trim() ? s.selectedHash.trim() : s.headHash?.trim()).trim();
+          if (!at) return;
+          s.openCreateTagDialog(at);
           return;
         }
         case "cmd.checkoutBranch":

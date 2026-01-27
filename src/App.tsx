@@ -43,6 +43,9 @@ import { useSystemHelpers } from "./features/system/useSystemHelpers";
 import {
   gitCreateBranchAdvanced,
   gitCreateBranch,
+  gitCreateTag,
+  gitDeleteTag,
+  gitDeleteRemoteTag,
   gitCheckoutBranch,
   gitCheckoutCommit,
   gitCherryPick,
@@ -110,6 +113,7 @@ import { PullConflictModal } from "./components/modals/PullConflictModal";
 import { CherryStepsModal } from "./components/modals/CherryStepsModal";
 import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
+import { CreateTagModal } from "./components/modals/CreateTagModal";
 import { FilePreviewModal } from "./components/modals/FilePreviewModal";
 import { ChangesModal } from "./components/modals/ChangesModal";
 import { RemoteModal } from "./components/modals/RemoteModal";
@@ -320,6 +324,15 @@ function App() {
   const [createBranchCommitLoading, setCreateBranchCommitLoading] = useState<boolean>(false);
   const [createBranchCommitError, setCreateBranchCommitError] = useState<string>("");
   const [createBranchCommitSummary, setCreateBranchCommitSummary] = useState<GitCommitSummary | null>(null);
+
+  const [createTagOpen, setCreateTagOpen] = useState(false);
+  const [createTagName, setCreateTagName] = useState<string>("");
+  const [createTagAt, setCreateTagAt] = useState<string>("");
+  const [createTagAnnotated, setCreateTagAnnotated] = useState<boolean>(false);
+  const [createTagMessage, setCreateTagMessage] = useState<string>("");
+  const [createTagForce, setCreateTagForce] = useState<boolean>(false);
+  const [createTagBusy, setCreateTagBusy] = useState<boolean>(false);
+  const [createTagError, setCreateTagError] = useState<string>("");
 
   const [renameBranchOpen, setRenameBranchOpen] = useState(false);
   const [renameBranchOld, setRenameBranchOld] = useState<string>("");
@@ -1274,6 +1287,7 @@ function App() {
       pushModalOpen,
       resetModalOpen,
       createBranchOpen,
+      createTagOpen,
       renameBranchOpen,
       switchBranchOpen,
       pullConflictOpen,
@@ -1315,6 +1329,7 @@ function App() {
       openStashDialog,
       openSwitchBranchDialog,
       openCreateBranchDialog,
+      openCreateTagDialog,
       openResetDialog,
       pickRepository,
       initializeProject,
@@ -1355,6 +1370,7 @@ function App() {
     !!pushModalOpen ||
     !!resetModalOpen ||
     !!createBranchOpen ||
+    !!createTagOpen ||
     !!renameBranchOpen ||
     !!switchBranchOpen ||
     !!pullConflictOpen ||
@@ -1709,6 +1725,38 @@ function App() {
     }
   }
 
+  async function runCreateTag() {
+    if (!activeRepoPath) return;
+    const name = createTagName.trim();
+    if (!name) {
+      setCreateTagError("Tag name is empty.");
+      return;
+    }
+
+    const at = createTagAt.trim() || "HEAD";
+    const msg = createTagMessage;
+
+    setCreateTagBusy(true);
+    setCreateTagError("");
+    setError("");
+    try {
+      await gitCreateTag({
+        repoPath: activeRepoPath,
+        tag: name,
+        target: at,
+        annotated: createTagAnnotated,
+        message: createTagAnnotated ? msg : undefined,
+        force: createTagForce,
+      });
+      setCreateTagOpen(false);
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setCreateTagError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setCreateTagBusy(false);
+    }
+  }
+
   async function deleteWorkingFile(mode: "commit" | "stash", path: string) {
     if (!activeRepoPath) return;
     if (mode === "commit" ? commitBusy : stashBusy) return;
@@ -1764,6 +1812,17 @@ function App() {
     setCreateBranchCommitError("");
     setCreateBranchCommitSummary(null);
     setCreateBranchOpen(true);
+  }
+
+  function openCreateTagDialog(at: string) {
+    setCreateTagError("");
+    setCreateTagBusy(false);
+    setCreateTagName("");
+    setCreateTagAt(at.trim());
+    setCreateTagAnnotated(false);
+    setCreateTagMessage("");
+    setCreateTagForce(false);
+    setCreateTagOpen(true);
   }
 
   async function runGitReset(mode: GitResetMode, target: string) {
@@ -2160,7 +2219,7 @@ function App() {
 
   function openTagContextMenu(tag: string, x: number, y: number) {
     const menuW = 260;
-    const menuH = 110;
+    const menuH = 190;
     const maxX = Math.max(0, window.innerWidth - menuW);
     const maxY = Math.max(0, window.innerHeight - menuH);
     setTagContextMenu({
@@ -2168,6 +2227,62 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
+  }
+
+  async function deleteLocalTag(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const ok = await confirmDialog({
+      title: "Delete local tag",
+      message: `Delete local tag '${t}'?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitDeleteTag({ repoPath: activeRepoPath, tag: t });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteRemoteTag(tag: string) {
+    if (!activeRepoPath) return;
+    const t = tag.trim();
+    if (!t) return;
+
+    const currentRemote = await gitGetRemoteUrl(activeRepoPath, "origin");
+    if (!currentRemote) {
+      setError("No remote origin set. Configure Remote first.");
+      return;
+    }
+
+    const ok = await confirmDialog({
+      title: "Delete remote tag",
+      message: `Delete tag '${t}' on remote origin?\n\nThis will remove the tag from remote, but it may still exist locally. Continue?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      await gitDeleteRemoteTag({ repoPath: activeRepoPath, remoteName: "origin", tag: t });
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function checkoutCommit(hash: string) {
@@ -3229,6 +3344,7 @@ function App() {
               openPushDialog={openPushDialog}
               openStashDialog={openStashDialog}
               openCreateBranchDialog={openCreateBranchDialog}
+              openCreateTagDialog={openCreateTagDialog}
               openSwitchBranchDialog={openSwitchBranchDialog}
               openResetDialog={openResetDialog}
               menuItem={menuItem}
@@ -3866,6 +3982,8 @@ function App() {
         onClose={() => setTagContextMenu(null)}
         focusTagOnGraph={(tag) => void focusTagOnGraph(tag)}
         focusTagOnCommits={(tag) => void focusTagOnCommits(tag)}
+        deleteLocalTag={(tag) => void deleteLocalTag(tag)}
+        deleteRemoteTag={(tag) => void deleteRemoteTag(tag)}
       />
 
       {detachedHelpOpen ? (
@@ -3915,6 +4033,25 @@ function App() {
           activeRepoPath={activeRepoPath}
           onClose={() => setCreateBranchOpen(false)}
           onCreate={() => void runCreateBranch()}
+        />
+      ) : null}
+
+      {createTagOpen ? (
+        <CreateTagModal
+          tag={createTagName}
+          setTag={setCreateTagName}
+          at={createTagAt}
+          annotated={createTagAnnotated}
+          setAnnotated={setCreateTagAnnotated}
+          message={createTagMessage}
+          setMessage={setCreateTagMessage}
+          force={createTagForce}
+          setForce={setCreateTagForce}
+          busy={createTagBusy}
+          error={createTagError}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setCreateTagOpen(false)}
+          onCreate={() => void runCreateTag()}
         />
       ) : null}
 

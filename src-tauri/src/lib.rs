@@ -62,6 +62,7 @@ use commands::stashes::{
     git_stash_push_paths,
     git_stash_show,
 };
+use commands::tags::{git_create_tag, git_delete_remote_tag, git_delete_tag};
 use commands::diff::{
     git_commit_changes,
     git_commit_file_content,
@@ -2282,7 +2283,10 @@ pub fn run() {
             git_rebase_abort,
             git_pull_predict,
             git_pull_predict_graph,
-            git_pull_predict_conflict_preview
+            git_pull_predict_conflict_preview,
+            git_create_tag,
+            git_delete_tag,
+            git_delete_remote_tag
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

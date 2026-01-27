@@ -149,6 +149,25 @@ export function gitCreateBranch(params: { repoPath: string; branch: string }) {
   return invoke<string>("git_create_branch", params);
 }
 
+export function gitCreateTag(params: {
+  repoPath: string;
+  tag: string;
+  target?: string;
+  annotated: boolean;
+  message?: string;
+  force: boolean;
+}) {
+  return invoke<string>("git_create_tag", params);
+}
+
+export function gitDeleteTag(params: { repoPath: string; tag: string }) {
+  return invoke<string>("git_delete_tag", params);
+}
+
+export function gitDeleteRemoteTag(params: { repoPath: string; remoteName?: string; tag: string }) {
+  return invoke<string>("git_delete_remote_tag", params);
+}
+
 export function gitMergeBranch(params: { repoPath: string; branch: string }) {
   return invoke<string>("git_merge_branch", params);
 }
