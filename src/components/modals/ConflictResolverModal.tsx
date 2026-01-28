@@ -35,6 +35,53 @@ function normalizeNewlines(s: string) {
   return s.replace(/\r\n/g, "\n");
 }
 
+function listConflictBlocksFromText(text: string) {
+  const lines = normalizeNewlines(text).split("\n");
+  const blocks: Array<{ start: number; mid: number; end: number; oursText: string; theirsText: string }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = i + 1;
+    const t = lines[i] ?? "";
+    if (!t.startsWith("<<<<<<<")) continue;
+
+    let mid = -1;
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      const tt = lines[j] ?? "";
+      if (tt.startsWith("=======")) {
+        mid = j + 1;
+        continue;
+      }
+      if (tt.startsWith(">>>>>>>")) {
+        end = j + 1;
+        break;
+      }
+    }
+    if (mid < 0 || end < 0) continue;
+
+    const ours = lines.slice(ln, mid - 1).join("\n");
+    const theirs = lines.slice(mid, end - 1).join("\n");
+    blocks.push({ start: ln, mid, end, oursText: ours, theirsText: theirs });
+    i = end - 1;
+  }
+
+  return blocks;
+}
+
+function applyConflictBlock(text: string, blockIndex: number, replacement: string) {
+  const blocks = listConflictBlocksFromText(text);
+  const blk = blocks[blockIndex];
+  if (!blk) return text;
+
+  const lines = normalizeNewlines(text).split("\n");
+  const startIdx = blk.start - 1;
+  const endIdx = blk.end - 1;
+  const replacementLines = normalizeNewlines(replacement).split("\n");
+
+  const next = [...lines.slice(0, startIdx), ...replacementLines, ...lines.slice(endIdx + 1)];
+  return next.join("\n");
+}
+
 function formatConflictStatus(status: string) {
   const s = (status ?? "").trim();
   if (!s) return "U";
@@ -238,6 +285,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const lang = useMemo(() => pickLanguageByPath(selectedPath), [selectedPath]);
 
+  const conflictBlocks = useMemo(() => {
+    return listConflictBlocksFromText(resultDraft);
+  }, [resultDraft]);
+
   async function refreshStateKeepPath() {
     const st = await gitConflictState(repoPath);
     const list = st.files ?? [];
@@ -323,7 +374,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
-      <div className="modal" style={{ width: "min(1320px, 96vw)", height: "min(92vh, 980px)", maxHeight: "min(92vh, 980px)" }}>
+      <div className="modal conflictResolverModal" style={{ width: "min(1320px, 96vw)", height: "min(92vh, 980px)", maxHeight: "min(92vh, 980px)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>Resolve conflicts</div>
           <button type="button" onClick={onClose} disabled={disabled}>
@@ -439,24 +490,164 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       <span className="conflictLegend conflictLegend-theirs">theirs</span>
                     </div>
                   </div>
-                  <DiffEditor
-                    height="100%"
-                    theme={monacoTheme}
-                    language={lang}
-                    original={versions.ours}
-                    modified={versions.theirs}
-                    onMount={(_, monaco) => {
-                      ensureConflictThemes(monaco);
-                    }}
-                    options={{
-                      readOnly: true,
-                      renderSideBySide: true,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      wordWrap: "on",
-                      fontSize: 12,
-                    }}
-                  />
+                  {versions.ours.trim() && versions.theirs.trim() ? (
+                    <DiffEditor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      original={versions.ours}
+                      modified={versions.theirs}
+                      onMount={(diffEditor, monaco) => {
+                        ensureConflictThemes(monaco);
+
+                        const originalEditor = diffEditor.getOriginalEditor();
+                        const modifiedEditor = diffEditor.getModifiedEditor();
+
+                        const origKey = originalEditor.createContextKey<boolean>("graphoriaConflictUseThisVersion", false);
+                        const modKey = modifiedEditor.createContextKey<boolean>("graphoriaConflictUseThisVersion", false);
+
+                        function findChangeIndex(isOriginal: boolean, lineNumber: number) {
+                          const changes = diffEditor.getLineChanges() ?? [];
+                          for (let idx = 0; idx < changes.length; idx++) {
+                            const c = changes[idx];
+                            if (isOriginal) {
+                              const a = c.originalStartLineNumber;
+                              const b = c.originalEndLineNumber;
+                              if (a === 0 && b === 0) continue;
+                              if (lineNumber >= a && lineNumber <= b) return idx;
+                            } else {
+                              const a = c.modifiedStartLineNumber;
+                              const b = c.modifiedEndLineNumber;
+                              if (a === 0 && b === 0) continue;
+                              if (lineNumber >= a && lineNumber <= b) return idx;
+                            }
+                          }
+                          return -1;
+                        }
+
+                        function normalizeComparable(s: string) {
+                          return normalizeNewlines(s).replace(/\s+$/g, "").trim();
+                        }
+
+                        function findConflictBlockIndexFromChange(isOriginal: boolean, changeIndex: number) {
+                          const changes = diffEditor.getLineChanges() ?? [];
+                          const c = changes[changeIndex];
+                          if (!c) return -1;
+
+                          const model = isOriginal ? originalEditor.getModel() : modifiedEditor.getModel();
+                          if (!model) return -1;
+
+                          const start = isOriginal ? c.originalStartLineNumber : c.modifiedStartLineNumber;
+                          const end = isOriginal ? c.originalEndLineNumber : c.modifiedEndLineNumber;
+                          if (!start || !end || start === 0 || end === 0) return -1;
+
+                          const chunk = normalizeComparable(model.getValueInRange({
+                            startLineNumber: start,
+                            startColumn: 1,
+                            endLineNumber: end,
+                            endColumn: model.getLineMaxColumn(end),
+                          }));
+                          if (!chunk) return -1;
+
+                          for (let i = 0; i < conflictBlocks.length; i++) {
+                            const b = conflictBlocks[i];
+                            const candidate = normalizeComparable(isOriginal ? b.oursText : b.theirsText);
+                            if (!candidate) continue;
+                            if (chunk === candidate) return i;
+                          }
+
+                          for (let i = 0; i < conflictBlocks.length; i++) {
+                            const b = conflictBlocks[i];
+                            const candidate = normalizeComparable(isOriginal ? b.oursText : b.theirsText);
+                            if (!candidate) continue;
+                            if (chunk.includes(candidate) || candidate.includes(chunk)) return i;
+                          }
+
+                          return -1;
+                        }
+
+                        function updateKeys() {
+                          const op = originalEditor.getPosition();
+                          const mp = modifiedEditor.getPosition();
+                          const oChangeIdx = op ? findChangeIndex(true, op.lineNumber) : -1;
+                          const mChangeIdx = mp ? findChangeIndex(false, mp.lineNumber) : -1;
+                          const oBlkIdx = oChangeIdx >= 0 ? findConflictBlockIndexFromChange(true, oChangeIdx) : -1;
+                          const mBlkIdx = mChangeIdx >= 0 ? findConflictBlockIndexFromChange(false, mChangeIdx) : -1;
+
+                          origKey.set(oBlkIdx >= 0);
+                          modKey.set(mBlkIdx >= 0);
+                        }
+
+                        updateKeys();
+                        originalEditor.onDidChangeCursorPosition(updateKeys);
+                        modifiedEditor.onDidChangeCursorPosition(updateKeys);
+                        diffEditor.onDidUpdateDiff(updateKeys);
+
+                        originalEditor.addAction({
+                          id: "graphoria.conflict.useThisVersion.original",
+                          label: "Use this version",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.2,
+                          precondition: "graphoriaConflictUseThisVersion",
+                          run: () => {
+                            const pos = originalEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(true, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(true, changeIdx);
+                            if (blkIdx < 0) return;
+                            const next = applyConflictBlock(resultDraft, blkIdx, conflictBlocks[blkIdx]?.oursText ?? "");
+                            setResultDraft(next);
+                            setEditMode("result");
+                          },
+                        });
+
+                        modifiedEditor.addAction({
+                          id: "graphoria.conflict.useThisVersion.modified",
+                          label: "Use this version",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.2,
+                          precondition: "graphoriaConflictUseThisVersion",
+                          run: () => {
+                            const pos = modifiedEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(false, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(false, changeIdx);
+                            if (blkIdx < 0) return;
+                            const next = applyConflictBlock(resultDraft, blkIdx, conflictBlocks[blkIdx]?.theirsText ?? "");
+                            setResultDraft(next);
+                            setEditMode("result");
+                          },
+                        });
+                      }}
+                      options={{
+                        readOnly: true,
+                        renderSideBySide: true,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  ) : (
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                    />
+                  )}
                 </div>
               ) : (
                 <Editor
@@ -472,11 +663,25 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     const model = editor.getModel();
                     if (!model) return;
 
+                    const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
+                    const updateKey = () => {
+                      const pos = editor.getPosition();
+                      if (!pos) {
+                        key.set(false);
+                        return;
+                      }
+                      const blk = findConflictBlock(model, pos.lineNumber);
+                      key.set(!!blk);
+                    };
+                    updateKey();
+                    editor.onDidChangeCursorPosition(updateKey);
+
                     editor.addAction({
                       id: "graphoria.resolveConflict.takeOurs",
                       label: "Resolve conflict: take ours",
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.5,
+                      precondition: "graphoriaHasConflictAtCursor",
                       run: () => {
                         const pos = editor.getPosition();
                         if (!pos) return;
@@ -504,6 +709,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       label: "Resolve conflict: take theirs",
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.6,
+                      precondition: "graphoriaHasConflictAtCursor",
                       run: () => {
                         const pos = editor.getPosition();
                         if (!pos) return;

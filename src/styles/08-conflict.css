@@ -51,3 +51,24 @@
   border: 1px solid rgba(255, 215, 130, 0.30);
  }
 
+ .conflictResolverModal .monaco-menu .action-item {
+  opacity: 1;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-label {
+  opacity: 1;
+  color: var(--text);
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled {
+  opacity: 0.55;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label {
+  opacity: 0.55;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item .action-label {
+  color: var(--text);
+ }
+
