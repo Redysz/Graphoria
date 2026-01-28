@@ -29,8 +29,80 @@ type Versions = {
   working: string;
 };
 
+let conflictThemesDefined = false;
+
 function normalizeNewlines(s: string) {
   return s.replace(/\r\n/g, "\n");
+}
+
+function formatConflictStatus(status: string) {
+  const s = (status ?? "").trim();
+  if (!s) return "U";
+  if (s.includes("U")) return "U";
+  return s[0] ?? "U";
+}
+
+function ensureConflictThemes(monaco: any) {
+  if (conflictThemesDefined) return;
+  conflictThemesDefined = true;
+
+  monaco.editor.defineTheme("graphoria-conflict-light", {
+    base: "vs",
+    inherit: true,
+    rules: [],
+    colors: {
+      "diffEditor.insertedLineBackground": "#fff6df",
+      "diffEditor.insertedTextBackground": "#ffe7b3",
+      "diffEditor.removedLineBackground": "#e6f6ea",
+      "diffEditor.removedTextBackground": "#bfe9c9",
+      "diffEditor.border": "#d9dfe9",
+    },
+  });
+
+  monaco.editor.defineTheme("graphoria-conflict-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [],
+    colors: {
+      "diffEditor.insertedLineBackground": "#3a2f18",
+      "diffEditor.insertedTextBackground": "#5a4014",
+      "diffEditor.removedLineBackground": "#183020",
+      "diffEditor.removedTextBackground": "#245a35",
+      "diffEditor.border": "#2b3446",
+    },
+  });
+}
+
+function findConflictBlock(model: any, lineNumber: number) {
+  const max = model.getLineCount();
+  let start = -1;
+  for (let ln = lineNumber; ln >= 1; ln--) {
+    const t = model.getLineContent(ln);
+    if (t.startsWith("<<<<<<<")) {
+      start = ln;
+      break;
+    }
+    if (t.startsWith(">>>>>>>")) {
+      return null;
+    }
+  }
+  if (start < 0) return null;
+
+  let mid = -1;
+  let end = -1;
+  for (let ln = start + 1; ln <= max; ln++) {
+    const t = model.getLineContent(ln);
+    if (t.startsWith("=======")) {
+      mid = ln;
+      continue;
+    }
+    if (t.startsWith(">>>>>>>")) {
+      end = ln;
+      break;
+    }
+  }
+  if (mid < 0 || end < 0) return null;
+  return { start, mid, end };
 }
 
 function pickLanguageByPath(path: string) {
@@ -161,25 +233,32 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   }, [open, repoPath, selectedPath]);
 
   const monacoTheme = useMemo(() => {
-    return theme === "dark" ? "vs-dark" : "vs";
+    return theme === "dark" ? "graphoria-conflict-dark" : "graphoria-conflict-light";
   }, [theme]);
 
   const lang = useMemo(() => pickLanguageByPath(selectedPath), [selectedPath]);
 
-  async function refreshStateAndKeepSelection() {
-    const keep = selectedPath;
+  async function refreshStateKeepPath() {
     const st = await gitConflictState(repoPath);
     const list = st.files ?? [];
     setFiles(list);
-    if (!keep.trim()) {
-      if (list.length > 0) setSelectedPath(list[0].path);
-      return;
+    if (!selectedPath.trim() && list.length > 0) {
+      setSelectedPath(list[0].path);
     }
-    if (list.some((f) => f.path === keep)) {
-      setSelectedPath(keep);
-    } else {
-      setSelectedPath(list[0]?.path ?? "");
-    }
+  }
+
+  async function reloadSelectedVersions() {
+    const p = selectedPath.trim();
+    if (!p) return;
+    const res = await gitConflictFileVersions({ repoPath, path: p });
+    const next: Versions = {
+      base: normalizeNewlines(res.base ?? ""),
+      ours: normalizeNewlines(res.ours ?? ""),
+      theirs: normalizeNewlines(res.theirs ?? ""),
+      working: normalizeNewlines(res.working ?? ""),
+    };
+    setVersions(next);
+    setResultDraft(next.working);
   }
 
   async function takeOurs() {
@@ -188,7 +267,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictTakeOurs({ repoPath, path: selectedPath });
-      await refreshStateAndKeepSelection();
+      setEditMode("result");
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -202,7 +283,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictTakeTheirs({ repoPath, path: selectedPath });
-      await refreshStateAndKeepSelection();
+      setEditMode("result");
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -216,7 +299,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictApplyAndStage({ repoPath, path: selectedPath, content: resultDraft });
-      await refreshStateAndKeepSelection();
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -227,6 +311,15 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   if (!open) return null;
 
   const disabled = busy || loading || versionsLoading || applyBusy;
+
+  const displayFiles = useMemo(() => {
+    const list = files.slice();
+    const p = selectedPath.trim();
+    if (p && !list.some((f) => f.path === p)) {
+      list.unshift({ path: p, status: "", stages: [] });
+    }
+    return list;
+  }, [files, selectedPath]);
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -249,7 +342,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               <button
                 type="button"
                 onClick={() => {
-                  void refreshStateAndKeepSelection();
+                  void refreshStateKeepPath();
                 }}
                 disabled={disabled}
                 title="Refresh conflict state"
@@ -261,11 +354,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
             {loading ? <div className="diffEmpty">Loading…</div> : null}
 
             {!loading ? (
-              files.length === 0 ? (
+              displayFiles.length === 0 ? (
                 <div className="diffEmpty">No conflicts detected.</div>
               ) : (
                 <div className="diffFileList" style={{ padding: 0 }}>
-                  {files.map((f) => (
+                  {displayFiles.map((f) => (
                     <button
                       key={f.path}
                       type="button"
@@ -274,7 +367,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       style={{ gridTemplateColumns: "78px 1fr" }}
                       title={f.path}
                     >
-                      <span className="diffStatus">{f.status.trim() || "U"}</span>
+                      <span className="diffStatus">{formatConflictStatus(f.status)}</span>
                       <span className="diffPath">{f.path}</span>
                     </button>
                   ))}
@@ -301,13 +394,28 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => void takeOurs()} disabled={disabled || !selectedPath.trim()}>
+                <button
+                  type="button"
+                  onClick={() => void takeOurs()}
+                  disabled={disabled || !selectedPath.trim()}
+                  title="Take only our version for the whole file and stage it"
+                >
                   Take ours
                 </button>
-                <button type="button" onClick={() => void takeTheirs()} disabled={disabled || !selectedPath.trim()}>
+                <button
+                  type="button"
+                  onClick={() => void takeTheirs()}
+                  disabled={disabled || !selectedPath.trim()}
+                  title="Take only their version for the whole file and stage it"
+                >
                   Take theirs
                 </button>
-                <button type="button" onClick={() => void applyAndStage()} disabled={disabled || !selectedPath.trim()}>
+                <button
+                  type="button"
+                  onClick={() => void applyAndStage()}
+                  disabled={disabled || !selectedPath.trim()}
+                  title="Write the Result editor content to disk and stage it"
+                >
                   Stage result
                 </button>
               </div>
@@ -322,21 +430,34 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               ) : !versions ? (
                 <div className="diffEmpty">Select a file.</div>
               ) : editMode === "diff" ? (
-                <DiffEditor
-                  height="100%"
-                  theme={monacoTheme}
-                  language={lang}
-                  original={versions.ours}
-                  modified={versions.theirs}
-                  options={{
-                    readOnly: true,
-                    renderSideBySide: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                    fontSize: 12,
-                  }}
-                />
+                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ padding: "6px 10px", fontWeight: 900, opacity: 0.75 }}>
+                      <span className="conflictLegend conflictLegend-ours">ours</span>
+                    </div>
+                    <div style={{ padding: "6px 10px", fontWeight: 900, opacity: 0.75, textAlign: "right" }}>
+                      <span className="conflictLegend conflictLegend-theirs">theirs</span>
+                    </div>
+                  </div>
+                  <DiffEditor
+                    height="100%"
+                    theme={monacoTheme}
+                    language={lang}
+                    original={versions.ours}
+                    modified={versions.theirs}
+                    onMount={(_, monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    options={{
+                      readOnly: true,
+                      renderSideBySide: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      fontSize: 12,
+                    }}
+                  />
+                </div>
               ) : (
                 <Editor
                   height="100%"
@@ -345,6 +466,65 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   value={resultDraft}
                   onChange={(v: string | undefined) => {
                     setResultDraft(v ?? "");
+                  }}
+                  onMount={(editor, monaco) => {
+                    ensureConflictThemes(monaco);
+                    const model = editor.getModel();
+                    if (!model) return;
+
+                    editor.addAction({
+                      id: "graphoria.resolveConflict.takeOurs",
+                      label: "Resolve conflict: take ours",
+                      contextMenuGroupId: "navigation",
+                      contextMenuOrder: 1.5,
+                      run: () => {
+                        const pos = editor.getPosition();
+                        if (!pos) return;
+                        const blk = findConflictBlock(model, pos.lineNumber);
+                        if (!blk) return;
+
+                        const oursLines: string[] = [];
+                        for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
+                          oursLines.push(model.getLineContent(ln));
+                        }
+
+                        const range = new monaco.Range(
+                          blk.start,
+                          1,
+                          blk.end,
+                          model.getLineMaxColumn(blk.end)
+                        );
+                        model.applyEdits([{ range, text: oursLines.join("\n") }]);
+                        return;
+                      },
+                    });
+
+                    editor.addAction({
+                      id: "graphoria.resolveConflict.takeTheirs",
+                      label: "Resolve conflict: take theirs",
+                      contextMenuGroupId: "navigation",
+                      contextMenuOrder: 1.6,
+                      run: () => {
+                        const pos = editor.getPosition();
+                        if (!pos) return;
+                        const blk = findConflictBlock(model, pos.lineNumber);
+                        if (!blk) return;
+
+                        const theirLines: string[] = [];
+                        for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
+                          theirLines.push(model.getLineContent(ln));
+                        }
+
+                        const range = new monaco.Range(
+                          blk.start,
+                          1,
+                          blk.end,
+                          model.getLineMaxColumn(blk.end)
+                        );
+                        model.applyEdits([{ range, text: theirLines.join("\n") }]);
+                        return;
+                      },
+                    });
                   }}
                   options={{
                     readOnly: false,
