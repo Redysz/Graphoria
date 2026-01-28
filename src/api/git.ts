@@ -4,6 +4,8 @@ import type {
   GitBranchInfo,
   GitCommit,
   GitCommitSummary,
+  GitConflictFileVersions,
+  GitConflictState,
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
@@ -229,6 +231,30 @@ export function gitRebaseContinue(repoPath: string) {
 
 export function gitRebaseAbort(repoPath: string) {
   return invoke<string>("git_rebase_abort", { repoPath });
+}
+
+export function gitRebaseSkip(repoPath: string) {
+  return invoke<string>("git_rebase_skip", { repoPath });
+}
+
+export function gitConflictState(repoPath: string) {
+  return invoke<GitConflictState>("git_conflict_state", { repoPath });
+}
+
+export function gitConflictFileVersions(params: { repoPath: string; path: string }) {
+  return invoke<GitConflictFileVersions>("git_conflict_file_versions", params);
+}
+
+export function gitConflictTakeOurs(params: { repoPath: string; path: string }) {
+  return invoke<string>("git_conflict_take_ours", params);
+}
+
+export function gitConflictTakeTheirs(params: { repoPath: string; path: string }) {
+  return invoke<string>("git_conflict_take_theirs", params);
+}
+
+export function gitConflictApplyAndStage(params: { repoPath: string; path: string; content: string }) {
+  return invoke<string>("git_conflict_apply_and_stage", params);
 }
 
 export function gitMergeContinue(repoPath: string) {

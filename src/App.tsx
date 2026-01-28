@@ -46,6 +46,7 @@ import {
   gitCreateTag,
   gitDeleteTag,
   gitDeleteRemoteTag,
+  gitResolveRef,
   gitRenameTag,
   gitPushTags,
   gitListRemoteTagTargets,
@@ -77,11 +78,11 @@ import {
   gitPullRebase,
   gitRebaseAbort,
   gitRebaseContinue,
+  gitRebaseSkip,
   gitRenameBranch,
-  gitResolveRef,
-  gitReflog,
   gitReset,
   gitResetHard,
+  gitReflog,
   gitSwitch,
   gitPush,
   gitSetRemoteUrl,
@@ -114,6 +115,7 @@ import { RenameTagModal } from "./components/modals/RenameTagModal";
 import { SwitchBranchModal } from "./components/modals/SwitchBranchModal";
 import { PreviewZoomModal } from "./components/modals/PreviewZoomModal";
 import { PullConflictModal } from "./components/modals/PullConflictModal";
+import { ConflictResolverModal } from "./components/modals/ConflictResolverModal";
 import { CherryStepsModal } from "./components/modals/CherryStepsModal";
 import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
@@ -380,6 +382,9 @@ function App() {
   const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
   const [pullConflictFiles, setPullConflictFiles] = useState<string[]>([]);
   const [pullConflictMessage, setPullConflictMessage] = useState("");
+
+  const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
+  const [conflictResolverKey, setConflictResolverKey] = useState(0);
 
   const [pullPredictOpen, setPullPredictOpen] = useState(false);
   const [pullPredictBusy, setPullPredictBusy] = useState(false);
@@ -2883,6 +2888,7 @@ function App() {
         await gitMergeContinue(activeRepoPath);
       }
       setPullConflictOpen(false);
+      setConflictResolverOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
       setPullError(typeof e === "string" ? e : JSON.stringify(e));
@@ -2902,7 +2908,22 @@ function App() {
         await gitMergeAbort(activeRepoPath);
       }
       setPullConflictOpen(false);
+      setConflictResolverOpen(false);
       await loadRepo(activeRepoPath);
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
+    }
+  }
+
+  async function skipAfterConflicts() {
+    if (!activeRepoPath) return;
+    setPullBusy(true);
+    setPullError("");
+    try {
+      await gitRebaseSkip(activeRepoPath);
+      setConflictResolverKey((v) => v + 1);
     } catch (e) {
       setPullError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -4324,9 +4345,30 @@ function App() {
           files={pullConflictFiles}
           busy={pullBusy}
           onClose={() => setPullConflictOpen(false)}
+          onFixConflicts={() => {
+            if (!activeRepoPath) return;
+            setPullConflictOpen(false);
+            setConflictResolverOpen(true);
+            setConflictResolverKey((v) => v + 1);
+          }}
           onContinue={() => void continueAfterConflicts()}
           onAbort={() => void abortAfterConflicts()}
           onOpenFilePreview={(p) => openFilePreview(p)}
+        />
+      ) : null}
+
+      {conflictResolverOpen && activeRepoPath ? (
+        <ConflictResolverModal
+          key={conflictResolverKey}
+          open={conflictResolverOpen}
+          repoPath={activeRepoPath}
+          operation={pullConflictOperation}
+          initialFiles={pullConflictFiles}
+          busy={pullBusy}
+          onClose={() => setConflictResolverOpen(false)}
+          onContinue={() => void continueAfterConflicts()}
+          onAbort={() => void abortAfterConflicts()}
+          onSkipRebase={() => void skipAfterConflicts()}
         />
       ) : null}
 

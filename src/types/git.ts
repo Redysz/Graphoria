@@ -91,3 +91,22 @@ export type GitBranchInfo = {
   target: string;
   committer_date: string;
 };
+
+export type GitConflictFileEntry = {
+  status: string;
+  path: string;
+  stages: number[];
+};
+
+export type GitConflictState = {
+  in_progress: boolean;
+  operation: string;
+  files: GitConflictFileEntry[];
+};
+
+export type GitConflictFileVersions = {
+  base?: string | null;
+  ours?: string | null;
+  theirs?: string | null;
+  working?: string | null;
+};

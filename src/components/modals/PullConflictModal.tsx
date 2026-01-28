@@ -4,12 +4,13 @@ type Props = {
   files: string[];
   busy: boolean;
   onClose: () => void;
+  onFixConflicts: () => void;
   onContinue: () => void;
   onAbort: () => void;
   onOpenFilePreview: (path: string) => void;
 };
 
-export function PullConflictModal({ operation, message, files, busy, onClose, onContinue, onAbort, onOpenFilePreview }: Props) {
+export function PullConflictModal({ operation, message, files, busy, onClose, onFixConflicts, onContinue, onAbort, onOpenFilePreview }: Props) {
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
       <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
@@ -40,7 +41,7 @@ export function PullConflictModal({ operation, message, files, busy, onClose, on
           </div>
         </div>
         <div className="modalFooter" style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-          <button type="button" disabled title="Not implemented yet">
+          <button type="button" onClick={onFixConflicts} disabled={busy}>
             Fix conflicts…
           </button>
           <div style={{ display: "flex", gap: 10 }}>

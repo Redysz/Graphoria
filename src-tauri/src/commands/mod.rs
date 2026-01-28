@@ -17,3 +17,5 @@ pub(crate) mod diff;
 pub(crate) mod reflog;
 
 pub(crate) mod tags;
+
+pub(crate) mod conflicts;
