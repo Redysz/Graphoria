@@ -6,8 +6,6 @@ import {
   gitConflictApplyAndStage,
   gitConflictFileVersions,
   gitConflictState,
-  gitConflictTakeOurs,
-  gitConflictTakeTheirs,
 } from "../../api/git";
 import { useAppSettings } from "../../appSettingsStore";
 
@@ -81,6 +79,16 @@ function applyConflictBlock(text: string, blockIndex: number, replacement: strin
 
   const next = [...lines.slice(0, startIdx), ...replacementLines, ...lines.slice(endIdx + 1)];
   return next.join("\n");
+}
+
+function buildVariantFromWorking(working: string, choice: "ours" | "theirs") {
+  let out = working;
+  while (true) {
+    const blocks = listConflictBlocksFromText(out);
+    if (blocks.length === 0) break;
+    out = applyConflictBlock(out, 0, choice === "ours" ? blocks[0]?.oursText ?? "" : blocks[0]?.theirsText ?? "");
+  }
+  return out;
 }
 
 function formatConflictStatus(status: string) {
@@ -193,8 +201,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [diffTheirs, setDiffTheirs] = useState<string>("");
 
   const initialWorkingByPathRef = useRef<Record<string, string>>({});
-  const initialDiffOursByPathRef = useRef<Record<string, string>>({});
-  const initialDiffTheirsByPathRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -213,6 +219,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setResultDraft("");
     setDiffOurs("");
     setDiffTheirs("");
+
+    initialWorkingByPathRef.current = {};
 
     void (async () => {
       try {
@@ -277,17 +285,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
         setVersions(next);
         setResultDraft(next.working);
-        setDiffOurs(next.ours);
-        setDiffTheirs(next.theirs);
+        setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+        setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
 
         if (!initialWorkingByPathRef.current[selectedPath]) {
           initialWorkingByPathRef.current[selectedPath] = next.working;
-        }
-        if (!initialDiffOursByPathRef.current[selectedPath]) {
-          initialDiffOursByPathRef.current[selectedPath] = next.ours;
-        }
-        if (!initialDiffTheirsByPathRef.current[selectedPath]) {
-          initialDiffTheirsByPathRef.current[selectedPath] = next.theirs;
         }
       } catch (e) {
         if (!alive) return;
@@ -313,16 +315,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   useEffect(() => {
     resultDraftRef.current = resultDraft;
   }, [resultDraft]);
-
-  const diffOursRef = useRef<string>("");
-  useEffect(() => {
-    diffOursRef.current = diffOurs;
-  }, [diffOurs]);
-
-  const diffTheirsRef = useRef<string>("");
-  useEffect(() => {
-    diffTheirsRef.current = diffTheirs;
-  }, [diffTheirs]);
 
   const hasUnmergedFiles = useMemo(() => {
     for (const f of files) {
@@ -353,44 +345,31 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
     setVersions(next);
     setResultDraft(next.working);
-    setDiffOurs(next.ours);
-    setDiffTheirs(next.theirs);
+    setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+    setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
 
     if (!initialWorkingByPathRef.current[p]) {
       initialWorkingByPathRef.current[p] = next.working;
     }
-    if (!initialDiffOursByPathRef.current[p]) {
-      initialDiffOursByPathRef.current[p] = next.ours;
-    }
-    if (!initialDiffTheirsByPathRef.current[p]) {
-      initialDiffTheirsByPathRef.current[p] = next.theirs;
-    }
-  }
-
-  function replaceLineRange(text: string, startLine: number, endLine: number, replacementLines: string[]) {
-    if (!startLine || !endLine) return text;
-    if (startLine <= 0 || endLine <= 0) return text;
-    if (endLine < startLine) return text;
-
-    const lines = normalizeNewlines(text).split("\n");
-    const startIdx = startLine - 1;
-    const endIdx = endLine - 1;
-    return [...lines.slice(0, startIdx), ...replacementLines, ...lines.slice(endIdx + 1)].join("\n");
   }
 
   async function takeOurs() {
     if (!selectedPath.trim()) return;
-    setApplyBusy(true);
-    setApplyError("");
-    try {
-      await gitConflictTakeOurs({ repoPath, path: selectedPath });
-      await reloadSelectedVersions();
-      await refreshStateKeepPath();
-    } catch (e) {
-      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setApplyBusy(false);
+    const current = resultDraftRef.current;
+    const blocks = listConflictBlocksFromText(current);
+    if (blocks.length === 0) {
+      await applyAndStageContent(current);
+      return;
     }
+
+    let next = current;
+    while (true) {
+      const bs = listConflictBlocksFromText(next);
+      if (bs.length === 0) break;
+      next = applyConflictBlock(next, 0, bs[0]?.oursText ?? "");
+    }
+    setResultDraft(next);
+    await applyAndStageContent(next);
   }
 
   async function applyAndStageContent(content: string) {
@@ -436,12 +415,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     const initial = initialWorkingByPathRef.current[p];
     if (typeof initial !== "string") return;
 
-    const initO = initialDiffOursByPathRef.current[p] ?? "";
-    const initT = initialDiffTheirsByPathRef.current[p] ?? "";
-
     setResultDraft(initial);
-    setDiffOurs(initO);
-    setDiffTheirs(initT);
+    setDiffOurs(buildVariantFromWorking(initial, "ours"));
+    setDiffTheirs(buildVariantFromWorking(initial, "theirs"));
     await applyContent(initial);
     await refreshStateKeepPath();
   }
@@ -468,17 +444,21 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   async function takeTheirs() {
     if (!selectedPath.trim()) return;
-    setApplyBusy(true);
-    setApplyError("");
-    try {
-      await gitConflictTakeTheirs({ repoPath, path: selectedPath });
-      await reloadSelectedVersions();
-      await refreshStateKeepPath();
-    } catch (e) {
-      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setApplyBusy(false);
+    const current = resultDraftRef.current;
+    const blocks = listConflictBlocksFromText(current);
+    if (blocks.length === 0) {
+      await applyAndStageContent(current);
+      return;
     }
+
+    let next = current;
+    while (true) {
+      const bs = listConflictBlocksFromText(next);
+      if (bs.length === 0) break;
+      next = applyConflictBlock(next, 0, bs[0]?.theirsText ?? "");
+    }
+    setResultDraft(next);
+    await applyAndStageContent(next);
   }
 
   if (!open) return null;
@@ -668,29 +648,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           return listConflictBlocksFromText(resultDraftRef.current);
                         }
 
-                        function applyResolutionToDiff(choice: "ours" | "theirs", changeIndex: number) {
-                          const changes = diffEditor.getLineChanges() ?? [];
-                          const c = changes[changeIndex];
-                          if (!c) return;
-                          if (!c.originalStartLineNumber || !c.originalEndLineNumber || !c.modifiedStartLineNumber || !c.modifiedEndLineNumber) return;
-                          if (c.originalStartLineNumber <= 0 || c.modifiedStartLineNumber <= 0) return;
-
-                          const oursLines = normalizeNewlines(diffOursRef.current)
-                            .split("\n")
-                            .slice(c.originalStartLineNumber - 1, c.originalEndLineNumber);
-                          const theirsLines = normalizeNewlines(diffTheirsRef.current)
-                            .split("\n")
-                            .slice(c.modifiedStartLineNumber - 1, c.modifiedEndLineNumber);
-
-                          if (choice === "ours") {
-                            const nextTheirs = replaceLineRange(diffTheirsRef.current, c.modifiedStartLineNumber, c.modifiedEndLineNumber, oursLines);
-                            setDiffTheirs(nextTheirs);
-                          } else {
-                            const nextOurs = replaceLineRange(diffOursRef.current, c.originalStartLineNumber, c.originalEndLineNumber, theirsLines);
-                            setDiffOurs(nextOurs);
-                          }
-                        }
-
                         function findConflictBlockIndexFromChange(isOriginal: boolean, changeIndex: number) {
                           const changes = diffEditor.getLineChanges() ?? [];
                           const c = changes[changeIndex];
@@ -763,7 +720,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.oursText ?? "");
                             setResultDraft(next);
                             await applyContent(next);
-                            applyResolutionToDiff("ours", changeIdx);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                             if (listConflictBlocksFromText(next).length === 0) {
                               await applyAndStageContent(next);
                             }
@@ -787,7 +745,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.theirsText ?? "");
                             setResultDraft(next);
                             await applyContent(next);
-                            applyResolutionToDiff("theirs", changeIdx);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                             if (listConflictBlocksFromText(next).length === 0) {
                               await applyAndStageContent(next);
                             }
@@ -882,6 +841,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                         const next = model.getValue();
                         setResultDraft(next);
                         await applyContent(next);
+                        setDiffOurs(buildVariantFromWorking(next, "ours"));
+                        setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                        if (listConflictBlocksFromText(next).length === 0) {
+                          await applyAndStageContent(next);
+                        }
                         return;
                       },
                     });
@@ -913,6 +877,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                         const next = model.getValue();
                         setResultDraft(next);
                         await applyContent(next);
+                        setDiffOurs(buildVariantFromWorking(next, "ours"));
+                        setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                        if (listConflictBlocksFromText(next).length === 0) {
+                          await applyAndStageContent(next);
+                        }
                         return;
                       },
                     });

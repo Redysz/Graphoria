@@ -84,14 +84,16 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
   const effectiveOp = (info?.operation?.trim() as "merge" | "rebase" | "") || operation;
 
   const derivedEntries = useMemo(() => {
-    if (statusEntries.length > 0) return statusEntries;
+    const real = statusEntries;
+    const realSet = new Set(real.map((e) => e.path));
     const paths = extractConflictPathsFromMessage(message);
     const uniq = Array.from(new Set(paths)).filter((p) => p.trim().length > 0);
-    return uniq.map((p) => ({ status: "NC", path: p } as GitStatusEntry));
+    const virtual = uniq.filter((p) => !realSet.has(p)).map((p) => ({ status: "NC", path: p } as GitStatusEntry));
+    return [...real, ...virtual];
   }, [message, statusEntries]);
 
   const hasVirtualEntries = useMemo(() => {
-    return statusEntries.length === 0 && derivedEntries.length > 0;
+    return derivedEntries.some((e) => (e.status ?? "") === "NC");
   }, [derivedEntries, statusEntries.length]);
 
   useEffect(() => {
@@ -359,19 +361,23 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                 <button
                   type="button"
                   onClick={() => {
-                    if (statusEntries.length === 0) return;
+                    if (derivedEntries.length === 0) return;
                     let allSelected = true;
-                    for (const e of statusEntries) {
+                    for (const e of derivedEntries) {
+                      if ((e.status ?? "") === "NC") continue;
                       if (!selectedPaths[e.path]) {
                         allSelected = false;
                         break;
                       }
                     }
                     const next: Record<string, boolean> = {};
-                    for (const e of statusEntries) next[e.path] = !allSelected;
+                    for (const e of derivedEntries) {
+                      if ((e.status ?? "") === "NC") continue;
+                      next[e.path] = !allSelected;
+                    }
                     setSelectedPaths(next);
                   }}
-                  disabled={busy || statusEntries.length === 0}
+                  disabled={busy || derivedEntries.length === 0}
                 >
                   Toggle all
                 </button>

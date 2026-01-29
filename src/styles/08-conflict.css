@@ -61,7 +61,14 @@
  }
 
  :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label {
-  color: #111;
+  color: #111 !important;
+ }
+
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item.disabled {
@@ -70,6 +77,12 @@
 
  .conflictResolverModal .monaco-menu .action-item.disabled .action-label {
   opacity: 0.55;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label,
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label span,
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label .label-name {
+  opacity: 0.55 !important;
  }
 
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item .action-label {
