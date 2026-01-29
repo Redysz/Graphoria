@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import type { GitConflictFileEntry } from "../../types/git";
 import {
@@ -285,9 +285,18 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const lang = useMemo(() => pickLanguageByPath(selectedPath), [selectedPath]);
 
-  const conflictBlocks = useMemo(() => {
-    return listConflictBlocksFromText(resultDraft);
+  const resultDraftRef = useRef<string>("");
+  useEffect(() => {
+    resultDraftRef.current = resultDraft;
   }, [resultDraft]);
+
+  const hasUnmergedFiles = useMemo(() => {
+    for (const f of files) {
+      const s = (f.status ?? "").replace(/\s+/g, "");
+      if (s.includes("U")) return true;
+    }
+    return false;
+  }, [files]);
 
   async function refreshStateKeepPath() {
     const st = await gitConflictState(repoPath);
@@ -328,6 +337,21 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     }
   }
 
+  async function applyAndStageContent(content: string) {
+    if (!selectedPath.trim()) return;
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictApplyAndStage({ repoPath, path: selectedPath, content });
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
   async function takeTheirs() {
     if (!selectedPath.trim()) return;
     setApplyBusy(true);
@@ -346,22 +370,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   async function applyAndStage() {
     if (!selectedPath.trim()) return;
-    setApplyBusy(true);
-    setApplyError("");
-    try {
-      await gitConflictApplyAndStage({ repoPath, path: selectedPath, content: resultDraft });
-      await reloadSelectedVersions();
-      await refreshStateKeepPath();
-    } catch (e) {
-      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setApplyBusy(false);
-    }
+    await applyAndStageContent(resultDraft);
   }
 
   if (!open) return null;
 
-  const disabled = busy || loading || versionsLoading || applyBusy;
+  const disabled = loading || busy || applyBusy;
+  const continueDisabled = disabled || hasUnmergedFiles;
 
   const displayFiles = useMemo(() => {
     const list = files.slice();
@@ -497,6 +512,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       language={lang}
                       original={versions.ours}
                       modified={versions.theirs}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
                       onMount={(diffEditor, monaco) => {
                         ensureConflictThemes(monaco);
 
@@ -529,6 +547,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           return normalizeNewlines(s).replace(/\s+$/g, "").trim();
                         }
 
+                        function getBlocksNow() {
+                          return listConflictBlocksFromText(resultDraftRef.current);
+                        }
+
                         function findConflictBlockIndexFromChange(isOriginal: boolean, changeIndex: number) {
                           const changes = diffEditor.getLineChanges() ?? [];
                           const c = changes[changeIndex];
@@ -549,15 +571,16 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           }));
                           if (!chunk) return -1;
 
-                          for (let i = 0; i < conflictBlocks.length; i++) {
-                            const b = conflictBlocks[i];
+                          const blocksNow = getBlocksNow();
+                          for (let i = 0; i < blocksNow.length; i++) {
+                            const b = blocksNow[i];
                             const candidate = normalizeComparable(isOriginal ? b.oursText : b.theirsText);
                             if (!candidate) continue;
                             if (chunk === candidate) return i;
                           }
 
-                          for (let i = 0; i < conflictBlocks.length; i++) {
-                            const b = conflictBlocks[i];
+                          for (let i = 0; i < blocksNow.length; i++) {
+                            const b = blocksNow[i];
                             const candidate = normalizeComparable(isOriginal ? b.oursText : b.theirsText);
                             if (!candidate) continue;
                             if (chunk.includes(candidate) || candidate.includes(chunk)) return i;
@@ -589,16 +612,20 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           contextMenuGroupId: "navigation",
                           contextMenuOrder: 1.2,
                           precondition: "graphoriaConflictUseThisVersion",
-                          run: () => {
+                          run: async () => {
                             const pos = originalEditor.getPosition();
                             if (!pos) return;
                             const changeIdx = findChangeIndex(true, pos.lineNumber);
                             if (changeIdx < 0) return;
                             const blkIdx = findConflictBlockIndexFromChange(true, changeIdx);
                             if (blkIdx < 0) return;
-                            const next = applyConflictBlock(resultDraft, blkIdx, conflictBlocks[blkIdx]?.oursText ?? "");
+                            const blocksNow = getBlocksNow();
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.oursText ?? "");
                             setResultDraft(next);
                             setEditMode("result");
+                            if (listConflictBlocksFromText(next).length === 0) {
+                              await applyAndStageContent(next);
+                            }
                           },
                         });
 
@@ -608,16 +635,20 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           contextMenuGroupId: "navigation",
                           contextMenuOrder: 1.2,
                           precondition: "graphoriaConflictUseThisVersion",
-                          run: () => {
+                          run: async () => {
                             const pos = modifiedEditor.getPosition();
                             if (!pos) return;
                             const changeIdx = findChangeIndex(false, pos.lineNumber);
                             if (changeIdx < 0) return;
                             const blkIdx = findConflictBlockIndexFromChange(false, changeIdx);
                             if (blkIdx < 0) return;
-                            const next = applyConflictBlock(resultDraft, blkIdx, conflictBlocks[blkIdx]?.theirsText ?? "");
+                            const blocksNow = getBlocksNow();
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.theirsText ?? "");
                             setResultDraft(next);
                             setEditMode("result");
+                            if (listConflictBlocksFromText(next).length === 0) {
+                              await applyAndStageContent(next);
+                            }
                           },
                         });
                       }}
@@ -636,6 +667,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       theme={monacoTheme}
                       language={lang}
                       value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
                       options={{
                         readOnly: true,
                         minimap: { enabled: false },
@@ -655,6 +689,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   theme={monacoTheme}
                   language={lang}
                   value={resultDraft}
+                  beforeMount={(monaco) => {
+                    ensureConflictThemes(monaco);
+                  }}
                   onChange={(v: string | undefined) => {
                     setResultDraft(v ?? "");
                   }}
@@ -752,10 +789,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 Skip
               </button>
             ) : null}
+            {hasUnmergedFiles ? <div style={{ alignSelf: "center", opacity: 0.7, fontSize: 12 }}>Stage all resolved files to continue.</div> : null}
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={onContinue} disabled={disabled}>
+            <button type="button" onClick={onContinue} disabled={continueDisabled}>
               Continue
             </button>
             <button type="button" onClick={onAbort} disabled={disabled}>

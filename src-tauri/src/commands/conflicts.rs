@@ -1,12 +1,161 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::process::Stdio;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitConflictFileEntry {
     status: String,
     path: String,
     stages: Vec<u8>,
+}
+
+#[tauri::command]
+pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let merge = crate::is_merge_in_progress(&repo_path);
+    let rebase = crate::is_rebase_in_progress(&repo_path);
+    if !merge && !rebase {
+        return Err(String::from("No merge/rebase in progress."));
+    }
+
+    let operation = if rebase { "rebase" } else { "merge" };
+
+    let commit_edit_msg = read_git_path_text(&repo_path, "COMMIT_EDITMSG").unwrap_or_default();
+    let has_commit_edit_msg = !commit_edit_msg.trim().is_empty();
+    let mut message = if has_commit_edit_msg {
+        commit_edit_msg.clone()
+    } else if operation == "merge" {
+        let m = read_git_path_text(&repo_path, "MERGE_MSG")?;
+        if m.trim().is_empty() {
+            String::from("Merge")
+        } else {
+            m
+        }
+    } else {
+        let m = read_git_path_text(&repo_path, "rebase-merge/message")?;
+        if m.trim().is_empty() {
+            let m2 = read_git_path_text(&repo_path, "rebase-apply/message")?;
+            if m2.trim().is_empty() {
+                String::from("Rebase")
+            } else {
+                m2
+            }
+        } else {
+            m
+        }
+    };
+
+    let files = staged_name_status(&repo_path).unwrap_or_default();
+    if !has_commit_edit_msg {
+        let mut s = message.replace("\r\n", "\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s.push('\n');
+        s.push_str("# Staged changes:\n");
+        for f in files.iter() {
+            s.push_str(format!("# {} {}\n", f.status, f.path).as_str());
+        }
+        message = s;
+    }
+    Ok(GitContinueInfo {
+        operation: operation.to_string(),
+        message,
+        files,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn git_continue_file_diff(repo_path: String, path: String, unified: u32) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+    crate::ensure_rel_path_safe(path.as_str())?;
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    crate::run_git_stdout_raw(
+        &repo_path,
+        &["diff", "--cached", "--no-color", unified_arg.as_str(), "--", path.as_str()],
+    )
+}
+
+#[tauri::command]
+pub(crate) fn git_merge_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    if !crate::is_merge_in_progress(&repo_path) {
+        return Err(String::from("No merge in progress."));
+    }
+
+    let mut msg = message.replace("\r\n", "\n");
+    if !msg.ends_with('\n') {
+        msg.push('\n');
+    }
+
+    let mut child = crate::git_command_in_repo(&repo_path)
+        .args(["commit", "-F", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(msg.as_bytes())
+            .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+    }
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for git: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if out.status.success() {
+        Ok(if !stdout.is_empty() { stdout } else { stderr })
+    } else {
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    }
+}
+
+#[tauri::command]
+pub(crate) fn git_rebase_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    if !crate::is_rebase_in_progress(&repo_path) {
+        return Err(String::from("No rebase in progress."));
+    }
+
+    let merge_path = resolve_git_path(&repo_path, "rebase-merge/message")?;
+    let apply_path = resolve_git_path(&repo_path, "rebase-apply/message")?;
+
+    if merge_path.as_ref().is_some_and(|p| p.exists()) {
+        write_git_path_text(&repo_path, "rebase-merge/message", message.as_str())?;
+    } else if apply_path.as_ref().is_some_and(|p| p.exists()) {
+        write_git_path_text(&repo_path, "rebase-apply/message", message.as_str())?;
+    }
+
+    let mut cmd = crate::git_command_in_repo(&repo_path);
+    no_editor_env(&mut cmd);
+    let out = cmd
+        .args(["rebase", "--continue"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if out.status.success() {
+        Ok(if !stdout.is_empty() { stdout } else { stderr })
+    } else {
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +171,20 @@ pub(crate) struct GitConflictFileVersions {
     ours: Option<String>,
     theirs: Option<String>,
     working: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GitContinueFileEntry {
+    status: String,
+    path: String,
+    old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GitContinueInfo {
+    operation: String,
+    message: String,
+    files: Vec<GitContinueFileEntry>,
 }
 
 fn parse_status_porcelain_z(stdout: &[u8]) -> HashMap<String, String> {
@@ -112,6 +275,134 @@ fn bytes_to_text_or_err(bytes: &[u8]) -> Result<String, String> {
         return Err(String::from("Binary file preview is not supported."));
     }
     Ok(String::from_utf8_lossy(bytes).to_string())
+}
+
+fn parse_name_status_z(stdout: &[u8]) -> Vec<GitContinueFileEntry> {
+    let mut out: Vec<GitContinueFileEntry> = Vec::new();
+    let mut tokens: Vec<String> = Vec::new();
+    for t in stdout.split(|c| *c == 0) {
+        if t.is_empty() {
+            continue;
+        }
+        let s = String::from_utf8_lossy(t).to_string();
+        if !s.is_empty() {
+            tokens.push(s);
+        }
+    }
+
+    let mut i: usize = 0;
+    while i < tokens.len() {
+        let status = tokens[i].trim().to_string();
+        i += 1;
+        if status.is_empty() {
+            continue;
+        }
+
+        let has_rename = status.starts_with('R') || status.starts_with('C');
+        if has_rename {
+            if i + 1 >= tokens.len() {
+                break;
+            }
+            let old_path = tokens[i].to_string();
+            let new_path = tokens[i + 1].to_string();
+            i += 2;
+            if !new_path.trim().is_empty() {
+                out.push(GitContinueFileEntry {
+                    status,
+                    path: new_path,
+                    old_path: if old_path.trim().is_empty() { None } else { Some(old_path) },
+                });
+            }
+        } else {
+            if i >= tokens.len() {
+                break;
+            }
+            let path = tokens[i].to_string();
+            i += 1;
+            if !path.trim().is_empty() {
+                out.push(GitContinueFileEntry {
+                    status,
+                    path,
+                    old_path: None,
+                });
+            }
+        }
+    }
+
+    out
+}
+
+fn read_git_path_text(repo_path: &str, git_path: &str) -> Result<String, String> {
+    let full = resolve_git_path(repo_path, git_path)?;
+    let Some(full) = full else {
+        return Ok(String::new());
+    };
+
+    match fs::read(full) {
+        Ok(bytes) => bytes_to_text_or_err(bytes.as_slice()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("Failed to read {git_path}: {e}")),
+    }
+}
+
+fn write_git_path_text(repo_path: &str, git_path: &str, text: &str) -> Result<(), String> {
+    let full = resolve_git_path(repo_path, git_path)?;
+    let Some(full) = full else {
+        return Err(format!("Failed to resolve git path: {git_path}"));
+    };
+
+    let mut s = text.replace("\r\n", "\n");
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+
+    fs::write(full, s.as_bytes()).map_err(|e| format!("Failed to write {git_path}: {e}"))?;
+    Ok(())
+}
+
+fn resolve_git_path(repo_path: &str, git_path: &str) -> Result<Option<PathBuf>, String> {
+    let full = crate::run_git(repo_path, &["rev-parse", "--git-path", git_path]).unwrap_or_default();
+    let full = full.trim();
+    if full.is_empty() {
+        return Ok(None);
+    }
+
+    let p = PathBuf::from(full);
+    if p.is_absolute() {
+        Ok(Some(p))
+    } else {
+        Ok(Some(Path::new(repo_path).join(p)))
+    }
+}
+
+fn staged_name_status(repo_path: &str) -> Result<Vec<GitContinueFileEntry>, String> {
+    let out = crate::git_command_in_repo(repo_path)
+        .args(["diff", "--cached", "--name-status", "-z", "-M"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git diff --cached failed: {stderr}"));
+    }
+
+    Ok(parse_name_status_z(out.stdout.as_slice()))
+}
+
+fn no_editor_env(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        cmd.env("GIT_EDITOR", "cmd.exe /C exit 0");
+        cmd.env("EDITOR", "cmd.exe /C exit 0");
+        cmd.env("VISUAL", "cmd.exe /C exit 0");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        cmd.env("GIT_EDITOR", "true");
+        cmd.env("EDITOR", "true");
+        cmd.env("VISUAL", "true");
+    }
 }
 
 #[tauri::command]

@@ -110,3 +110,15 @@ export type GitConflictFileVersions = {
   theirs?: string | null;
   working?: string | null;
 };
+
+export type GitContinueFileEntry = {
+  status: string;
+  path: string;
+  old_path?: string | null;
+};
+
+export type GitContinueInfo = {
+  operation: string;
+  message: string;
+  files: GitContinueFileEntry[];
+};

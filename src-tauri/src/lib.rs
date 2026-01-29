@@ -96,7 +96,11 @@ use commands::conflicts::{
     git_conflict_state,
     git_conflict_take_ours,
     git_conflict_take_theirs,
+    git_continue_file_diff,
+    git_continue_info,
+    git_merge_continue_with_message,
     git_rebase_skip,
+    git_rebase_continue_with_message,
 };
 
 #[tauri::command]
@@ -2311,6 +2315,10 @@ pub fn run() {
             git_conflict_take_ours,
             git_conflict_take_theirs,
             git_conflict_apply_and_stage,
+            git_continue_info,
+            git_continue_file_diff,
+            git_merge_continue_with_message,
+            git_rebase_continue_with_message,
             git_pull_predict,
             git_pull_predict_graph,
             git_pull_predict_conflict_preview,

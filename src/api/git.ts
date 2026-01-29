@@ -4,6 +4,7 @@ import type {
   GitBranchInfo,
   GitCommit,
   GitCommitSummary,
+  GitContinueInfo,
   GitConflictFileVersions,
   GitConflictState,
   GitStatusEntry,
@@ -255,6 +256,22 @@ export function gitConflictTakeTheirs(params: { repoPath: string; path: string }
 
 export function gitConflictApplyAndStage(params: { repoPath: string; path: string; content: string }) {
   return invoke<string>("git_conflict_apply_and_stage", params);
+}
+
+export function gitContinueInfo(repoPath: string) {
+  return invoke<GitContinueInfo>("git_continue_info", { repoPath });
+}
+
+export function gitContinueFileDiff(params: { repoPath: string; path: string; unified: number }) {
+  return invoke<string>("git_continue_file_diff", params);
+}
+
+export function gitMergeContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_merge_continue_with_message", params);
+}
+
+export function gitRebaseContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_rebase_continue_with_message", params);
 }
 
 export function gitMergeContinue(repoPath: string) {

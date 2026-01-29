@@ -71,13 +71,11 @@ import {
   gitLsRemoteHeads,
   gitMergeAbort,
   gitMergeBranch,
-  gitMergeContinue,
   gitPull,
   gitPullPredict,
   gitPullPredictGraph,
   gitPullRebase,
   gitRebaseAbort,
-  gitRebaseContinue,
   gitRebaseSkip,
   gitRenameBranch,
   gitReset,
@@ -116,6 +114,7 @@ import { SwitchBranchModal } from "./components/modals/SwitchBranchModal";
 import { PreviewZoomModal } from "./components/modals/PreviewZoomModal";
 import { PullConflictModal } from "./components/modals/PullConflictModal";
 import { ConflictResolverModal } from "./components/modals/ConflictResolverModal";
+import { ContinueAfterConflictsModal } from "./components/modals/ContinueAfterConflictsModal";
 import { CherryStepsModal } from "./components/modals/CherryStepsModal";
 import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
@@ -382,6 +381,9 @@ function App() {
   const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
   const [pullConflictFiles, setPullConflictFiles] = useState<string[]>([]);
   const [pullConflictMessage, setPullConflictMessage] = useState("");
+
+  const [continueAfterConflictsOpen, setContinueAfterConflictsOpen] = useState(false);
+  const [continueAfterConflictsKey, setContinueAfterConflictsKey] = useState(0);
 
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [conflictResolverKey, setConflictResolverKey] = useState(0);
@@ -2879,22 +2881,11 @@ function App() {
 
   async function continueAfterConflicts() {
     if (!activeRepoPath) return;
-    setPullBusy(true);
     setPullError("");
-    try {
-      if (pullConflictOperation === "rebase") {
-        await gitRebaseContinue(activeRepoPath);
-      } else {
-        await gitMergeContinue(activeRepoPath);
-      }
-      setPullConflictOpen(false);
-      setConflictResolverOpen(false);
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setPullError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setPullBusy(false);
-    }
+    setPullConflictOpen(false);
+    setConflictResolverOpen(false);
+    setContinueAfterConflictsKey((v) => v + 1);
+    setContinueAfterConflictsOpen(true);
   }
 
   async function abortAfterConflicts() {
@@ -4354,6 +4345,27 @@ function App() {
           onContinue={() => void continueAfterConflicts()}
           onAbort={() => void abortAfterConflicts()}
           onOpenFilePreview={(p) => openFilePreview(p)}
+        />
+      ) : null}
+
+      {continueAfterConflictsOpen && activeRepoPath ? (
+        <ContinueAfterConflictsModal
+          key={continueAfterConflictsKey}
+          open={continueAfterConflictsOpen}
+          repoPath={activeRepoPath}
+          operation={pullConflictOperation}
+          onClose={() => setContinueAfterConflictsOpen(false)}
+          onResolveConflicts={() => {
+            setContinueAfterConflictsOpen(false);
+            setConflictResolverOpen(true);
+            setConflictResolverKey((v) => v + 1);
+          }}
+          onSuccess={async () => {
+            setContinueAfterConflictsOpen(false);
+            setPullConflictOpen(false);
+            setConflictResolverOpen(false);
+            await loadRepo(activeRepoPath);
+          }}
         />
       ) : null}
 
