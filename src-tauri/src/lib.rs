@@ -35,8 +35,10 @@ use commands::status::{
     git_get_remote_url,
     git_has_staged_changes,
     git_set_remote_url,
+    git_stage_paths,
     git_status,
     git_status_summary,
+    git_unstage_paths,
 };
 use commands::branches::{
     git_branches_points_at,
@@ -2226,7 +2228,7 @@ async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let _: () = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -2249,6 +2251,8 @@ pub fn run() {
             git_clone_repo,
             git_status,
             git_has_staged_changes,
+            git_stage_paths,
+            git_unstage_paths,
             git_stash_list,
             git_stash_show,
             git_stash_base_commit,

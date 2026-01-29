@@ -11,6 +11,7 @@ type Props = {
 };
 
 export function PullConflictModal({ operation, message, files, busy, onClose, onFixConflicts, onContinue, onAbort, onOpenFilePreview }: Props) {
+  const canFix = files.length > 0;
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
       <div className="modal" style={{ width: "min(760px, 96vw)", maxHeight: "min(70vh, 640px)" }}>
@@ -25,6 +26,11 @@ export function PullConflictModal({ operation, message, files, busy, onClose, on
             Operation: <span className="mono">{operation}</span>
           </div>
           {message ? <pre style={{ whiteSpace: "pre-wrap", opacity: 0.8, marginTop: 0 }}>{message}</pre> : null}
+          {!canFix ? (
+            <div style={{ opacity: 0.8, marginBottom: 10 }}>
+              No conflict files detected. If you already resolved conflicts, finish by clicking Continue, or roll back using Abort.
+            </div>
+          ) : null}
           <div>
             <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Conflict files</div>
             {files.length ? (
@@ -36,12 +42,12 @@ export function PullConflictModal({ operation, message, files, busy, onClose, on
                 ))}
               </div>
             ) : (
-              <div style={{ opacity: 0.75 }}>Could not parse conflict file list.</div>
+              <div style={{ opacity: 0.75 }}>{canFix ? "Could not parse conflict file list." : "No conflicts detected."}</div>
             )}
           </div>
         </div>
         <div className="modalFooter" style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-          <button type="button" onClick={onFixConflicts} disabled={busy}>
+          <button type="button" onClick={onFixConflicts} disabled={busy || !canFix} title={!canFix ? "No conflicts to fix" : undefined}>
             Fix conflicts…
           </button>
           <div style={{ display: "flex", gap: 10 }}>

@@ -24,11 +24,7 @@ pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, St
 
     let operation = if rebase { "rebase" } else { "merge" };
 
-    let commit_edit_msg = read_git_path_text(&repo_path, "COMMIT_EDITMSG").unwrap_or_default();
-    let has_commit_edit_msg = !commit_edit_msg.trim().is_empty();
-    let mut message = if has_commit_edit_msg {
-        commit_edit_msg.clone()
-    } else if operation == "merge" {
+    let mut message = if operation == "merge" {
         let m = read_git_path_text(&repo_path, "MERGE_MSG")?;
         if m.trim().is_empty() {
             String::from("Merge")
@@ -50,18 +46,44 @@ pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, St
     };
 
     let files = staged_name_status(&repo_path).unwrap_or_default();
-    if !has_commit_edit_msg {
-        let mut s = message.replace("\r\n", "\n");
-        if !s.ends_with('\n') {
+
+    let mut s = message.replace("\r\n", "\n");
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push('\n');
+    s.push_str("# Please enter the commit message for your changes. Lines starting\n");
+    s.push_str("# with '#' will be ignored, and an empty message aborts the commit.\n");
+    s.push_str("#\n");
+
+    if operation == "merge" {
+        let conflicts = crate::list_unmerged_files(&repo_path);
+        if !conflicts.is_empty() {
+            s.push_str("# Conflicts:\n");
+            for p in conflicts.iter() {
+                s.push_str(format!("#\t{}\n", p).as_str());
+            }
+            s.push_str("#\n");
+        }
+    }
+
+    if let Ok(status_text) = git_status_text(&repo_path) {
+        for line in status_text.replace("\r\n", "\n").lines() {
+            s.push_str("# ");
+            s.push_str(line);
             s.push('\n');
         }
-        s.push('\n');
+    }
+
+    if !files.is_empty() {
+        s.push_str("#\n");
         s.push_str("# Staged changes:\n");
         for f in files.iter() {
             s.push_str(format!("# {} {}\n", f.status, f.path).as_str());
         }
-        message = s;
     }
+
+    message = s;
     Ok(GitContinueInfo {
         operation: operation.to_string(),
         message,
@@ -381,12 +403,28 @@ fn staged_name_status(repo_path: &str) -> Result<Vec<GitContinueFileEntry>, Stri
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
-    if !out.status.success() {
+    let ok = out.status.success() || out.status.code() == Some(1);
+    if !ok {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!("git diff --cached failed: {stderr}"));
     }
 
     Ok(parse_name_status_z(out.stdout.as_slice()))
+}
+
+fn git_status_text(repo_path: &str) -> Result<String, String> {
+    let out = crate::git_command_in_repo(repo_path)
+        .args(["status", "--untracked-files=no"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git status: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    if out.status.success() {
+        Ok(stdout)
+    } else {
+        Err(stderr)
+    }
 }
 
 fn no_editor_env(cmd: &mut std::process::Command) {

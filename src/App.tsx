@@ -4355,6 +4355,10 @@ function App() {
           repoPath={activeRepoPath}
           operation={pullConflictOperation}
           onClose={() => setContinueAfterConflictsOpen(false)}
+          onAbort={async () => {
+            setContinueAfterConflictsOpen(false);
+            await abortAfterConflicts();
+          }}
           onResolveConflicts={() => {
             setContinueAfterConflictsOpen(false);
             setConflictResolverOpen(true);

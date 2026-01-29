@@ -327,6 +327,14 @@ export function gitHasStagedChanges(repoPath: string) {
   return invoke<boolean>("git_has_staged_changes", { repoPath });
 }
 
+export function gitStagePaths(params: { repoPath: string; paths: string[] }) {
+  return invoke<string>("git_stage_paths", params);
+}
+
+export function gitUnstagePaths(params: { repoPath: string; paths: string[] }) {
+  return invoke<string>("git_unstage_paths", params);
+}
+
 export function gitCommit(params: { repoPath: string; message: string; paths: string[] }) {
   return invoke<string>("git_commit", params);
 }
