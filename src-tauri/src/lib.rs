@@ -93,6 +93,7 @@ use commands::diff::{
 };
 use commands::reflog::{git_cherry_pick, git_reflog};
 use commands::conflicts::{
+    git_conflict_apply,
     git_conflict_apply_and_stage,
     git_conflict_file_versions,
     git_conflict_state,
@@ -2319,6 +2320,7 @@ pub fn run() {
             git_conflict_take_ours,
             git_conflict_take_theirs,
             git_conflict_apply_and_stage,
+            git_conflict_apply,
             git_continue_info,
             git_continue_file_diff,
             git_merge_continue_with_message,

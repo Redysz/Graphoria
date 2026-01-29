@@ -60,6 +60,10 @@
   color: var(--text);
  }
 
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label {
+  color: #111;
+ }
+
  .conflictResolverModal .monaco-menu .action-item.disabled {
   opacity: 0.55;
  }
@@ -71,4 +75,3 @@
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item .action-label {
   color: var(--text);
  }
-

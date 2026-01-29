@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import type { GitConflictFileEntry } from "../../types/git";
 import {
+  gitConflictApply,
   gitConflictApplyAndStage,
   gitConflictFileVersions,
   gitConflictState,
@@ -188,6 +189,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState("");
 
+  const [diffOurs, setDiffOurs] = useState<string>("");
+  const [diffTheirs, setDiffTheirs] = useState<string>("");
+
+  const initialWorkingByPathRef = useRef<Record<string, string>>({});
+  const initialDiffOursByPathRef = useRef<Record<string, string>>({});
+  const initialDiffTheirsByPathRef = useRef<Record<string, string>>({});
+
   useEffect(() => {
     if (!open) return;
 
@@ -203,6 +211,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyBusy(false);
     setEditMode("diff");
     setResultDraft("");
+    setDiffOurs("");
+    setDiffTheirs("");
 
     void (async () => {
       try {
@@ -241,6 +251,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       setVersionsError("");
       setVersionsLoading(false);
       setResultDraft("");
+      setDiffOurs("");
+      setDiffTheirs("");
       return;
     }
 
@@ -265,6 +277,18 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
         setVersions(next);
         setResultDraft(next.working);
+        setDiffOurs(next.ours);
+        setDiffTheirs(next.theirs);
+
+        if (!initialWorkingByPathRef.current[selectedPath]) {
+          initialWorkingByPathRef.current[selectedPath] = next.working;
+        }
+        if (!initialDiffOursByPathRef.current[selectedPath]) {
+          initialDiffOursByPathRef.current[selectedPath] = next.ours;
+        }
+        if (!initialDiffTheirsByPathRef.current[selectedPath]) {
+          initialDiffTheirsByPathRef.current[selectedPath] = next.theirs;
+        }
       } catch (e) {
         if (!alive) return;
         setVersionsError(typeof e === "string" ? e : JSON.stringify(e));
@@ -289,6 +313,16 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   useEffect(() => {
     resultDraftRef.current = resultDraft;
   }, [resultDraft]);
+
+  const diffOursRef = useRef<string>("");
+  useEffect(() => {
+    diffOursRef.current = diffOurs;
+  }, [diffOurs]);
+
+  const diffTheirsRef = useRef<string>("");
+  useEffect(() => {
+    diffTheirsRef.current = diffTheirs;
+  }, [diffTheirs]);
 
   const hasUnmergedFiles = useMemo(() => {
     for (const f of files) {
@@ -319,6 +353,29 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
     setVersions(next);
     setResultDraft(next.working);
+    setDiffOurs(next.ours);
+    setDiffTheirs(next.theirs);
+
+    if (!initialWorkingByPathRef.current[p]) {
+      initialWorkingByPathRef.current[p] = next.working;
+    }
+    if (!initialDiffOursByPathRef.current[p]) {
+      initialDiffOursByPathRef.current[p] = next.ours;
+    }
+    if (!initialDiffTheirsByPathRef.current[p]) {
+      initialDiffTheirsByPathRef.current[p] = next.theirs;
+    }
+  }
+
+  function replaceLineRange(text: string, startLine: number, endLine: number, replacementLines: string[]) {
+    if (!startLine || !endLine) return text;
+    if (startLine <= 0 || endLine <= 0) return text;
+    if (endLine < startLine) return text;
+
+    const lines = normalizeNewlines(text).split("\n");
+    const startIdx = startLine - 1;
+    const endIdx = endLine - 1;
+    return [...lines.slice(0, startIdx), ...replacementLines, ...lines.slice(endIdx + 1)].join("\n");
   }
 
   async function takeOurs() {
@@ -327,7 +384,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictTakeOurs({ repoPath, path: selectedPath });
-      setEditMode("result");
       await reloadSelectedVersions();
       await refreshStateKeepPath();
     } catch (e) {
@@ -352,15 +408,12 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     }
   }
 
-  async function takeTheirs() {
+  async function applyContent(content: string) {
     if (!selectedPath.trim()) return;
     setApplyBusy(true);
     setApplyError("");
     try {
-      await gitConflictTakeTheirs({ repoPath, path: selectedPath });
-      setEditMode("result");
-      await reloadSelectedVersions();
-      await refreshStateKeepPath();
+      await gitConflictApply({ repoPath, path: selectedPath, content });
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -368,9 +421,64 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     }
   }
 
-  async function applyAndStage() {
+  const selectedIsUnmerged = useMemo(() => {
+    const p = selectedPath.trim();
+    if (!p) return false;
+    const f = files.find((x) => x.path === p);
+    if (!f) return false;
+    return (f.status ?? "").replace(/\s+/g, "").includes("U");
+  }, [files, selectedPath]);
+
+  async function resetCurrentFile() {
+    const p = selectedPath.trim();
+    if (!p) return;
+    if (!selectedIsUnmerged) return;
+    const initial = initialWorkingByPathRef.current[p];
+    if (typeof initial !== "string") return;
+
+    const initO = initialDiffOursByPathRef.current[p] ?? "";
+    const initT = initialDiffTheirsByPathRef.current[p] ?? "";
+
+    setResultDraft(initial);
+    setDiffOurs(initO);
+    setDiffTheirs(initT);
+    await applyContent(initial);
+    await refreshStateKeepPath();
+  }
+
+  async function resetAllFiles() {
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      for (const f of files) {
+        const s = (f.status ?? "").replace(/\s+/g, "");
+        if (!s.includes("U")) continue;
+        const initial = initialWorkingByPathRef.current[f.path];
+        if (typeof initial !== "string") continue;
+        await gitConflictApply({ repoPath, path: f.path, content: initial });
+      }
+      await refreshStateKeepPath();
+      await reloadSelectedVersions();
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function takeTheirs() {
     if (!selectedPath.trim()) return;
-    await applyAndStageContent(resultDraft);
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictTakeTheirs({ repoPath, path: selectedPath });
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
   }
 
   if (!open) return null;
@@ -392,9 +500,27 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       <div className="modal conflictResolverModal" style={{ width: "min(1320px, 96vw)", height: "min(92vh, 980px)", maxHeight: "min(92vh, 980px)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>Resolve conflicts</div>
-          <button type="button" onClick={onClose} disabled={disabled}>
-            Close
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => void resetAllFiles()}
+              disabled={disabled || files.length === 0}
+              title="Restore all conflict files to the state from when you started resolving"
+            >
+              Reset conflicts
+            </button>
+            <button
+              type="button"
+              onClick={() => void resetCurrentFile()}
+              disabled={disabled || !selectedPath.trim() || !selectedIsUnmerged}
+              title={!selectedIsUnmerged ? "Available only for files that are still unmerged" : "Restore this file to the initial conflict state"}
+            >
+              Reset file
+            </button>
+            <button type="button" onClick={onClose} disabled={disabled}>
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="modalBody" style={{ padding: 12, display: "grid", gridTemplateColumns: "340px 1fr", gap: 12, minHeight: 0, overflow: "hidden" }}>
@@ -455,7 +581,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span className="conflictLegend conflictLegend-ours">ours</span>
-                <span className="conflictLegend conflictLegend-base">base</span>
                 <span className="conflictLegend conflictLegend-theirs">theirs</span>
               </div>
 
@@ -475,14 +600,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   title="Take only their version for the whole file and stage it"
                 >
                   Take theirs
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void applyAndStage()}
-                  disabled={disabled || !selectedPath.trim()}
-                  title="Write the Result editor content to disk and stage it"
-                >
-                  Stage result
                 </button>
               </div>
             </div>
@@ -510,8 +627,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       height="100%"
                       theme={monacoTheme}
                       language={lang}
-                      original={versions.ours}
-                      modified={versions.theirs}
+                      original={diffOurs}
+                      modified={diffTheirs}
                       beforeMount={(monaco) => {
                         ensureConflictThemes(monaco);
                       }}
@@ -549,6 +666,29 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
                         function getBlocksNow() {
                           return listConflictBlocksFromText(resultDraftRef.current);
+                        }
+
+                        function applyResolutionToDiff(choice: "ours" | "theirs", changeIndex: number) {
+                          const changes = diffEditor.getLineChanges() ?? [];
+                          const c = changes[changeIndex];
+                          if (!c) return;
+                          if (!c.originalStartLineNumber || !c.originalEndLineNumber || !c.modifiedStartLineNumber || !c.modifiedEndLineNumber) return;
+                          if (c.originalStartLineNumber <= 0 || c.modifiedStartLineNumber <= 0) return;
+
+                          const oursLines = normalizeNewlines(diffOursRef.current)
+                            .split("\n")
+                            .slice(c.originalStartLineNumber - 1, c.originalEndLineNumber);
+                          const theirsLines = normalizeNewlines(diffTheirsRef.current)
+                            .split("\n")
+                            .slice(c.modifiedStartLineNumber - 1, c.modifiedEndLineNumber);
+
+                          if (choice === "ours") {
+                            const nextTheirs = replaceLineRange(diffTheirsRef.current, c.modifiedStartLineNumber, c.modifiedEndLineNumber, oursLines);
+                            setDiffTheirs(nextTheirs);
+                          } else {
+                            const nextOurs = replaceLineRange(diffOursRef.current, c.originalStartLineNumber, c.originalEndLineNumber, theirsLines);
+                            setDiffOurs(nextOurs);
+                          }
                         }
 
                         function findConflictBlockIndexFromChange(isOriginal: boolean, changeIndex: number) {
@@ -622,7 +762,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const blocksNow = getBlocksNow();
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.oursText ?? "");
                             setResultDraft(next);
-                            setEditMode("result");
+                            await applyContent(next);
+                            applyResolutionToDiff("ours", changeIdx);
                             if (listConflictBlocksFromText(next).length === 0) {
                               await applyAndStageContent(next);
                             }
@@ -645,7 +786,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const blocksNow = getBlocksNow();
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.theirsText ?? "");
                             setResultDraft(next);
-                            setEditMode("result");
+                            await applyContent(next);
+                            applyResolutionToDiff("theirs", changeIdx);
                             if (listConflictBlocksFromText(next).length === 0) {
                               await applyAndStageContent(next);
                             }
@@ -719,7 +861,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.5,
                       precondition: "graphoriaHasConflictAtCursor",
-                      run: () => {
+                      run: async () => {
                         const pos = editor.getPosition();
                         if (!pos) return;
                         const blk = findConflictBlock(model, pos.lineNumber);
@@ -737,6 +879,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           model.getLineMaxColumn(blk.end)
                         );
                         model.applyEdits([{ range, text: oursLines.join("\n") }]);
+                        const next = model.getValue();
+                        setResultDraft(next);
+                        await applyContent(next);
                         return;
                       },
                     });
@@ -747,7 +892,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.6,
                       precondition: "graphoriaHasConflictAtCursor",
-                      run: () => {
+                      run: async () => {
                         const pos = editor.getPosition();
                         if (!pos) return;
                         const blk = findConflictBlock(model, pos.lineNumber);
@@ -765,6 +910,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           model.getLineMaxColumn(blk.end)
                         );
                         model.applyEdits([{ range, text: theirLines.join("\n") }]);
+                        const next = model.getValue();
+                        setResultDraft(next);
+                        await applyContent(next);
                         return;
                       },
                     });
@@ -789,7 +937,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 Skip
               </button>
             ) : null}
-            {hasUnmergedFiles ? <div style={{ alignSelf: "center", opacity: 0.7, fontSize: 12 }}>Stage all resolved files to continue.</div> : null}
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>

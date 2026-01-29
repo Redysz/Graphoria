@@ -258,6 +258,10 @@ export function gitConflictApplyAndStage(params: { repoPath: string; path: strin
   return invoke<string>("git_conflict_apply_and_stage", params);
 }
 
+export function gitConflictApply(params: { repoPath: string; path: string; content: string }) {
+  return invoke<string>("git_conflict_apply", params);
+}
+
 export function gitContinueInfo(repoPath: string) {
   return invoke<GitContinueInfo>("git_continue_info", { repoPath });
 }

@@ -617,3 +617,24 @@ pub(crate) fn git_conflict_apply_and_stage(repo_path: String, path: String, cont
         Ok(String::from("ok"))
     })
 }
+
+#[tauri::command]
+#[allow(dead_code)]
+pub(crate) fn git_conflict_apply(repo_path: String, path: String, content: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    crate::with_repo_git_lock(&repo_path, || {
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+        }
+        fs::write(&full, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+        Ok(String::from("ok"))
+    })
+}
