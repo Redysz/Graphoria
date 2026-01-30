@@ -273,6 +273,18 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
   const showNextCommitConflictsNote = continueErrorKind === "next_commit_conflicts";
   const visibleError = error || (continueErrorKind === "error" ? continueErrorRaw : "");
 
+  let rebaseProgressLabel = "";
+  if (showNextCommitConflictsNote) {
+    const m = continueErrorRaw.match(/Rebasing\s*\(\s*(\d+)\s*\/\s*(\d+)\s*\)/i);
+    if (m) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+        rebaseProgressLabel = ` (${a} of ${b})`;
+      }
+    }
+  }
+
   const preStyle = {
     margin: 0,
     padding: 10,
@@ -331,7 +343,9 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
               }}
             >
               <div style={{ fontWeight: 900, opacity: 0.9 }}>
-                {showNextCommitConflictsNote ? "Unresolved conflicts detected in the next commit" : "Unresolved conflicts detected"}
+                {showNextCommitConflictsNote
+                  ? `Unresolved conflicts detected in the next commit${rebaseProgressLabel}`
+                  : "Unresolved conflicts detected"}
               </div>
               <div style={{ opacity: 0.8, fontSize: 12 }}>
                 {showNextCommitConflictsNote

@@ -51,7 +51,33 @@
   border: 1px solid rgba(255, 215, 130, 0.30);
  }
 
- .conflictResolverModal .monaco-menu {
+ body.conflictResolverMenu .monaco-menu-container {
+  --vscode-menu-background: var(--panel);
+  --vscode-menu-foreground: var(--text);
+  --vscode-menu-border: var(--border);
+  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10);
+  --vscode-menu-selectionForeground: var(--text);
+  --vscode-menu-separatorBackground: var(--border);
+
+  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10);
+  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14);
+  --vscode-list-activeSelectionForeground: var(--text);
+  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10);
+  --vscode-list-inactiveSelectionForeground: var(--text);
+  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14);
+  --vscode-list-focusForeground: var(--text);
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu-container {
+  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16);
+  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16);
+  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20);
+  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16);
+  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20);
+ }
+
+ .conflictResolverModal .monaco-menu,
+ body.conflictResolverMenu .monaco-menu {
   border: 1px solid var(--border) !important;
   border-radius: 12px !important;
   background: var(--panel) !important;
@@ -60,62 +86,83 @@
  }
 
  .conflictResolverModal .monaco-menu,
- .conflictResolverModal .monaco-menu * {
+ .conflictResolverModal .monaco-menu *,
+ body.conflictResolverMenu .monaco-menu,
+ body.conflictResolverMenu .monaco-menu * {
   border-color: var(--border) !important;
  }
 
- :root[data-theme="dark"] .conflictResolverModal .monaco-menu {
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important;
  }
 
- .conflictResolverModal .monaco-menu .action-item {
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
   border: 0 !important;
  }
 
- .conflictResolverModal .monaco-menu .monaco-action-bar {
+ .conflictResolverModal .monaco-menu .monaco-action-bar,
+ body.conflictResolverMenu .monaco-menu .monaco-action-bar {
   padding: 8px !important;
   gap: 6px !important;
  }
 
- .conflictResolverModal .monaco-menu .action-item {
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
   margin: 0 !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item .action-menu-item,
- .conflictResolverModal .monaco-menu .action-item {
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
   border: 1px solid var(--border) !important;
   border-radius: 12px !important;
   background: var(--panel) !important;
  }
 
- .conflictResolverModal .monaco-menu .action-item .action-menu-item {
+ .conflictResolverModal .monaco-menu .action-item .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item .action-menu-item {
   padding: 8px 10px !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item:hover,
  .conflictResolverModal .monaco-menu .action-item.focused,
- .conflictResolverModal .monaco-menu .action-item:focus-within {
+ .conflictResolverModal .monaco-menu .action-item:focus-within,
+ body.conflictResolverMenu .monaco-menu .action-item:hover,
+ body.conflictResolverMenu .monaco-menu .action-item.focused,
+ body.conflictResolverMenu .monaco-menu .action-item:focus-within {
   background: rgba(47, 111, 237, 0.10) !important;
  }
 
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:hover,
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item.focused,
- :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:focus-within {
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:focus-within,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item:hover,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item:focus-within {
   background: rgba(75, 139, 255, 0.16) !important;
  }
 
  .conflictResolverModal .monaco-menu .monaco-action-bar,
- .conflictResolverModal .monaco-menu .monaco-menu-container {
+ .conflictResolverModal .monaco-menu .monaco-menu-container,
+ body.conflictResolverMenu .monaco-menu .monaco-action-bar,
+ body.conflictResolverMenu .monaco-menu .monaco-menu-container {
   background: transparent !important;
  }
 
- .conflictResolverModal .monaco-menu .monaco-menu-separator {
+ .conflictResolverModal .monaco-menu .monaco-menu-separator,
+ body.conflictResolverMenu .monaco-menu .monaco-menu-separator {
   border-top: 1px solid var(--border) !important;
  }
 
  .conflictResolverModal .monaco-menu .keybinding,
  .conflictResolverModal .monaco-menu .monaco-keybinding,
- .conflictResolverModal .monaco-menu .keybinding-label {
+ .conflictResolverModal .monaco-menu .keybinding-label,
+ body.conflictResolverMenu .monaco-menu .keybinding,
+ body.conflictResolverMenu .monaco-menu .monaco-keybinding,
+ body.conflictResolverMenu .monaco-menu .keybinding-label {
   color: var(--menu-shortcut) !important;
  }
 

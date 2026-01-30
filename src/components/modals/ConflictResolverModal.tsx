@@ -294,6 +294,23 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   useEffect(() => {
     if (!open) return;
+    document.body.classList.add("conflictResolverMenu");
+    return () => {
+      document.body.classList.remove("conflictResolverMenu");
+    };
+  }, [open]);
+
+  const displayFiles = useMemo(() => {
+    const list = files.slice();
+    const p = selectedPath.trim();
+    if (p && !list.some((f) => f.path === p)) {
+      list.unshift({ path: p, status: "", stages: [] });
+    }
+    return list;
+  }, [files, selectedPath]);
+
+  useEffect(() => {
+    if (!open) return;
     if (!selectedPath.trim()) {
       setVersions(null);
       setVersionsError("");
@@ -448,6 +465,31 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     return (f.status ?? "").replace(/\s+/g, "").includes("U");
   }, [files, selectedPath]);
 
+  const nextUnmergedPath = useMemo(() => {
+    const p = selectedPath.trim();
+    const list = displayFiles;
+    const isUnmerged = (st: string) => (st ?? "").replace(/\s+/g, "").includes("U");
+    const idx = p ? list.findIndex((f) => f.path === p) : -1;
+    for (let i = Math.max(0, idx + 1); i < list.length; i++) {
+      const f = list[i];
+      if (f.path !== p && isUnmerged(f.status)) return f.path;
+    }
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      if (f.path !== p && isUnmerged(f.status)) return f.path;
+    }
+    return "";
+  }, [displayFiles, selectedPath]);
+
+  const hasOtherUnmerged = useMemo(() => {
+    return !!nextUnmergedPath;
+  }, [nextUnmergedPath]);
+
+  function goToNextUnmerged() {
+    if (!nextUnmergedPath.trim()) return;
+    setSelectedPath(nextUnmergedPath);
+  }
+
   async function resetCurrentFile() {
     const p = selectedPath.trim();
     if (!p) return;
@@ -505,15 +547,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const disabled = loading || busy || applyBusy;
   const continueDisabled = disabled || hasUnmergedFiles;
-
-  const displayFiles = useMemo(() => {
-    const list = files.slice();
-    const p = selectedPath.trim();
-    if (p && !list.some((f) => f.path === p)) {
-      list.unshift({ path: p, status: "", stages: [] });
-    }
-    return list;
-  }, [files, selectedPath]);
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -605,22 +638,35 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  onClick={() => void takeOurs()}
-                  disabled={disabled || !selectedPath.trim()}
-                  title="Take only our version for the whole file and stage it"
-                >
-                  Take ours
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void takeTheirs()}
-                  disabled={disabled || !selectedPath.trim()}
-                  title="Take only their version for the whole file and stage it"
-                >
-                  Take theirs
-                </button>
+                {!selectedIsUnmerged && hasOtherUnmerged ? (
+                  <button
+                    type="button"
+                    onClick={goToNextUnmerged}
+                    disabled={disabled}
+                    title="Jump to the next file that still has conflicts"
+                  >
+                    Go to next file with conflicts
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void takeOurs()}
+                      disabled={disabled || !selectedPath.trim()}
+                      title="Take only our version for the whole file and stage it"
+                    >
+                      Take ours
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void takeTheirs()}
+                      disabled={disabled || !selectedPath.trim()}
+                      title="Take only their version for the whole file and stage it"
+                    >
+                      Take theirs
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
