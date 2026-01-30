@@ -2199,7 +2199,7 @@ fn git_commit_all(repo_path: String, message: String) -> Result<String, String> 
 }
 
 #[tauri::command]
-fn git_merge_branch(repo_path: String, branch: String) -> Result<String, String> {
+fn git_merge_branch(repo_path: String, branch: String) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let branch = branch.trim().to_string();
@@ -2207,7 +2207,189 @@ fn git_merge_branch(repo_path: String, branch: String) -> Result<String, String>
         return Err(String::from("branch is empty"));
     }
 
-    run_git(&repo_path, &["merge", branch.as_str()])
+    with_repo_git_lock(&repo_path, || {
+        let (ok, stdout, stderr) = run_git_status(&repo_path, &["merge", branch.as_str()])?;
+        if ok {
+            let merge_in_progress = is_merge_in_progress(&repo_path);
+            let rebase_in_progress = is_rebase_in_progress(&repo_path);
+            if merge_in_progress || rebase_in_progress {
+                let op = if rebase_in_progress { "rebase" } else { "merge" };
+                return Ok(PullResult {
+                    status: String::from("in_progress"),
+                    operation: op.to_string(),
+                    message: if !stdout.is_empty() { stdout } else { stderr },
+                    conflict_files: list_unmerged_files(&repo_path),
+                });
+            }
+            return Ok(PullResult {
+                status: String::from("ok"),
+                operation: String::from("merge"),
+                message: if !stdout.is_empty() { stdout } else { stderr },
+                conflict_files: Vec::new(),
+            });
+        }
+
+        let message = if !stderr.is_empty() {
+            stderr.clone()
+        } else {
+            stdout.clone()
+        };
+
+        let merge_in_progress = is_merge_in_progress(&repo_path);
+        let rebase_in_progress = is_rebase_in_progress(&repo_path);
+        let mut conflict_files = list_unmerged_files(&repo_path);
+        if conflict_files.is_empty() {
+            conflict_files = parse_conflict_files(message.as_str());
+        }
+
+        if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+            let op = if rebase_in_progress { "rebase" } else { "merge" };
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: op.to_string(),
+                message,
+                conflict_files,
+            });
+        }
+
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    })
+}
+
+#[tauri::command]
+fn git_merge_branch_advanced(
+    repo_path: String,
+    branch: String,
+    ff_mode: Option<String>,
+    no_commit: Option<bool>,
+    squash: Option<bool>,
+    allow_unrelated_histories: Option<bool>,
+    autostash: Option<bool>,
+    signoff: Option<bool>,
+    no_verify: Option<bool>,
+    strategy: Option<String>,
+    conflict_preference: Option<String>,
+    log_messages: Option<u32>,
+    message: Option<String>,
+) -> Result<PullResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err(String::from("branch is empty"));
+    }
+
+    let ff_mode = ff_mode.unwrap_or_default().trim().to_lowercase();
+    let no_commit = no_commit.unwrap_or(false);
+    let squash = squash.unwrap_or(false);
+    let allow_unrelated_histories = allow_unrelated_histories.unwrap_or(false);
+    let autostash = autostash.unwrap_or(false);
+    let signoff = signoff.unwrap_or(false);
+    let no_verify = no_verify.unwrap_or(false);
+    let strategy = strategy.unwrap_or_default().trim().to_string();
+    let conflict_preference = conflict_preference.unwrap_or_default().trim().to_lowercase();
+    let log_messages = log_messages.unwrap_or(0);
+    let message = message.unwrap_or_default().trim().to_string();
+
+    with_repo_git_lock(&repo_path, || {
+        let mut args: Vec<String> = Vec::new();
+        args.push(String::from("merge"));
+
+        match ff_mode.as_str() {
+            "ff_only" | "ff-only" => args.push(String::from("--ff-only")),
+            "no_ff" | "no-ff" => args.push(String::from("--no-ff")),
+            "ff" => args.push(String::from("--ff")),
+            _ => {}
+        }
+
+        if no_commit {
+            args.push(String::from("--no-commit"));
+        }
+        if squash {
+            args.push(String::from("--squash"));
+        }
+        if allow_unrelated_histories {
+            args.push(String::from("--allow-unrelated-histories"));
+        }
+        if autostash {
+            args.push(String::from("--autostash"));
+        }
+        if signoff {
+            args.push(String::from("--signoff"));
+        }
+        if no_verify {
+            args.push(String::from("--no-verify"));
+        }
+        if !strategy.is_empty() {
+            args.push(String::from("--strategy"));
+            args.push(strategy.clone());
+        }
+        if !conflict_preference.is_empty() {
+            let st = strategy.trim().to_lowercase();
+            if st == "ort" || st == "recursive" {
+                if conflict_preference == "ours" || conflict_preference == "theirs" {
+                    args.push(String::from("-X"));
+                    args.push(conflict_preference);
+                }
+            }
+        }
+        if log_messages > 0 {
+            args.push(format!("--log={log_messages}"));
+        }
+        if !message.is_empty() {
+            args.push(String::from("-m"));
+            args.push(message);
+        }
+
+        args.push(branch.clone());
+
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (ok, stdout, stderr) = run_git_status(&repo_path, arg_refs.as_slice())?;
+        if ok {
+            let merge_in_progress = is_merge_in_progress(&repo_path);
+            let rebase_in_progress = is_rebase_in_progress(&repo_path);
+            if merge_in_progress || rebase_in_progress {
+                let op = if rebase_in_progress { "rebase" } else { "merge" };
+                return Ok(PullResult {
+                    status: String::from("in_progress"),
+                    operation: op.to_string(),
+                    message: if !stdout.is_empty() { stdout } else { stderr },
+                    conflict_files: list_unmerged_files(&repo_path),
+                });
+            }
+            return Ok(PullResult {
+                status: String::from("ok"),
+                operation: String::from("merge"),
+                message: if !stdout.is_empty() { stdout } else { stderr },
+                conflict_files: Vec::new(),
+            });
+        }
+
+        let message = if !stderr.is_empty() {
+            stderr.clone()
+        } else {
+            stdout.clone()
+        };
+
+        let merge_in_progress = is_merge_in_progress(&repo_path);
+        let rebase_in_progress = is_rebase_in_progress(&repo_path);
+        let mut conflict_files = list_unmerged_files(&repo_path);
+        if conflict_files.is_empty() {
+            conflict_files = parse_conflict_files(message.as_str());
+        }
+
+        if merge_in_progress || rebase_in_progress || !conflict_files.is_empty() {
+            let op = if rebase_in_progress { "rebase" } else { "merge" };
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: op.to_string(),
+                message,
+                conflict_files,
+            });
+        }
+
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    })
 }
 
 #[tauri::command]
@@ -2304,6 +2486,7 @@ pub fn run() {
             git_create_branch,
             git_delete_branch,
             git_merge_branch,
+            git_merge_branch_advanced,
             git_reflog,
             git_cherry_pick,
             git_branches_points_at,

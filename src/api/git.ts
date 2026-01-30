@@ -195,7 +195,25 @@ export function gitRenameTag(params: {
 }
 
 export function gitMergeBranch(params: { repoPath: string; branch: string }) {
-  return invoke<string>("git_merge_branch", params);
+  return invoke<PullResult>("git_merge_branch", params);
+}
+
+export function gitMergeBranchAdvanced(params: {
+  repoPath: string;
+  branch: string;
+  ffMode?: "" | "ff" | "no-ff" | "ff-only";
+  noCommit?: boolean;
+  squash?: boolean;
+  allowUnrelatedHistories?: boolean;
+  autostash?: boolean;
+  signoff?: boolean;
+  noVerify?: boolean;
+  strategy?: string;
+  conflictPreference?: "" | "ours" | "theirs";
+  logMessages?: number;
+  message?: string;
+}) {
+  return invoke<PullResult>("git_merge_branch_advanced", params);
 }
 
 export function gitCherryPick(params: { repoPath: string; commits: string[] }) {

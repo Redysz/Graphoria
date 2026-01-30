@@ -12,13 +12,26 @@ export function BranchContextMenu(props: {
 
   activeRepoPath: string;
   loading: boolean;
+  currentBranchName: string;
 
   onClose: () => void;
   resolveRef: (reference: string) => Promise<string>;
   setError: (msg: string) => void;
   openCreateBranchDialog: (at: string) => void;
+  mergeIntoCurrentBranch: (branch: string) => void | Promise<void>;
 }) {
-  const { menu, menuRef, activeRepoPath, loading, onClose, resolveRef, setError, openCreateBranchDialog } = props;
+  const {
+    menu,
+    menuRef,
+    activeRepoPath,
+    loading,
+    currentBranchName,
+    onClose,
+    resolveRef,
+    setError,
+    openCreateBranchDialog,
+    mergeIntoCurrentBranch,
+  } = props;
 
   if (!menu) return null;
 
@@ -34,6 +47,19 @@ export function BranchContextMenu(props: {
         minWidth: 220,
       }}
     >
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading || menu.branch.trim() === currentBranchName.trim()}
+        onClick={() => {
+          if (!activeRepoPath) return;
+          const branch = menu.branch;
+          onClose();
+          void mergeIntoCurrentBranch(branch);
+        }}
+      >
+        Merge into current branch
+      </button>
+
       <button
         type="button"
         disabled={!activeRepoPath || loading}

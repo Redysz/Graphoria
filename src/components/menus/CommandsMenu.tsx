@@ -25,6 +25,7 @@ export function CommandsMenu(props: {
   pushTagsCount: number;
   pushTags: () => void | Promise<void>;
   openSwitchBranchDialog: () => void | Promise<void>;
+  openMergeBranchesDialog: () => void | Promise<void>;
   openResetDialog: () => void;
 
   menuItem: (left: ReactNode, shortcutText?: string) => ReactNode;
@@ -50,6 +51,7 @@ export function CommandsMenu(props: {
     pushTagsCount,
     pushTags,
     openSwitchBranchDialog,
+    openMergeBranchesDialog,
     openResetDialog,
     menuItem,
     shortcutLabel,
@@ -126,20 +128,6 @@ export function CommandsMenu(props: {
               const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
               setCommandsMenuOpen(false);
               if (!at) return;
-              openCreateBranchDialog(at);
-            }}
-            disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
-            title={!activeRepoPath ? "No repository" : "Create a new branch"}
-          >
-            {menuItem("Create branch…", shortcutLabel("cmd.createBranch"))}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
-              setCommandsMenuOpen(false);
-              if (!at) return;
               openCreateTagDialog(at);
             }}
             disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
@@ -168,6 +156,20 @@ export function CommandsMenu(props: {
           <button
             type="button"
             onClick={() => {
+              const at = selectedHash.trim() ? selectedHash.trim() : headHash.trim();
+              setCommandsMenuOpen(false);
+              if (!at) return;
+              openCreateBranchDialog(at);
+            }}
+            disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
+            title={!activeRepoPath ? "No repository" : "Create a new branch"}
+          >
+            {menuItem("Create branch…", shortcutLabel("cmd.createBranch"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               setCommandsMenuOpen(false);
               void openSwitchBranchDialog();
             }}
@@ -175,6 +177,18 @@ export function CommandsMenu(props: {
             title={!activeRepoPath ? "No repository" : "Switch branches (git switch)"}
           >
             {menuItem("Checkout branch…", shortcutLabel("cmd.checkoutBranch"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              void openMergeBranchesDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Merge branches"}
+          >
+            {menuItem("Merge branches…")}
           </button>
 
           <button
