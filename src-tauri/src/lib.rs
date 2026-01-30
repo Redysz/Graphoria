@@ -35,8 +35,10 @@ use commands::status::{
     git_get_remote_url,
     git_has_staged_changes,
     git_set_remote_url,
+    git_stage_paths,
     git_status,
     git_status_summary,
+    git_unstage_paths,
 };
 use commands::branches::{
     git_branches_points_at,
@@ -90,6 +92,19 @@ use commands::diff::{
     read_text_file,
 };
 use commands::reflog::{git_cherry_pick, git_reflog};
+use commands::conflicts::{
+    git_conflict_apply,
+    git_conflict_apply_and_stage,
+    git_conflict_file_versions,
+    git_conflict_state,
+    git_conflict_take_ours,
+    git_conflict_take_theirs,
+    git_continue_file_diff,
+    git_continue_info,
+    git_merge_continue_with_message,
+    git_rebase_skip,
+    git_rebase_continue_with_message,
+};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -732,7 +747,7 @@ fn file_extension_lower(path: &str) -> String {
     Path::new(path)
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or_default()
+        .unwrap_or("")
         .to_ascii_lowercase()
 }
 
@@ -1472,173 +1487,173 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
     Ok(new_head)
 }
 
- #[derive(Debug, Clone, Deserialize)]
- struct GitPatchEntry {
-     path: String,
-     patch: String,
- }
+#[derive(Debug, Clone, Deserialize)]
+struct GitPatchEntry {
+    path: String,
+    patch: String,
+}
 
- #[tauri::command]
- fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
-     ensure_is_git_worktree(&repo_path)?;
+#[tauri::command]
+fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
+    ensure_is_git_worktree(&repo_path)?;
 
-     let message = message.trim().to_string();
-     if message.is_empty() {
-         return Err(String::from("Commit message is empty."));
-     }
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err(String::from("Commit message is empty."));
+    }
 
-     if patches.is_empty() {
-         return Err(String::from("No hunks selected to commit."));
-     }
+    if patches.is_empty() {
+        return Err(String::from("No hunks selected to commit."));
+    }
 
-     let mut normalized_patches: Vec<GitPatchEntry> = Vec::new();
-     for p in patches.into_iter() {
-         let path = p.path.trim().replace('\\', "/");
-         if path.is_empty() {
-             return Err(String::from("path is empty"));
-         }
-         ensure_rel_path_safe(path.as_str())?;
+    let mut normalized_patches: Vec<GitPatchEntry> = Vec::new();
+    for p in patches.into_iter() {
+        let path = p.path.trim().replace('\\', "/");
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+        ensure_rel_path_safe(path.as_str())?;
 
-         let mut patch = p.patch.replace("\r\n", "\n");
-         if patch.trim().is_empty() {
-             return Err(String::from("patch is empty"));
-         }
-         if !patch.ends_with('\n') {
-             patch.push('\n');
-         }
+        let mut patch = p.patch.replace("\r\n", "\n");
+        if patch.trim().is_empty() {
+            return Err(String::from("patch is empty"));
+        }
+        if !patch.ends_with('\n') {
+            patch.push('\n');
+        }
 
-         normalized_patches.push(GitPatchEntry { path, patch });
-     }
+        normalized_patches.push(GitPatchEntry { path, patch });
+    }
 
-     let ms = SystemTime::now()
-         .duration_since(UNIX_EPOCH)
-         .unwrap_or_default()
-         .as_millis();
-     let pid = std::process::id();
-     let index_path = std::env::temp_dir().join(format!("graphoria_index_{pid}_{ms}.idx"));
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let pid = std::process::id();
+    let index_path = std::env::temp_dir().join(format!("graphoria_index_{pid}_{ms}.idx"));
 
-     let cleanup = || {
-         let _ = fs::remove_file(index_path.as_path());
-     };
+    let cleanup = || {
+        let _ = fs::remove_file(index_path.as_path());
+    };
 
-     let head_out = git_command_in_repo(&repo_path)
-         .args(["rev-parse", "--verify", "HEAD"])
-         .output();
-     let head = match head_out {
-         Ok(o) if o.status.success() => {
-             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-             if s.is_empty() { None } else { Some(s) }
-         }
-         _ => None,
-     };
+    let head_out = git_command_in_repo(&repo_path)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output();
+    let head = match head_out {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        }
+        _ => None,
+    };
 
-     let mut read_tree = git_command_in_repo(&repo_path);
-     read_tree.env("GIT_INDEX_FILE", index_path.as_os_str());
-     let read_tree_out = if head.is_some() {
-         read_tree
-             .args(["read-tree", "HEAD"])
-             .output()
-             .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
-     } else {
-         read_tree
-             .args(["read-tree", "--empty"])
-             .output()
-             .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
-     };
+    let mut read_tree = git_command_in_repo(&repo_path);
+    read_tree.env("GIT_INDEX_FILE", index_path.as_os_str());
+    let read_tree_out = if head.is_some() {
+        read_tree
+            .args(["read-tree", "HEAD"])
+            .output()
+            .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
+    } else {
+        read_tree
+            .args(["read-tree", "--empty"])
+            .output()
+            .map_err(|e| format!("Failed to spawn git read-tree: {e}"))?
+    };
 
-     if !read_tree_out.status.success() {
-         cleanup();
-         let stderr = String::from_utf8_lossy(&read_tree_out.stderr);
-         return Err(format!("git read-tree failed: {stderr}"));
-     }
+    if !read_tree_out.status.success() {
+        cleanup();
+        let stderr = String::from_utf8_lossy(&read_tree_out.stderr);
+        return Err(format!("git read-tree failed: {stderr}"));
+    }
 
-     let run_with_stdin = |args: &[&str], stdin_data: &str| -> Result<(), String> {
-         let mut child = git_command_in_repo(&repo_path)
-             .env("GIT_INDEX_FILE", index_path.as_os_str())
-             .args(args)
-             .stdin(Stdio::piped())
-             .stdout(Stdio::piped())
-             .stderr(Stdio::piped())
-             .spawn()
-             .map_err(|e| format!("Failed to spawn git: {e}"))?;
+    let run_with_stdin = |args: &[&str], stdin_data: &str| -> Result<(), String> {
+        let mut child = git_command_in_repo(&repo_path)
+            .env("GIT_INDEX_FILE", index_path.as_os_str())
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
-         if let Some(mut stdin) = child.stdin.take() {
-             stdin
-                 .write_all(stdin_data.as_bytes())
-                 .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
-         }
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(stdin_data.as_bytes())
+                .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+        }
 
-         let out = child
-             .wait_with_output()
-             .map_err(|e| format!("Failed to wait for git: {e}"))?;
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("Failed to wait for git: {e}"))?;
 
-         if !out.status.success() {
-             let stderr = String::from_utf8_lossy(&out.stderr);
-             return Err(format!("git command failed: {stderr}"));
-         }
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("git command failed: {stderr}"));
+        }
 
-         Ok(())
-     };
+        Ok(())
+    };
 
-     for p in normalized_patches.iter() {
-         let patch = p.patch.as_str();
-         if run_with_stdin(
-             &[
-                 "apply",
-                 "--cached",
-                 "--whitespace=nowarn",
-                 "--unidiff-zero",
-                 "--ignore-space-change",
-             ],
-             patch,
-         )
-         .is_err()
-         {
-             run_with_stdin(
-                 &[
-                     "apply",
-                     "--cached",
-                     "--whitespace=nowarn",
-                     "--unidiff-zero",
-                     "--ignore-space-change",
-                     "-C",
-                     "0",
-                     "--3way",
-                     "--recount",
-                 ],
-                 patch,
-             )?;
-         }
-     }
+    for p in normalized_patches.iter() {
+        let patch = p.patch.as_str();
+        if run_with_stdin(
+            &[
+                "apply",
+                "--cached",
+                "--whitespace=nowarn",
+                "--unidiff-zero",
+                "--ignore-space-change",
+            ],
+            patch,
+        )
+        .is_err()
+        {
+            run_with_stdin(
+                &[
+                    "apply",
+                    "--cached",
+                    "--whitespace=nowarn",
+                    "--unidiff-zero",
+                    "--ignore-space-change",
+                    "-C",
+                    "0",
+                    "--3way",
+                    "--recount",
+                ],
+                patch,
+            )?;
+        }
+    }
 
-     let diff_cached_out = git_command_in_repo(&repo_path)
-         .env("GIT_INDEX_FILE", index_path.as_os_str())
-         .args(["diff", "--cached", "--quiet"])
-         .output()
-         .map_err(|e| format!("Failed to spawn git diff --cached: {e}"))?;
+    let diff_cached_out = git_command_in_repo(&repo_path)
+        .env("GIT_INDEX_FILE", index_path.as_os_str())
+        .args(["diff", "--cached", "--quiet"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git diff --cached: {e}"))?;
 
-     if diff_cached_out.status.success() {
-         cleanup();
-         return Err(String::from("No hunks selected to commit."));
-     }
+    if diff_cached_out.status.success() {
+        cleanup();
+        return Err(String::from("No hunks selected to commit."));
+    }
 
-     let commit_out = git_command_in_repo(&repo_path)
-         .env("GIT_INDEX_FILE", index_path.as_os_str())
-         .args(["commit", "-m", message.as_str()])
-         .output()
-         .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+    let commit_out = git_command_in_repo(&repo_path)
+        .env("GIT_INDEX_FILE", index_path.as_os_str())
+        .args(["commit", "-m", message.as_str()])
+        .output()
+        .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
 
-     if !commit_out.status.success() {
-         cleanup();
-         let stderr = String::from_utf8_lossy(&commit_out.stderr);
-         return Err(format!("git commit failed: {stderr}"));
-     }
+    if !commit_out.status.success() {
+        cleanup();
+        let stderr = String::from_utf8_lossy(&commit_out.stderr);
+        return Err(format!("git commit failed: {stderr}"));
+    }
 
-     cleanup();
+    cleanup();
 
-     let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
-     Ok(new_head)
- }
+    let new_head = run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    Ok(new_head)
+}
 
 #[tauri::command]
 fn git_push(
@@ -1688,7 +1703,8 @@ fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult
             return Err(String::from("Cannot pull from detached HEAD."));
         }
 
-        let (ok, stdout, stderr) = run_git_status(&repo_path, &["pull", remote_name.as_str(), head_name.as_str()])?;
+        let (ok, stdout, stderr) =
+            run_git_status(&repo_path, &["pull", "--no-rebase", remote_name.as_str(), head_name.as_str()])?;
         if ok {
             return Ok(PullResult {
                 status: String::from("ok"),
@@ -1727,7 +1743,11 @@ fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult
             });
         }
 
-        Err(if !stderr.is_empty() { stderr } else { stdout })
+        Err(if !stderr.is_empty() {
+            stderr
+        } else {
+            stdout
+        })
     })
 }
 
@@ -1784,7 +1804,11 @@ fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<Pul
             });
         }
 
-        Err(if !stderr.is_empty() { stderr } else { stdout })
+        Err(if !stderr.is_empty() {
+            stderr
+        } else {
+            stdout
+        })
     })
 }
 
@@ -1938,91 +1962,91 @@ fn git_pull_predict_graph(
             .trim()
             .to_string();
 
-    let mut created_node_ids: Vec<String> = Vec::new();
-    let mut graph_commits: Vec<GitCommit> = Vec::new();
-    let mut predicted_head_id = local_head.clone();
+        let mut created_node_ids: Vec<String> = Vec::new();
+        let mut graph_commits: Vec<GitCommit> = Vec::new();
+        let mut predicted_head_id = local_head.clone();
 
-    if upstream.is_none() {
-        let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
-        graph_commits.append(&mut commits);
-    } else if action == "noop" {
-        let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
-        graph_commits.append(&mut commits);
-    } else if action == "fast-forward" {
-        let mut commits = if !upstream_head.is_empty() {
-            git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits)?
-        } else {
-            git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?
-        };
-        predicted_head_id = upstream_head.clone();
-        graph_commits.append(&mut commits);
-    } else if action == "merge-commit" {
-        let id = String::from("predict:merge");
-        created_node_ids.push(id.clone());
-        predicted_head_id = id.clone();
-        graph_commits.push(GitCommit {
-            hash: id,
-            parents: vec![local_head.clone(), upstream_head.clone()].into_iter().filter(|s| !s.is_empty()).collect(),
-            author: String::from("(predict)"),
-            author_email: String::new(),
-            date: String::new(),
-            subject: String::from("Merge commit"),
-            refs: String::new(),
-            is_head: true,
-        });
-
-        let revs = vec![local_head.clone(), upstream_head.clone()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<String>>();
-        let mut commits = git_log_commits_multi(&repo_path, revs.as_slice(), max_commits.saturating_sub(1))?;
-        graph_commits.append(&mut commits);
-    } else if action == "rebase" {
-        let max_rebased = max_commits.min(40);
-        let subjects = if !upstream_head.is_empty() {
-            git_log_subjects_for_range(&repo_path, format!("{}..HEAD", upstream_head).as_str(), max_rebased)?
-        } else {
-            Vec::new()
-        };
-
-        let mut last_parent = upstream_head.clone();
-        let mut rebased: Vec<GitCommit> = Vec::new();
-        for (i, subj) in subjects.iter().enumerate() {
-            let id = format!("predict:rebase:{}", i + 1);
+        if upstream.is_none() {
+            let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
+            graph_commits.append(&mut commits);
+        } else if action == "noop" {
+            let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?;
+            graph_commits.append(&mut commits);
+        } else if action == "fast-forward" {
+            let mut commits = if !upstream_head.is_empty() {
+                git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits)?
+            } else {
+                git_log_commits_multi(&repo_path, &[String::from("HEAD")], max_commits)?
+            };
+            predicted_head_id = upstream_head.clone();
+            graph_commits.append(&mut commits);
+        } else if action == "merge-commit" {
+            let id = String::from("predict:merge");
             created_node_ids.push(id.clone());
-            rebased.push(GitCommit {
-                hash: id.clone(),
-                parents: if last_parent.trim().is_empty() { vec![] } else { vec![last_parent.clone()] },
+            predicted_head_id = id.clone();
+            graph_commits.push(GitCommit {
+                hash: id,
+                parents: vec![local_head.clone(), upstream_head.clone()].into_iter().filter(|s| !s.is_empty()).collect(),
                 author: String::from("(predict)"),
                 author_email: String::new(),
                 date: String::new(),
-                subject: subj.clone(),
+                subject: String::from("Merge commit"),
                 refs: String::new(),
-                is_head: false,
+                is_head: true,
             });
-            last_parent = id;
-        }
 
-        rebased.reverse();
-        if let Some(first) = rebased.first() {
-            predicted_head_id = first.hash.clone();
-        }
-        graph_commits.append(&mut rebased);
-
-        if !upstream_head.is_empty() {
-            let mut commits = git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits.saturating_sub(subjects.len() as u32))?;
+            let revs = vec![local_head.clone(), upstream_head.clone()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>();
+            let mut commits = git_log_commits_multi(&repo_path, revs.as_slice(), max_commits.saturating_sub(1))?;
             graph_commits.append(&mut commits);
-        }
-    }
+        } else if action == "rebase" {
+            let max_rebased = max_commits.min(40);
+            let subjects = if !upstream_head.is_empty() {
+                git_log_subjects_for_range(&repo_path, format!("{}..HEAD", upstream_head).as_str(), max_rebased)?
+            } else {
+                Vec::new()
+            };
 
-    for c in graph_commits.iter_mut() {
-        c.is_head = c.hash == predicted_head_id;
-        if c.is_head {
-            c.refs = format!("HEAD -> {}", head_name);
-        } else {
-            c.refs = String::new();
+            let mut last_parent = upstream_head.clone();
+            let mut rebased: Vec<GitCommit> = Vec::new();
+            for (i, subj) in subjects.iter().enumerate() {
+                let id = format!("predict:rebase:{}", i + 1);
+                created_node_ids.push(id.clone());
+                rebased.push(GitCommit {
+                    hash: id.clone(),
+                    parents: if last_parent.trim().is_empty() { vec![] } else { vec![last_parent.clone()] },
+                    author: String::from("(predict)"),
+                    author_email: String::new(),
+                    date: String::new(),
+                    subject: subj.clone(),
+                    refs: String::new(),
+                    is_head: false,
+                });
+                last_parent = id;
+            }
+
+            rebased.reverse();
+            if let Some(first) = rebased.first() {
+                predicted_head_id = first.hash.clone();
+            }
+            graph_commits.append(&mut rebased);
+
+            if !upstream_head.is_empty() {
+                let mut commits = git_log_commits_multi(&repo_path, &[upstream_head.clone()], max_commits.saturating_sub(subjects.len() as u32))?;
+                graph_commits.append(&mut commits);
+            }
         }
-    }
+
+        for c in graph_commits.iter_mut() {
+            c.is_head = c.hash == predicted_head_id;
+            if c.is_head {
+                c.refs = format!("HEAD -> {}", head_name);
+            } else {
+                c.refs = String::new();
+            }
+        }
 
         Ok(PullPredictGraphResult {
             upstream,
@@ -2187,7 +2211,7 @@ fn git_merge_branch(repo_path: String, branch: String) -> Result<String, String>
 }
 
 #[tauri::command]
-fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
+async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(debug_assertions)]
     {
         let wv = app
@@ -2206,7 +2230,7 @@ fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let _: () = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -2229,6 +2253,8 @@ pub fn run() {
             git_clone_repo,
             git_status,
             git_has_staged_changes,
+            git_stage_paths,
+            git_unstage_paths,
             git_stash_list,
             git_stash_show,
             git_stash_base_commit,
@@ -2289,6 +2315,17 @@ pub fn run() {
             git_merge_abort,
             git_rebase_continue,
             git_rebase_abort,
+            git_rebase_skip,
+            git_conflict_state,
+            git_conflict_file_versions,
+            git_conflict_take_ours,
+            git_conflict_take_theirs,
+            git_conflict_apply_and_stage,
+            git_conflict_apply,
+            git_continue_info,
+            git_continue_file_diff,
+            git_merge_continue_with_message,
+            git_rebase_continue_with_message,
             git_pull_predict,
             git_pull_predict_graph,
             git_pull_predict_conflict_preview,

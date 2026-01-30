@@ -116,6 +116,87 @@ pub(crate) fn git_status_summary(repo_path: String) -> Result<GitStatusSummary, 
 }
 
 #[tauri::command]
+pub(crate) fn git_stage_paths(repo_path: String, paths: Vec<String>) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let mut cleaned: Vec<String> = Vec::new();
+    for p in paths.into_iter() {
+        let p = p.trim().to_string();
+        if p.is_empty() {
+            continue;
+        }
+        crate::ensure_rel_path_safe(p.as_str())?;
+        cleaned.push(p);
+    }
+
+    if cleaned.is_empty() {
+        return Ok(String::from("ok"));
+    }
+
+    crate::with_repo_git_lock(&repo_path, || {
+        let mut args: Vec<&str> = Vec::new();
+        args.push("add");
+        args.push("-A");
+        args.push("--");
+        for p in cleaned.iter() {
+            args.push(p.as_str());
+        }
+
+        let out = crate::git_command_in_repo(&repo_path)
+            .args(&args)
+            .output()
+            .map_err(|e| format!("Failed to spawn git add: {e}"))?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("git add failed: {stderr}"));
+        }
+        Ok(String::from("ok"))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn git_unstage_paths(repo_path: String, paths: Vec<String>) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let mut cleaned: Vec<String> = Vec::new();
+    for p in paths.into_iter() {
+        let p = p.trim().to_string();
+        if p.is_empty() {
+            continue;
+        }
+        crate::ensure_rel_path_safe(p.as_str())?;
+        cleaned.push(p);
+    }
+
+    if cleaned.is_empty() {
+        return Ok(String::from("ok"));
+    }
+
+    crate::with_repo_git_lock(&repo_path, || {
+        let mut args: Vec<&str> = Vec::new();
+        args.push("reset");
+        args.push("-q");
+        args.push("HEAD");
+        args.push("--");
+        for p in cleaned.iter() {
+            args.push(p.as_str());
+        }
+
+        let out = crate::git_command_in_repo(&repo_path)
+            .args(&args)
+            .output()
+            .map_err(|e| format!("Failed to spawn git reset: {e}"))?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("git reset failed: {stderr}"));
+        }
+        Ok(String::from("ok"))
+    })
+}
+
+#[tauri::command]
 pub(crate) fn git_ahead_behind(repo_path: String, remote_name: Option<String>) -> Result<GitAheadBehind, String> {
     crate::ensure_is_git_worktree(&repo_path)?;
 

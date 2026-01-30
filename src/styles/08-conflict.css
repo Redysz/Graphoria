@@ -51,3 +51,364 @@
   border: 1px solid rgba(255, 215, 130, 0.30);
  }
 
+ body.conflictResolverMenu,
+ html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(47, 111, 237, 0.55) !important;
+  --vscode-menu-background: var(--panel) !important;
+  --vscode-menu-foreground: var(--text) !important;
+  --vscode-menu-border: var(--border) !important;
+  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-menu-selectionForeground: var(--text) !important;
+  --vscode-menu-selectionBorder: rgba(47, 111, 237, 0.25) !important;
+  --vscode-menu-separatorBackground: var(--border) !important;
+
+  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-activeSelectionForeground: var(--text) !important;
+  --vscode-list-activeSelectionIconForeground: var(--text) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-inactiveSelectionForeground: var(--text) !important;
+  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-focusForeground: var(--text) !important;
+  --vscode-list-focusOutline: rgba(47, 111, 237, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(47, 111, 237, 0.35) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu-container,
+ html.conflictResolverMenu .monaco-menu-container {
+  --vscode-focusBorder: rgba(47, 111, 237, 0.55) !important;
+  --vscode-menu-background: var(--panel) !important;
+  --vscode-menu-foreground: var(--text) !important;
+  --vscode-menu-border: var(--border) !important;
+  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-menu-selectionForeground: var(--text) !important;
+  --vscode-menu-selectionBorder: rgba(47, 111, 237, 0.25) !important;
+  --vscode-menu-separatorBackground: var(--border) !important;
+
+  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-activeSelectionForeground: var(--text) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-inactiveSelectionForeground: var(--text) !important;
+  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-focusForeground: var(--text) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu-container,
+ html.conflictResolverMenu .monaco-menu-container,
+ body.conflictResolverMenu .monaco-menu-container *,
+ html.conflictResolverMenu .monaco-menu-container * {
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu,
+ :root[data-theme="dark"] html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(75, 139, 255, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-menu-selectionBorder: rgba(75, 139, 255, 0.35) !important;
+  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-focusOutline: rgba(75, 139, 255, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(75, 139, 255, 0.35) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu-container,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu-container {
+  --vscode-focusBorder: rgba(75, 139, 255, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-menu-selectionBorder: rgba(75, 139, 255, 0.35) !important;
+  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20) !important;
+ }
+
+ .conflictResolverModal .monaco-menu,
+ body.conflictResolverMenu .monaco-menu {
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  background: var(--panel) !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18) !important;
+  overflow: hidden;
+ }
+
+ .conflictResolverModal .monaco-menu,
+ .conflictResolverModal .monaco-menu *,
+ body.conflictResolverMenu .monaco-menu,
+ body.conflictResolverMenu .monaco-menu * {
+  border-color: var(--border) !important;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
+  border: 0 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-action-bar,
+ body.conflictResolverMenu .monaco-menu .monaco-action-bar {
+  padding: 8px !important;
+  gap: 6px !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
+  margin: 0 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-menu-item,
+ .conflictResolverModal .monaco-menu .action-item,
+ body.conflictResolverMenu .monaco-menu .action-item .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item {
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  background: var(--panel) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu .action-menu-item,
+ html.conflictResolverMenu .monaco-menu .action-menu-item {
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ body.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ body.conflictResolverMenu .monaco-menu .action-menu-item.focused,
+ html.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ html.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ html.conflictResolverMenu .monaco-menu .action-menu-item.focused {
+  background: rgba(47, 111, 237, 0.10) !important;
+  border-color: rgba(47, 111, 237, 0.35) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item.focused,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item.focused {
+  background: rgba(75, 139, 255, 0.16) !important;
+  border-color: rgba(75, 139, 255, 0.35) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item .action-menu-item {
+  padding: 8px 10px !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item:hover,
+ .conflictResolverModal .monaco-menu .action-item.focused,
+ .conflictResolverModal .monaco-menu .action-item:focus-within,
+ body.conflictResolverMenu .monaco-menu .action-item:hover,
+ body.conflictResolverMenu .monaco-menu .action-item.focused,
+ body.conflictResolverMenu .monaco-menu .action-item:focus-within {
+  background: rgba(47, 111, 237, 0.10) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu .action-item.checked,
+ body.conflictResolverMenu .monaco-menu .action-item.checked .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item.focused,
+ body.conflictResolverMenu .monaco-menu .action-item.focused .action-menu-item {
+  background: rgba(47, 111, 237, 0.14) !important;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:hover,
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:focus-within,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item:hover,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item:focus-within {
+  background: rgba(75, 139, 255, 0.16) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.checked,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.checked .action-menu-item,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused .action-menu-item {
+  background: rgba(75, 139, 255, 0.20) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-action-bar,
+ .conflictResolverModal .monaco-menu .monaco-menu-container,
+ body.conflictResolverMenu .monaco-menu .monaco-action-bar,
+ body.conflictResolverMenu .monaco-menu .monaco-menu-container {
+  background: transparent !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-menu-separator,
+ body.conflictResolverMenu .monaco-menu .monaco-menu-separator {
+  border-top: 1px solid var(--border) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .keybinding,
+ .conflictResolverModal .monaco-menu .monaco-keybinding,
+ .conflictResolverModal .monaco-menu .keybinding-label,
+ body.conflictResolverMenu .monaco-menu .keybinding,
+ body.conflictResolverMenu .monaco-menu .monaco-keybinding,
+ body.conflictResolverMenu .monaco-menu .keybinding-label {
+  color: var(--menu-shortcut) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item {
+  opacity: 1;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-label {
+  opacity: 1;
+  color: var(--text);
+ }
+
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label {
+  color: #111 !important;
+ }
+
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .conflictResolverModal .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled {
+  opacity: 0.55;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label {
+  opacity: 0.55;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label,
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label span,
+ .conflictResolverModal .monaco-menu .action-item.disabled .action-label .label-name {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item .action-label {
+  color: var(--text);
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu,
+ html[data-theme="light"] .monaco-menu,
+ body[data-theme="light"] .monaco-menu,
+ [data-theme="light"] .monaco-menu {
+  color: #111 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ html[data-theme="light"] .monaco-menu .action-item .action-label,
+ html[data-theme="light"] .monaco-menu .action-item .action-label span,
+ html[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ body[data-theme="light"] .monaco-menu .action-item .action-label,
+ body[data-theme="light"] .monaco-menu .action-item .action-label span,
+ body[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ [data-theme="light"] .monaco-menu .action-item .action-label,
+ [data-theme="light"] .monaco-menu .action-item .action-label span,
+ [data-theme="light"] .monaco-menu .action-item .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) {
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled),
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled),
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) {
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) * {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) *,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) *,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) * {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label .label-name {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label .label-name {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item.disabled {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] {
+  opacity: 0.55 !important;
+ }
+
+ .monaco-menu .action-item {
+  opacity: 1 !important;
+ }
+
+ .monaco-menu .action-item .action-label,
+ .monaco-menu .action-item .action-label span,
+ .monaco-menu .action-item .action-label .label-name {
+  color: var(--text) !important;
+  opacity: 1 !important;
+ }
+
+ .monaco-menu .action-item.disabled,
+ .monaco-menu .action-item[aria-disabled="true"] {
+  opacity: 0.55 !important;
+ }
+
+ .monaco-menu .action-item.disabled .action-label,
+ .monaco-menu .action-item.disabled .action-label span,
+ .monaco-menu .action-item.disabled .action-label .label-name,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label span,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label .label-name {
+  opacity: 0.55 !important;
+ }

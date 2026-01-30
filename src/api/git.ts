@@ -4,6 +4,9 @@ import type {
   GitBranchInfo,
   GitCommit,
   GitCommitSummary,
+  GitContinueInfo,
+  GitConflictFileVersions,
+  GitConflictState,
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
@@ -231,6 +234,50 @@ export function gitRebaseAbort(repoPath: string) {
   return invoke<string>("git_rebase_abort", { repoPath });
 }
 
+export function gitRebaseSkip(repoPath: string) {
+  return invoke<string>("git_rebase_skip", { repoPath });
+}
+
+export function gitConflictState(repoPath: string) {
+  return invoke<GitConflictState>("git_conflict_state", { repoPath });
+}
+
+export function gitConflictFileVersions(params: { repoPath: string; path: string }) {
+  return invoke<GitConflictFileVersions>("git_conflict_file_versions", params);
+}
+
+export function gitConflictTakeOurs(params: { repoPath: string; path: string }) {
+  return invoke<string>("git_conflict_take_ours", params);
+}
+
+export function gitConflictTakeTheirs(params: { repoPath: string; path: string }) {
+  return invoke<string>("git_conflict_take_theirs", params);
+}
+
+export function gitConflictApplyAndStage(params: { repoPath: string; path: string; content: string }) {
+  return invoke<string>("git_conflict_apply_and_stage", params);
+}
+
+export function gitConflictApply(params: { repoPath: string; path: string; content: string }) {
+  return invoke<string>("git_conflict_apply", params);
+}
+
+export function gitContinueInfo(repoPath: string) {
+  return invoke<GitContinueInfo>("git_continue_info", { repoPath });
+}
+
+export function gitContinueFileDiff(params: { repoPath: string; path: string; unified: number }) {
+  return invoke<string>("git_continue_file_diff", params);
+}
+
+export function gitMergeContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_merge_continue_with_message", params);
+}
+
+export function gitRebaseContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_rebase_continue_with_message", params);
+}
+
 export function gitMergeContinue(repoPath: string) {
   return invoke<string>("git_merge_continue", { repoPath });
 }
@@ -282,6 +329,14 @@ export function gitStashClear(repoPath: string) {
 
 export function gitHasStagedChanges(repoPath: string) {
   return invoke<boolean>("git_has_staged_changes", { repoPath });
+}
+
+export function gitStagePaths(params: { repoPath: string; paths: string[] }) {
+  return invoke<string>("git_stage_paths", params);
+}
+
+export function gitUnstagePaths(params: { repoPath: string; paths: string[] }) {
+  return invoke<string>("git_unstage_paths", params);
 }
 
 export function gitCommit(params: { repoPath: string; message: string; paths: string[] }) {
