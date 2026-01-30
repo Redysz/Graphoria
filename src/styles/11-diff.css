@@ -2,7 +2,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px 6px 1fr;
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -15,6 +15,7 @@
   display: grid;
   grid-template-rows: auto 1fr;
   background: var(--panel-2);
+  min-width: 0;
  }
 
  .diffRight {
@@ -22,6 +23,7 @@
   display: grid;
   grid-template-rows: auto 1fr;
   background: var(--panel);
+  min-width: 0;
  }
 
  .diffLeftHeader,
@@ -45,8 +47,8 @@
   border-radius: 10px;
   padding: 8px 10px;
   display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 10px;
+  grid-template-columns: 84px 1fr;
+  gap: 6px;
   align-items: center;
   border: 1px solid rgba(15, 15, 15, 0.10);
   background: var(--panel);
@@ -66,6 +68,7 @@
  .diffPath {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

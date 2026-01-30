@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DiffToolSettings } from "./appSettingsStore";
+import { useAppSettings } from "./appSettingsStore";
 import { gitLaunchExternalDiffWorking, gitWorkingFileContent, gitWorkingFileDiff } from "./api/gitWorkingFiles";
 import { gitCommitChanges, gitCommitFileContent, gitCommitFileDiff, gitLaunchExternalDiffCommit, gitStatus } from "./api/git";
 
@@ -97,6 +98,11 @@ export function statusLabel(status: string) {
 export default function DiffView(props: Props) {
   const { repoPath, source, tool, height } = props;
 
+  const layout = useAppSettings((s) => s.layout);
+  const setLayout = useAppSettings((s) => s.setLayout);
+
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+
   const [files, setFiles] = useState<GitChangeEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -108,6 +114,38 @@ export default function DiffView(props: Props) {
   const [contentText, setContentText] = useState<string>("");
   const [rightLoading, setRightLoading] = useState(false);
   const [rightError, setRightError] = useState("");
+
+  function startFilesResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = layout.diffFilesWidthPx;
+
+    const containerW = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 220;
+      const minRight = 260;
+      const max = Math.max(min, Math.round(containerW - 6 - minRight));
+      const next = Math.max(min, Math.min(max, Math.round(startW + (ev.clientX - startX))));
+      setLayout({ diffFilesWidthPx: next });
+    };
+
+    const onUp = () => {
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -227,7 +265,14 @@ export default function DiffView(props: Props) {
   const parsed = useMemo(() => (diffText ? parseUnifiedDiff(diffText) : []), [diffText]);
 
   return (
-    <div className="diffLayout" style={height ? { height } : undefined}>
+    <div
+      ref={layoutRef}
+      className="diffLayout"
+      style={{
+        ...(height ? { height } : undefined),
+        gridTemplateColumns: `${layout.diffFilesWidthPx}px 6px 1fr`,
+      }}
+    >
       <div className="diffLeft">
         <div className="diffLeftHeader">
           <div style={{ fontWeight: 900, opacity: 0.8 }}>Files</div>
@@ -256,6 +301,8 @@ export default function DiffView(props: Props) {
           )
         ) : null}
       </div>
+
+      <div className="splitterV" onMouseDown={startFilesResize} title="Drag to resize files list" />
 
       <div className="diffRight">
         <div className="diffRightHeader">
