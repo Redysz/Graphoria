@@ -374,7 +374,11 @@ function App() {
   const [mergeNoCommit, setMergeNoCommit] = useState(false);
   const [mergeSquash, setMergeSquash] = useState(false);
   const [mergeAllowUnrelatedHistories, setMergeAllowUnrelatedHistories] = useState(false);
+  const [mergeAutostash, setMergeAutostash] = useState(false);
+  const [mergeSignoff, setMergeSignoff] = useState(false);
+  const [mergeNoVerify, setMergeNoVerify] = useState(false);
   const [mergeStrategy, setMergeStrategy] = useState<string>("");
+  const [mergeConflictPreference, setMergeConflictPreference] = useState<"" | "ours" | "theirs">("");
   const [mergeLogMessages, setMergeLogMessages] = useState<number>(0);
   const [mergeMessage, setMergeMessage] = useState<string>("");
   const [mergeBusy, setMergeBusy] = useState(false);
@@ -2115,7 +2119,11 @@ function App() {
     setMergeNoCommit(false);
     setMergeSquash(false);
     setMergeAllowUnrelatedHistories(false);
+    setMergeAutostash(false);
+    setMergeSignoff(false);
+    setMergeNoVerify(false);
     setMergeStrategy("");
+    setMergeConflictPreference("");
     setMergeLogMessages(0);
     setMergeMessage("");
     setMergeBranchesOpen(true);
@@ -2171,7 +2179,11 @@ function App() {
         noCommit: mergeNoCommit,
         squash: mergeSquash,
         allowUnrelatedHistories: mergeAllowUnrelatedHistories,
+        autostash: mergeAutostash,
+        signoff: mergeSignoff,
+        noVerify: mergeNoVerify,
         strategy: mergeStrategy.trim() ? mergeStrategy.trim() : undefined,
+        conflictPreference: mergeConflictPreference,
         logMessages: mergeLogMessages > 0 ? mergeLogMessages : undefined,
         message: mergeMessage.trim() ? mergeMessage.trim() : undefined,
       });
@@ -4292,8 +4304,16 @@ function App() {
           setSquash={setMergeSquash}
           allowUnrelatedHistories={mergeAllowUnrelatedHistories}
           setAllowUnrelatedHistories={setMergeAllowUnrelatedHistories}
+          autostash={mergeAutostash}
+          setAutostash={setMergeAutostash}
+          signoff={mergeSignoff}
+          setSignoff={setMergeSignoff}
+          noVerify={mergeNoVerify}
+          setNoVerify={setMergeNoVerify}
           strategy={mergeStrategy}
           setStrategy={setMergeStrategy}
+          conflictPreference={mergeConflictPreference}
+          setConflictPreference={setMergeConflictPreference}
           logMessages={mergeLogMessages}
           setLogMessages={setMergeLogMessages}
           message={mergeMessage}

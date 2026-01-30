@@ -17,8 +17,20 @@ type Props = {
   allowUnrelatedHistories: boolean;
   setAllowUnrelatedHistories: (v: boolean) => void;
 
+  autostash: boolean;
+  setAutostash: (v: boolean) => void;
+
+  signoff: boolean;
+  setSignoff: (v: boolean) => void;
+
+  noVerify: boolean;
+  setNoVerify: (v: boolean) => void;
+
   strategy: string;
   setStrategy: (v: string) => void;
+
+  conflictPreference: "" | "ours" | "theirs";
+  setConflictPreference: (v: "" | "ours" | "theirs") => void;
 
   logMessages: number;
   setLogMessages: (v: number) => void;
@@ -53,8 +65,16 @@ export function MergeBranchesModal({
   setSquash,
   allowUnrelatedHistories,
   setAllowUnrelatedHistories,
+  autostash,
+  setAutostash,
+  signoff,
+  setSignoff,
+  noVerify,
+  setNoVerify,
   strategy,
   setStrategy,
+  conflictPreference,
+  setConflictPreference,
   logMessages,
   setLogMessages,
   message,
@@ -224,6 +244,30 @@ export function MergeBranchesModal({
 
                   <label
                     style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}
+                    title="Temporarily stash local changes before merge and restore them afterwards."
+                  >
+                    <input type="checkbox" checked={autostash} onChange={(e) => setAutostash(e.target.checked)} disabled={busy} />
+                    Auto-stash (--autostash)
+                  </label>
+
+                  <label
+                    style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}
+                    title="Add a Signed-off-by trailer to the merge commit message."
+                  >
+                    <input type="checkbox" checked={signoff} onChange={(e) => setSignoff(e.target.checked)} disabled={busy} />
+                    Sign-off (--signoff)
+                  </label>
+
+                  <label
+                    style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}
+                    title="Skip commit hooks (pre-commit/commit-msg) when creating the merge commit."
+                  >
+                    <input type="checkbox" checked={noVerify} onChange={(e) => setNoVerify(e.target.checked)} disabled={busy} />
+                    Skip hooks (--no-verify)
+                  </label>
+
+                  <label
+                    style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}
                     title="Choose a merge strategy (advanced)."
                   >
                     <input
@@ -257,6 +301,25 @@ export function MergeBranchesModal({
                         <option value="ours" />
                         <option value="subtree" />
                       </datalist>
+
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 800, opacity: 0.8 }}>Conflict preference (-X)</div>
+                        <select
+                          className="modalInput"
+                          disabled={busy || (strategy.trim() !== "ort" && strategy.trim() !== "recursive")}
+                          value={conflictPreference}
+                          onChange={(e) => setConflictPreference(e.target.value as "" | "ours" | "theirs")}
+                          title={
+                            strategy.trim() === "ort" || strategy.trim() === "recursive"
+                              ? "Choose how Git should resolve overlapping changes in conflicts (advanced)."
+                              : "Conflict preference is supported for ort/recursive strategies only."
+                          }
+                        >
+                          <option value="">Normal</option>
+                          <option value="ours">Prefer current branch (-X ours)</option>
+                          <option value="theirs">Prefer merged branch (-X theirs)</option>
+                        </select>
+                      </div>
                     </div>
                   ) : null}
 

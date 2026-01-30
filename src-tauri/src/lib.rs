@@ -2264,7 +2264,11 @@ fn git_merge_branch_advanced(
     no_commit: Option<bool>,
     squash: Option<bool>,
     allow_unrelated_histories: Option<bool>,
+    autostash: Option<bool>,
+    signoff: Option<bool>,
+    no_verify: Option<bool>,
     strategy: Option<String>,
+    conflict_preference: Option<String>,
     log_messages: Option<u32>,
     message: Option<String>,
 ) -> Result<PullResult, String> {
@@ -2279,7 +2283,11 @@ fn git_merge_branch_advanced(
     let no_commit = no_commit.unwrap_or(false);
     let squash = squash.unwrap_or(false);
     let allow_unrelated_histories = allow_unrelated_histories.unwrap_or(false);
+    let autostash = autostash.unwrap_or(false);
+    let signoff = signoff.unwrap_or(false);
+    let no_verify = no_verify.unwrap_or(false);
     let strategy = strategy.unwrap_or_default().trim().to_string();
+    let conflict_preference = conflict_preference.unwrap_or_default().trim().to_lowercase();
     let log_messages = log_messages.unwrap_or(0);
     let message = message.unwrap_or_default().trim().to_string();
 
@@ -2303,9 +2311,27 @@ fn git_merge_branch_advanced(
         if allow_unrelated_histories {
             args.push(String::from("--allow-unrelated-histories"));
         }
+        if autostash {
+            args.push(String::from("--autostash"));
+        }
+        if signoff {
+            args.push(String::from("--signoff"));
+        }
+        if no_verify {
+            args.push(String::from("--no-verify"));
+        }
         if !strategy.is_empty() {
             args.push(String::from("--strategy"));
-            args.push(strategy);
+            args.push(strategy.clone());
+        }
+        if !conflict_preference.is_empty() {
+            let st = strategy.trim().to_lowercase();
+            if st == "ort" || st == "recursive" {
+                if conflict_preference == "ours" || conflict_preference == "theirs" {
+                    args.push(String::from("-X"));
+                    args.push(conflict_preference);
+                }
+            }
         }
         if log_messages > 0 {
             args.push(format!("--log={log_messages}"));

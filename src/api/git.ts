@@ -205,7 +205,11 @@ export function gitMergeBranchAdvanced(params: {
   noCommit?: boolean;
   squash?: boolean;
   allowUnrelatedHistories?: boolean;
+  autostash?: boolean;
+  signoff?: boolean;
+  noVerify?: boolean;
   strategy?: string;
+  conflictPreference?: "" | "ours" | "theirs";
   logMessages?: number;
   message?: string;
 }) {
