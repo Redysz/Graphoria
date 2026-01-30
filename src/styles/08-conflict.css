@@ -59,12 +59,37 @@
   overflow: hidden;
  }
 
+ .conflictResolverModal .monaco-menu,
+ .conflictResolverModal .monaco-menu * {
+  border-color: var(--border) !important;
+ }
+
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item {
   border: 0 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-action-bar {
+  padding: 8px !important;
+  gap: 6px !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item {
+  margin: 0 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-menu-item,
+ .conflictResolverModal .monaco-menu .action-item {
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  background: var(--panel) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item .action-menu-item {
+  padding: 8px 10px !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item:hover,
@@ -86,6 +111,12 @@
 
  .conflictResolverModal .monaco-menu .monaco-menu-separator {
   border-top: 1px solid var(--border) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .keybinding,
+ .conflictResolverModal .monaco-menu .monaco-keybinding,
+ .conflictResolverModal .monaco-menu .keybinding-label {
+  color: var(--menu-shortcut) !important;
  }
 
  .conflictResolverModal .monaco-menu .action-item {
