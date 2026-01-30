@@ -13,12 +13,24 @@ export function RefBadgeContextMenu(props: {
 
   activeRepoPath: string;
   loading: boolean;
+  currentBranchName: string;
 
   onClose: () => void;
   checkoutLocalBranch: (branch: string) => void;
   checkoutRemoteBranch: (remoteBranch: string) => void;
+  mergeIntoCurrentBranch: (ref: string) => void | Promise<void>;
 }) {
-  const { menu, menuRef, activeRepoPath, loading, onClose, checkoutLocalBranch, checkoutRemoteBranch } = props;
+  const {
+    menu,
+    menuRef,
+    activeRepoPath,
+    loading,
+    currentBranchName,
+    onClose,
+    checkoutLocalBranch,
+    checkoutRemoteBranch,
+    mergeIntoCurrentBranch,
+  } = props;
 
   if (!menu) return null;
 
@@ -34,6 +46,19 @@ export function RefBadgeContextMenu(props: {
         minWidth: 220,
       }}
     >
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading || menu.label.trim() === currentBranchName.trim()}
+        onClick={() => {
+          if (!activeRepoPath) return;
+          const ref = menu.label;
+          onClose();
+          void mergeIntoCurrentBranch(ref);
+        }}
+      >
+        Merge into current branch
+      </button>
+
       {menu.kind === "branch" ? (
         <button
           type="button"

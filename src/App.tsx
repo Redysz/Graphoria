@@ -71,6 +71,7 @@ import {
   gitLsRemoteHeads,
   gitMergeAbort,
   gitMergeBranch,
+  gitMergeBranchAdvanced,
   gitConflictState,
   gitPull,
   gitPullPredict,
@@ -112,6 +113,7 @@ import { CleanOldBranchesModal } from "./components/modals/CleanOldBranchesModal
 import { RenameBranchModal } from "./components/modals/RenameBranchModal";
 import { RenameTagModal } from "./components/modals/RenameTagModal";
 import { SwitchBranchModal } from "./components/modals/SwitchBranchModal";
+import { MergeBranchesModal } from "./components/modals/MergeBranchesModal";
 import { PreviewZoomModal } from "./components/modals/PreviewZoomModal";
 import { PullConflictModal } from "./components/modals/PullConflictModal";
 import { ConflictResolverModal } from "./components/modals/ConflictResolverModal";
@@ -365,6 +367,21 @@ function App() {
   const [switchBranchesLoading, setSwitchBranchesLoading] = useState(false);
   const [switchBranchesError, setSwitchBranchesError] = useState<string>("");
   const [switchBranches, setSwitchBranches] = useState<GitBranchInfo[]>([]);
+
+  const [mergeBranchesOpen, setMergeBranchesOpen] = useState(false);
+  const [mergeBranchToMerge, setMergeBranchToMerge] = useState<string>("");
+  const [mergeFfMode, setMergeFfMode] = useState<"" | "ff" | "no-ff" | "ff-only">("");
+  const [mergeNoCommit, setMergeNoCommit] = useState(false);
+  const [mergeSquash, setMergeSquash] = useState(false);
+  const [mergeAllowUnrelatedHistories, setMergeAllowUnrelatedHistories] = useState(false);
+  const [mergeStrategy, setMergeStrategy] = useState<string>("");
+  const [mergeLogMessages, setMergeLogMessages] = useState<number>(0);
+  const [mergeMessage, setMergeMessage] = useState<string>("");
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string>("");
+  const [mergeBranchesLoading, setMergeBranchesLoading] = useState(false);
+  const [mergeBranchesError, setMergeBranchesError] = useState<string>("");
+  const [mergeBranches, setMergeBranches] = useState<GitBranchInfo[]>([]);
 
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
   const [pullBusy, setPullBusy] = useState(false);
@@ -1795,6 +1812,44 @@ function App() {
     }
   }
 
+  async function mergeIntoCurrentBranch(reference: string) {
+    if (!activeRepoPath) return;
+    const ref = reference.trim();
+    if (!ref) return;
+
+    setPullBusy(true);
+    setPullError("");
+    setError("");
+    try {
+      const res = await gitMergeBranch({ repoPath: activeRepoPath, branch: ref });
+
+      if (res.status === "conflicts") {
+        const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+        setPullConflictOperation(nextOp);
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        setPullConflictOpen(true);
+        return;
+      }
+
+      if (res.status === "in_progress") {
+        const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+        setPullConflictOperation(nextOp);
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        await continueAfterConflicts();
+        return;
+      }
+
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      setPullError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPullBusy(false);
+    }
+  }
+
   async function runCreateTag() {
     if (!activeRepoPath) return;
     const name = createTagName.trim();
@@ -2045,6 +2100,131 @@ function App() {
       setSwitchBranchesError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setSwitchBranchesLoading(false);
+    }
+  }
+
+  async function openMergeBranchesDialog() {
+    if (!activeRepoPath) return;
+    setMergeError("");
+    setMergeBusy(false);
+    setMergeBranchesError("");
+    setMergeBranchesLoading(true);
+    setMergeBranches([]);
+    setMergeBranchToMerge("");
+    setMergeFfMode("");
+    setMergeNoCommit(false);
+    setMergeSquash(false);
+    setMergeAllowUnrelatedHistories(false);
+    setMergeStrategy("");
+    setMergeLogMessages(0);
+    setMergeMessage("");
+    setMergeBranchesOpen(true);
+
+    try {
+      const list = await gitListBranches({ repoPath: activeRepoPath, includeRemote: true });
+      setMergeBranches(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setMergeBranches([]);
+      setMergeBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setMergeBranchesLoading(false);
+    }
+  }
+
+  async function fetchMergeBranches() {
+    if (!activeRepoPath) return;
+    setMergeBranchesError("");
+    setMergeBranchesLoading(true);
+    try {
+      await gitFetch(activeRepoPath, "origin");
+      const list = await gitListBranches({ repoPath: activeRepoPath, includeRemote: true });
+      setMergeBranches(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setMergeBranches([]);
+      setMergeBranchesError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setMergeBranchesLoading(false);
+    }
+  }
+
+  async function runMergeBranches() {
+    if (!activeRepoPath) return;
+    const b = mergeBranchToMerge.trim();
+    if (!b) {
+      setMergeError("Select a branch to merge.");
+      return;
+    }
+    if (!activeBranchName.trim()) {
+      setMergeError("Cannot merge into detached HEAD.");
+      return;
+    }
+
+    setMergeBusy(true);
+    setMergeError("");
+    setPullError("");
+    setError("");
+    try {
+      const res = await gitMergeBranchAdvanced({
+        repoPath: activeRepoPath,
+        branch: b,
+        ffMode: mergeFfMode,
+        noCommit: mergeNoCommit,
+        squash: mergeSquash,
+        allowUnrelatedHistories: mergeAllowUnrelatedHistories,
+        strategy: mergeStrategy.trim() ? mergeStrategy.trim() : undefined,
+        logMessages: mergeLogMessages > 0 ? mergeLogMessages : undefined,
+        message: mergeMessage.trim() ? mergeMessage.trim() : undefined,
+      });
+
+      setMergeBranchesOpen(false);
+
+      if (res.status === "conflicts") {
+        const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+        setPullConflictOperation(nextOp);
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        setPullConflictOpen(true);
+        return;
+      }
+
+      if (res.status === "in_progress") {
+        const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+        setPullConflictOperation(nextOp);
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        await continueAfterConflicts();
+        return;
+      }
+
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      const raw = typeof e === "string" ? e : JSON.stringify(e);
+      const normalized = raw
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.toLowerCase().startsWith("hint:"))
+        .join("\n");
+
+      const msg = normalized || raw;
+      const lower = msg.toLowerCase();
+      const isFfOnly = mergeFfMode === "ff-only";
+      const looksLikeFfOnlyFail =
+        lower.includes("not possible to fast-forward") ||
+        lower.includes("cannot fast-forward") ||
+        lower.includes("can't be fast-forwarded") ||
+        lower.includes("ff-only") ||
+        lower.includes("fatal: not possible to fast-forward");
+
+      if (isFfOnly && looksLikeFfOnlyFail) {
+        setMergeError(
+          "Fast-forward only failed. The branches have diverged, so Git cannot fast-forward.\n\nTry one of:\n- Fast-forward: Allow (default)\n- Fast-forward: Create a merge commit (no-ff)"
+        );
+      } else {
+        setMergeError(msg);
+      }
+    } finally {
+      setMergeBusy(false);
     }
   }
 
@@ -2604,7 +2784,25 @@ function App() {
       await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
 
       if (detachedMergeAfterSave) {
-        await gitMergeBranch({ repoPath: activeRepoPath, branch: tmp });
+        const res = await gitMergeBranch({ repoPath: activeRepoPath, branch: tmp });
+        if (res.status === "conflicts") {
+          const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+          setPullConflictOperation(nextOp);
+          setPullConflictFiles(res.conflict_files || []);
+          setPullConflictMessage(res.message || "");
+          setPullConflictOpen(true);
+          setDetachedHelpOpen(false);
+          return;
+        }
+        if (res.status === "in_progress") {
+          const nextOp = res.operation === "rebase" ? "rebase" : "merge";
+          setPullConflictOperation(nextOp);
+          setPullConflictFiles(res.conflict_files || []);
+          setPullConflictMessage(res.message || "");
+          setDetachedHelpOpen(false);
+          await continueAfterConflicts();
+          return;
+        }
         await gitDeleteBranch({ repoPath: activeRepoPath, branch: tmp, force: false });
       }
 
@@ -3560,6 +3758,7 @@ function App() {
               pushTagsCount={pushTagsCount}
               pushTags={pushTagsToOrigin}
               openSwitchBranchDialog={openSwitchBranchDialog}
+              openMergeBranchesDialog={openMergeBranchesDialog}
               openResetDialog={openResetDialog}
               menuItem={menuItem}
               shortcutLabel={shortcutLabel}
@@ -4081,6 +4280,38 @@ function App() {
         />
       ) : null}
 
+      {mergeBranchesOpen ? (
+        <MergeBranchesModal
+          branchToMerge={mergeBranchToMerge}
+          setBranchToMerge={setMergeBranchToMerge}
+          ffMode={mergeFfMode}
+          setFfMode={setMergeFfMode}
+          noCommit={mergeNoCommit}
+          setNoCommit={setMergeNoCommit}
+          squash={mergeSquash}
+          setSquash={setMergeSquash}
+          allowUnrelatedHistories={mergeAllowUnrelatedHistories}
+          setAllowUnrelatedHistories={setMergeAllowUnrelatedHistories}
+          strategy={mergeStrategy}
+          setStrategy={setMergeStrategy}
+          logMessages={mergeLogMessages}
+          setLogMessages={setMergeLogMessages}
+          message={mergeMessage}
+          setMessage={setMergeMessage}
+          busy={mergeBusy}
+          error={mergeError}
+          setError={setMergeError}
+          branchesLoading={mergeBranchesLoading}
+          branchesError={mergeBranchesError}
+          branches={mergeBranches}
+          currentBranchName={activeBranchName}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setMergeBranchesOpen(false)}
+          onFetch={() => void fetchMergeBranches()}
+          onMerge={() => void runMergeBranches()}
+        />
+      ) : null}
+
       {diffToolModalOpen ? (
         <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
       ) : null}
@@ -4106,9 +4337,11 @@ function App() {
         menuRef={refBadgeContextMenuRef}
         activeRepoPath={activeRepoPath}
         loading={loading}
+        currentBranchName={activeBranchName}
         onClose={() => setRefBadgeContextMenu(null)}
         checkoutLocalBranch={(branch) => void checkoutRefBadgeLocalBranch(branch)}
         checkoutRemoteBranch={(remoteBranch) => void checkoutRefBadgeRemoteBranch(remoteBranch)}
+        mergeIntoCurrentBranch={(ref) => void mergeIntoCurrentBranch(ref)}
       />
 
       {renameBranchOpen ? (
@@ -4182,10 +4415,12 @@ function App() {
         menuRef={branchContextMenuRef}
         activeRepoPath={activeRepoPath}
         loading={loading}
+        currentBranchName={activeBranchName}
         onClose={() => setBranchContextMenu(null)}
         resolveRef={(reference) => gitResolveRef({ repoPath: activeRepoPath, reference })}
         setError={setError}
         openCreateBranchDialog={openCreateBranchDialog}
+        mergeIntoCurrentBranch={(branch) => void mergeIntoCurrentBranch(branch)}
       />
 
       <StashContextMenu
