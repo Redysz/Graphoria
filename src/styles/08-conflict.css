@@ -51,6 +51,43 @@
   border: 1px solid rgba(255, 215, 130, 0.30);
  }
 
+ .conflictResolverModal .monaco-menu {
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  background: var(--panel) !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18) !important;
+  overflow: hidden;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item {
+  border: 0 !important;
+ }
+
+ .conflictResolverModal .monaco-menu .action-item:hover,
+ .conflictResolverModal .monaco-menu .action-item.focused,
+ .conflictResolverModal .monaco-menu .action-item:focus-within {
+  background: rgba(47, 111, 237, 0.10) !important;
+ }
+
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:hover,
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:focus-within {
+  background: rgba(75, 139, 255, 0.16) !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-action-bar,
+ .conflictResolverModal .monaco-menu .monaco-menu-container {
+  background: transparent !important;
+ }
+
+ .conflictResolverModal .monaco-menu .monaco-menu-separator {
+  border-top: 1px solid var(--border) !important;
+ }
+
  .conflictResolverModal .monaco-menu .action-item {
   opacity: 1;
  }

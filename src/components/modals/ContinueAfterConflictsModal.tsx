@@ -66,6 +66,7 @@ function extractConflictPathsFromMessage(message: string) {
 export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose, onSuccess, onAbort, onResolveConflicts }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [continueRawError, setContinueRawError] = useState("");
 
   const [info, setInfo] = useState<GitContinueInfo | null>(null);
   const [message, setMessage] = useState("");
@@ -104,6 +105,7 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
 
     setBusy(false);
     setError("");
+    setContinueRawError("");
     setInfo(null);
     setMessage("");
     setStatusEntries([]);
@@ -266,6 +268,9 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
 
   if (!open) return null;
 
+  const showNextCommitConflictsNote = !!continueRawError && hasUnmerged && effectiveOp === "rebase";
+  const visibleError = error || (!showNextCommitConflictsNote ? continueRawError : "");
+
   const preStyle = {
     margin: 0,
     padding: 10,
@@ -310,21 +315,26 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
         </div>
 
         <div className="modalBody" style={{ padding: 12, display: "grid", gap: 12, minHeight: 0, overflow: "hidden" }}>
-          {error ? <div className="error">{error}</div> : null}
+          {visibleError ? <div className="error">{visibleError}</div> : null}
           {hasUnmerged ? (
             <div
               style={{
                 border: "1px solid var(--border)",
                 borderRadius: 10,
                 padding: "10px 12px",
-                background: "var(--panel-2)",
+                background: showNextCommitConflictsNote ? "rgba(255, 180, 0, 0.14)" : "var(--panel-2)",
+                borderColor: showNextCommitConflictsNote ? "rgba(255, 180, 0, 0.35)" : "var(--border)",
                 display: "grid",
                 gap: 6,
               }}
             >
-              <div style={{ fontWeight: 900, opacity: 0.9 }}>Unresolved conflicts detected</div>
+              <div style={{ fontWeight: 900, opacity: 0.9 }}>
+                {showNextCommitConflictsNote ? "Unresolved conflicts detected in the next commit" : "Unresolved conflicts detected"}
+              </div>
               <div style={{ opacity: 0.8, fontSize: 12 }}>
-                You still have unmerged files. Resolve conflicts and stage the result, then continue.
+                {showNextCommitConflictsNote
+                  ? "👏 Great job — during a rebase it's normal to resolve conflicts commit by commit. New conflicts were detected in the next commit. Please resolve them in the files below, stage the result, and continue."
+                  : "You still have unmerged files. Resolve conflicts and stage the result, then continue."}
               </div>
               {unmergedPaths.length ? (
                 <div style={{ opacity: 0.75, fontSize: 12 }}>
@@ -334,10 +344,27 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
               ) : null}
               {onResolveConflicts ? (
                 <div>
-                  <button type="button" onClick={onResolveConflicts} disabled={busy}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError("");
+                      setContinueRawError("");
+                      onResolveConflicts();
+                    }}
+                    disabled={busy}
+                  >
                     Resolve conflicts
                   </button>
                 </div>
+              ) : null}
+
+              {showNextCommitConflictsNote ? (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: "pointer", opacity: 0.75, fontSize: 12 }}>Details</summary>
+                  <pre className="diffCode" style={{ ...preStyle, marginTop: 8, maxHeight: 220 }}>
+                    {continueRawError.replace(/\r\n/g, "\n")}
+                  </pre>
+                </details>
               ) : null}
             </div>
           ) : null}
@@ -478,10 +505,12 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
               if (!repoPath) return;
               if (hasUnmerged) {
                 setError("You still have unresolved/unmerged files. Resolve and stage them, then continue.");
+                setContinueRawError("");
                 return;
               }
               setBusy(true);
               setError("");
+              setContinueRawError("");
               const run = async () => {
                 try {
                   const realEntries = statusEntries;
@@ -512,7 +541,8 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                   }
                   await onSuccess();
                 } catch (e) {
-                  setError(typeof e === "string" ? e : JSON.stringify(e));
+                  const raw = typeof e === "string" ? e : JSON.stringify(e);
+                  setContinueRawError(raw);
                   try {
                     const st = await gitContinueInfo(repoPath);
                     setInfo(st);
