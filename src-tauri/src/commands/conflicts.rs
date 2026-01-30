@@ -155,28 +155,55 @@ pub(crate) fn git_rebase_continue_with_message(repo_path: String, message: Strin
         return Err(String::from("No rebase in progress."));
     }
 
-    let merge_path = resolve_git_path(&repo_path, "rebase-merge/message")?;
-    let apply_path = resolve_git_path(&repo_path, "rebase-apply/message")?;
+    let merge_dir = resolve_git_path(&repo_path, "rebase-merge")?;
+    let apply_dir = resolve_git_path(&repo_path, "rebase-apply")?;
 
-    if merge_path.as_ref().is_some_and(|p| p.exists()) {
+    if merge_dir.as_ref().is_some_and(|p| p.exists()) {
         write_git_path_text(&repo_path, "rebase-merge/message", message.as_str())?;
-    } else if apply_path.as_ref().is_some_and(|p| p.exists()) {
+    } else if apply_dir.as_ref().is_some_and(|p| p.exists()) {
         write_git_path_text(&repo_path, "rebase-apply/message", message.as_str())?;
+    } else {
+        // Fallback: try writing both (Git will read whichever applies).
+        let _ = write_git_path_text(&repo_path, "rebase-merge/message", message.as_str());
+        let _ = write_git_path_text(&repo_path, "rebase-apply/message", message.as_str());
     }
 
     let mut cmd = crate::git_command_in_repo(&repo_path);
     no_editor_env(&mut cmd);
     let out = cmd
-        .args(["rebase", "--continue"])
+        .args(["rebase", "--continue", "--no-edit"])
         .output()
         .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
 
+    if out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        return Ok(if !stdout.is_empty() { stdout } else { stderr });
+    }
+
     let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-    if out.status.success() {
-        Ok(if !stdout.is_empty() { stdout } else { stderr })
+    let msg = if !stderr.is_empty() { stderr.clone() } else { stdout.clone() };
+
+    // Older Git versions may not support `--no-edit` for `rebase --continue`.
+    // Retry without it.
+    if msg.to_lowercase().contains("unknown option") || msg.to_lowercase().contains("no-edit") {
+        let mut cmd2 = crate::git_command_in_repo(&repo_path);
+        no_editor_env(&mut cmd2);
+        let out2 = cmd2
+            .args(["rebase", "--continue"])
+            .output()
+            .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
+
+        let stdout2 = String::from_utf8_lossy(&out2.stdout).trim_end().to_string();
+        let stderr2 = String::from_utf8_lossy(&out2.stderr).trim_end().to_string();
+        if out2.status.success() {
+            Ok(if !stdout2.is_empty() { stdout2 } else { stderr2 })
+        } else {
+            Err(if !stderr2.is_empty() { stderr2 } else { stdout2 })
+        }
     } else {
-        Err(if !stderr.is_empty() { stderr } else { stdout })
+        Err(msg)
     }
 }
 
@@ -367,6 +394,7 @@ fn read_git_path_text(repo_path: &str, git_path: &str) -> Result<String, String>
     }
 }
 
+#[allow(dead_code)]
 fn write_git_path_text(repo_path: &str, git_path: &str, text: &str) -> Result<(), String> {
     let full = resolve_git_path(repo_path, git_path)?;
     let Some(full) = full else {
@@ -430,9 +458,15 @@ fn git_status_text(repo_path: &str) -> Result<String, String> {
 fn no_editor_env(cmd: &mut std::process::Command) {
     #[cfg(target_os = "windows")]
     {
-        cmd.env("GIT_EDITOR", "cmd.exe /C exit 0");
-        cmd.env("EDITOR", "cmd.exe /C exit 0");
-        cmd.env("VISUAL", "cmd.exe /C exit 0");
+        // `git` may append COMMIT_EDITMSG path as an extra argument.
+        // PowerShell ignores extra args for `-Command`, making it a robust no-op editor.
+        // The trailing `#` comment makes this robust even if Git appends the path into the
+        // same command string (PowerShell would otherwise parse it as code).
+        let ps = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"exit 0 #\"";
+        cmd.env("GIT_EDITOR", ps);
+        cmd.env("EDITOR", ps);
+        cmd.env("VISUAL", ps);
+        cmd.env("GIT_SEQUENCE_EDITOR", ps);
     }
 
     #[cfg(not(target_os = "windows"))]

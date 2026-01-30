@@ -71,6 +71,7 @@ import {
   gitLsRemoteHeads,
   gitMergeAbort,
   gitMergeBranch,
+  gitConflictState,
   gitPull,
   gitPullPredict,
   gitPullPredictGraph,
@@ -2893,10 +2894,15 @@ function App() {
     setPullBusy(true);
     setPullError("");
     try {
-      if (pullConflictOperation === "rebase") {
+      const st = await gitConflictState(activeRepoPath);
+      const op = (st.operation ?? "").trim() as "merge" | "rebase" | "";
+      if (op === "rebase") {
         await gitRebaseAbort(activeRepoPath);
-      } else {
+      } else if (op === "merge") {
         await gitMergeAbort(activeRepoPath);
+      } else {
+        await gitMergeAbort(activeRepoPath).catch(() => void 0);
+        await gitRebaseAbort(activeRepoPath).catch(() => void 0);
       }
       setPullConflictOpen(false);
       setConflictResolverOpen(false);

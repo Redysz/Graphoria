@@ -1703,7 +1703,8 @@ fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult
             return Err(String::from("Cannot pull from detached HEAD."));
         }
 
-        let (ok, stdout, stderr) = run_git_status(&repo_path, &["pull", remote_name.as_str(), head_name.as_str()])?;
+        let (ok, stdout, stderr) =
+            run_git_status(&repo_path, &["pull", "--no-rebase", remote_name.as_str(), head_name.as_str()])?;
         if ok {
             return Ok(PullResult {
                 status: String::from("ok"),

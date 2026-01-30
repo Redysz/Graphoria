@@ -107,6 +107,11 @@ function ensureConflictThemes(monaco: any) {
     inherit: true,
     rules: [],
     colors: {
+      "menu.foreground": "#0f0f0f",
+      "menu.background": "#ffffff",
+      "menu.selectionForeground": "#0f0f0f",
+      "menu.selectionBackground": "rgba(47, 111, 237, 0.14)",
+      "menu.separatorBackground": "rgba(15, 15, 15, 0.12)",
       "diffEditor.insertedLineBackground": "#fff6df",
       "diffEditor.insertedTextBackground": "#ffe7b3",
       "diffEditor.removedLineBackground": "#e6f6ea",
@@ -120,6 +125,11 @@ function ensureConflictThemes(monaco: any) {
     inherit: true,
     rules: [],
     colors: {
+      "menu.foreground": "#f2f4f8",
+      "menu.background": "#151922",
+      "menu.selectionForeground": "#f2f4f8",
+      "menu.selectionBackground": "rgba(75, 139, 255, 0.20)",
+      "menu.separatorBackground": "rgba(255, 255, 255, 0.12)",
       "diffEditor.insertedLineBackground": "#3a2f18",
       "diffEditor.insertedTextBackground": "#5a4014",
       "diffEditor.removedLineBackground": "#183020",
@@ -708,7 +718,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           label: "Use this version",
                           contextMenuGroupId: "navigation",
                           contextMenuOrder: 1.2,
-                          precondition: "graphoriaConflictUseThisVersion",
                           run: async () => {
                             const pos = originalEditor.getPosition();
                             if (!pos) return;
@@ -733,7 +742,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           label: "Use this version",
                           contextMenuGroupId: "navigation",
                           contextMenuOrder: 1.2,
-                          precondition: "graphoriaConflictUseThisVersion",
                           run: async () => {
                             const pos = modifiedEditor.getPosition();
                             if (!pos) return;
@@ -819,7 +827,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       label: "Resolve conflict: take ours",
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.5,
-                      precondition: "graphoriaHasConflictAtCursor",
                       run: async () => {
                         const pos = editor.getPosition();
                         if (!pos) return;
@@ -855,7 +862,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       label: "Resolve conflict: take theirs",
                       contextMenuGroupId: "navigation",
                       contextMenuOrder: 1.6,
-                      precondition: "graphoriaHasConflictAtCursor",
                       run: async () => {
                         const pos = editor.getPosition();
                         if (!pos) return;

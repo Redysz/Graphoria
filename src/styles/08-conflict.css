@@ -88,3 +88,120 @@
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item .action-label {
   color: var(--text);
  }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu,
+ html[data-theme="light"] .monaco-menu,
+ body[data-theme="light"] .monaco-menu,
+ [data-theme="light"] .monaco-menu {
+  color: #111 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ html[data-theme="light"] .monaco-menu .action-item .action-label,
+ html[data-theme="light"] .monaco-menu .action-item .action-label span,
+ html[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ body[data-theme="light"] .monaco-menu .action-item .action-label,
+ body[data-theme="light"] .monaco-menu .action-item .action-label span,
+ body[data-theme="light"] .monaco-menu .action-item .action-label .label-name,
+ [data-theme="light"] .monaco-menu .action-item .action-label,
+ [data-theme="light"] .monaco-menu .action-item .action-label span,
+ [data-theme="light"] .monaco-menu .action-item .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label span,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) {
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled),
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled),
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) {
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item:not(.disabled) * {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ html[data-theme="light"] .monaco-menu .action-item:not(.disabled) *,
+ body[data-theme="light"] .monaco-menu .action-item:not(.disabled) *,
+ [data-theme="light"] .monaco-menu .action-item:not(.disabled) * {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label,
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label span,
+ :root[data-theme="light"] .monaco-action-bar .action-item:not(.disabled) .action-label .label-name {
+  color: #111 !important;
+  opacity: 1 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item.disabled .action-label .label-name {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label,
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label span,
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] .action-label .label-name {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item.disabled {
+  opacity: 0.55 !important;
+ }
+
+ :root[data-theme="light"] .monaco-menu .action-item[aria-disabled="true"] {
+  opacity: 0.55 !important;
+ }
+
+ .monaco-menu .action-item {
+  opacity: 1 !important;
+ }
+
+ .monaco-menu .action-item .action-label,
+ .monaco-menu .action-item .action-label span,
+ .monaco-menu .action-item .action-label .label-name {
+  color: var(--text) !important;
+  opacity: 1 !important;
+ }
+
+ .monaco-menu .action-item.disabled,
+ .monaco-menu .action-item[aria-disabled="true"] {
+  opacity: 0.55 !important;
+ }
+
+ .monaco-menu .action-item.disabled .action-label,
+ .monaco-menu .action-item.disabled .action-label span,
+ .monaco-menu .action-item.disabled .action-label .label-name,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label span,
+ .monaco-menu .action-item[aria-disabled="true"] .action-label .label-name {
+  opacity: 0.55 !important;
+ }

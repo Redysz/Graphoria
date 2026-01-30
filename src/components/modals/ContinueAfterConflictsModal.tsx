@@ -83,14 +83,16 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
 
   const effectiveOp = (info?.operation?.trim() as "merge" | "rebase" | "") || operation;
 
+  const conflictPathsSourceMessage = info?.message ?? message;
+
   const derivedEntries = useMemo(() => {
     const real = statusEntries;
     const realSet = new Set(real.map((e) => e.path));
-    const paths = extractConflictPathsFromMessage(message);
+    const paths = extractConflictPathsFromMessage(conflictPathsSourceMessage);
     const uniq = Array.from(new Set(paths)).filter((p) => p.trim().length > 0);
     const virtual = uniq.filter((p) => !realSet.has(p)).map((p) => ({ status: "NC", path: p } as GitStatusEntry));
     return [...real, ...virtual];
-  }, [message, statusEntries]);
+  }, [conflictPathsSourceMessage, statusEntries]);
 
   const hasVirtualEntries = useMemo(() => {
     return derivedEntries.some((e) => (e.status ?? "") === "NC");
@@ -511,6 +513,22 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                   await onSuccess();
                 } catch (e) {
                   setError(typeof e === "string" ? e : JSON.stringify(e));
+                  try {
+                    const st = await gitContinueInfo(repoPath);
+                    setInfo(st);
+                    setMessage(st.message ?? "");
+                  } catch {
+                    // ignore
+                  }
+                  try {
+                    const entries = await gitStatus(repoPath);
+                    setStatusEntries(entries);
+                    const nextSelected: Record<string, boolean> = {};
+                    for (const ent of entries) nextSelected[ent.path] = true;
+                    setSelectedPaths(nextSelected);
+                  } catch {
+                    // ignore
+                  }
                 } finally {
                   setBusy(false);
                 }
