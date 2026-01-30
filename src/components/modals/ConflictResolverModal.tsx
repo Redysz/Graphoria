@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import type { GitConflictFileEntry } from "../../types/git";
 import {
@@ -26,6 +26,19 @@ type Versions = {
   ours: string;
   theirs: string;
   working: string;
+};
+
+type ConflictContextMenuItem = {
+  label: string;
+  shortcut?: string;
+  disabled?: boolean;
+  onClick: () => void;
+};
+
+type ConflictContextMenuState = {
+  x: number;
+  y: number;
+  items: ConflictContextMenuItem[];
 };
 
 let conflictThemesDefined = false;
@@ -240,6 +253,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [diffOurs, setDiffOurs] = useState<string>("");
   const [diffTheirs, setDiffTheirs] = useState<string>("");
 
+  const [ctxMenu, setCtxMenu] = useState<ConflictContextMenuState | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const diffOriginalEditorRef = useRef<any>(null);
+  const diffModifiedEditorRef = useRef<any>(null);
+  const resultEditorRef = useRef<any>(null);
+
   const initialWorkingByPathRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -295,10 +315,33 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   useEffect(() => {
     if (!open) return;
     document.body.classList.add("conflictResolverMenu");
+    document.documentElement.classList.add("conflictResolverMenu");
     return () => {
       document.body.classList.remove("conflictResolverMenu");
+      document.documentElement.classList.remove("conflictResolverMenu");
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      const menuEl = ctxMenuRef.current;
+      if (menuEl && e.target instanceof Node && menuEl.contains(e.target)) return;
+      setCtxMenu(null);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [ctxMenu]);
 
   const displayFiles = useMemo(() => {
     const list = files.slice();
@@ -408,6 +451,43 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     if (!initialWorkingByPathRef.current[p]) {
       initialWorkingByPathRef.current[p] = next.working;
     }
+  }
+
+  function openEditorContextMenu(e: ReactMouseEvent, items: ConflictContextMenuItem[]) {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  }
+
+  function makeCopyItem(editor: any): ConflictContextMenuItem {
+    return {
+      label: "Copy",
+      onClick: () => {
+        setCtxMenu(null);
+        try {
+          editor?.focus?.();
+          editor?.trigger?.("graphoria", "editor.action.clipboardCopyAction", null);
+        } catch {
+          // ignore
+        }
+      },
+    };
+  }
+
+  function makeCommandPaletteItem(editor: any): ConflictContextMenuItem {
+    return {
+      label: "Command Palette",
+      shortcut: "F1",
+      onClick: () => {
+        setCtxMenu(null);
+        try {
+          editor?.focus?.();
+          editor?.trigger?.("graphoria", "editor.action.quickCommand", null);
+        } catch {
+          // ignore
+        }
+      },
+    };
   }
 
   async function takeOurs() {
@@ -679,7 +759,32 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               ) : !versions ? (
                 <div className="diffEmpty">Select a file.</div>
               ) : editMode === "diff" ? (
-                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                <div
+                  style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}
+                  onContextMenu={(e) => {
+                    const t = e.target as HTMLElement | null;
+                    const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
+                    const editor = isOriginal ? diffOriginalEditorRef.current : diffModifiedEditorRef.current;
+                    const useActionId = isOriginal ? "graphoria.conflict.useThisVersion.original" : "graphoria.conflict.useThisVersion.modified";
+                    const items: ConflictContextMenuItem[] = [
+                      {
+                        label: "Use this version",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          try {
+                            editor?.focus?.();
+                            editor?.getAction?.(useActionId)?.run?.();
+                          } catch {
+                            // ignore
+                          }
+                        },
+                      },
+                      makeCopyItem(editor),
+                      makeCommandPaletteItem(editor),
+                    ];
+                    openEditorContextMenu(e, items);
+                  }}
+                >
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderBottom: "1px solid var(--border)" }}>
                     <div style={{ padding: "6px 10px", fontWeight: 900, opacity: 0.75 }}>
                       <span className="conflictLegend conflictLegend-ours">ours</span>
@@ -703,6 +808,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
                         const originalEditor = diffEditor.getOriginalEditor();
                         const modifiedEditor = diffEditor.getModifiedEditor();
+
+                        diffOriginalEditorRef.current = originalEditor;
+                        diffModifiedEditorRef.current = modifiedEditor;
 
                         const origKey = originalEditor.createContextKey<boolean>("graphoriaConflictUseThisVersion", false);
                         const modKey = modifiedEditor.createContextKey<boolean>("graphoriaConflictUseThisVersion", false);
@@ -839,6 +947,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       }}
                       options={{
                         readOnly: true,
+                        contextmenu: false,
                         renderSideBySide: true,
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
@@ -857,6 +966,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       }}
                       options={{
                         readOnly: true,
+                        contextmenu: false,
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
@@ -869,117 +979,175 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   )}
                 </div>
               ) : (
-                <Editor
-                  height="100%"
-                  theme={monacoTheme}
-                  language={lang}
-                  value={resultDraft}
-                  beforeMount={(monaco) => {
-                    ensureConflictThemes(monaco);
-                  }}
-                  onChange={(v: string | undefined) => {
-                    setResultDraft(v ?? "");
-                  }}
-                  onMount={(editor, monaco) => {
-                    ensureConflictThemes(monaco);
-                    const model = editor.getModel();
-                    if (!model) return;
-
-                    const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
-                    const updateKey = () => {
-                      const pos = editor.getPosition();
-                      if (!pos) {
-                        key.set(false);
-                        return;
-                      }
-                      const blk = findConflictBlock(model, pos.lineNumber);
-                      key.set(!!blk);
-                    };
-                    updateKey();
-                    editor.onDidChangeCursorPosition(updateKey);
-
-                    editor.addAction({
-                      id: "graphoria.resolveConflict.takeOurs",
-                      label: "Resolve conflict: take ours",
-                      contextMenuGroupId: "navigation",
-                      contextMenuOrder: 1.5,
-                      run: async () => {
-                        const pos = editor.getPosition();
-                        if (!pos) return;
-                        const blk = findConflictBlock(model, pos.lineNumber);
-                        if (!blk) return;
-
-                        const oursLines: string[] = [];
-                        for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
-                          oursLines.push(model.getLineContent(ln));
-                        }
-
-                        const range = new monaco.Range(
-                          blk.start,
-                          1,
-                          blk.end,
-                          model.getLineMaxColumn(blk.end)
-                        );
-                        model.applyEdits([{ range, text: oursLines.join("\n") }]);
-                        const next = model.getValue();
-                        setResultDraft(next);
-                        await applyContent(next);
-                        setDiffOurs(buildVariantFromWorking(next, "ours"));
-                        setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                        if (listConflictBlocksFromText(next).length === 0) {
-                          await applyAndStageContent(next);
-                        }
-                        return;
+                <div
+                  style={{ height: "100%" }}
+                  onContextMenu={(e) => {
+                    const editor = resultEditorRef.current;
+                    const items: ConflictContextMenuItem[] = [
+                      {
+                        label: "Resolve conflict: take ours",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          try {
+                            editor?.focus?.();
+                            editor?.getAction?.("graphoria.resolveConflict.takeOurs")?.run?.();
+                          } catch {
+                            // ignore
+                          }
+                        },
                       },
-                    });
-
-                    editor.addAction({
-                      id: "graphoria.resolveConflict.takeTheirs",
-                      label: "Resolve conflict: take theirs",
-                      contextMenuGroupId: "navigation",
-                      contextMenuOrder: 1.6,
-                      run: async () => {
-                        const pos = editor.getPosition();
-                        if (!pos) return;
-                        const blk = findConflictBlock(model, pos.lineNumber);
-                        if (!blk) return;
-
-                        const theirLines: string[] = [];
-                        for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
-                          theirLines.push(model.getLineContent(ln));
-                        }
-
-                        const range = new monaco.Range(
-                          blk.start,
-                          1,
-                          blk.end,
-                          model.getLineMaxColumn(blk.end)
-                        );
-                        model.applyEdits([{ range, text: theirLines.join("\n") }]);
-                        const next = model.getValue();
-                        setResultDraft(next);
-                        await applyContent(next);
-                        setDiffOurs(buildVariantFromWorking(next, "ours"));
-                        setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                        if (listConflictBlocksFromText(next).length === 0) {
-                          await applyAndStageContent(next);
-                        }
-                        return;
+                      {
+                        label: "Resolve conflict: take theirs",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          try {
+                            editor?.focus?.();
+                            editor?.getAction?.("graphoria.resolveConflict.takeTheirs")?.run?.();
+                          } catch {
+                            // ignore
+                          }
+                        },
                       },
-                    });
+                      makeCopyItem(editor),
+                      makeCommandPaletteItem(editor),
+                    ];
+                    openEditorContextMenu(e, items);
                   }}
+                >
+                  <Editor
+                    height="100%"
+                    theme={monacoTheme}
+                    language={lang}
+                    value={resultDraft}
+                    beforeMount={(monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    onChange={(v: string | undefined) => {
+                      setResultDraft(v ?? "");
+                    }}
+                    onMount={(editor, monaco) => {
+                      ensureConflictThemes(monaco);
+                      resultEditorRef.current = editor;
+
+                      const model = editor.getModel();
+                      if (!model) return;
+
+                      const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
+                      const updateKey = () => {
+                        const pos = editor.getPosition();
+                        if (!pos) {
+                          key.set(false);
+                          return;
+                        }
+                        const blk = findConflictBlock(model, pos.lineNumber);
+                        key.set(!!blk);
+                      };
+                      updateKey();
+                      editor.onDidChangeCursorPosition(updateKey);
+
+                      editor.addAction({
+                        id: "graphoria.resolveConflict.takeOurs",
+                        label: "Resolve conflict: take ours",
+                        contextMenuGroupId: "navigation",
+                        contextMenuOrder: 1.5,
+                        run: async () => {
+                          const pos = editor.getPosition();
+                          if (!pos) return;
+                          const blk = findConflictBlock(model, pos.lineNumber);
+                          if (!blk) return;
+
+                          const oursLines: string[] = [];
+                          for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
+                            oursLines.push(model.getLineContent(ln));
+                          }
+
+                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                          model.applyEdits([{ range, text: oursLines.join("\n") }]);
+                          const next = model.getValue();
+                          setResultDraft(next);
+                          await applyContent(next);
+                          setDiffOurs(buildVariantFromWorking(next, "ours"));
+                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          if (listConflictBlocksFromText(next).length === 0) {
+                            await applyAndStageContent(next);
+                          }
+                          return;
+                        },
+                      });
+
+                      editor.addAction({
+                        id: "graphoria.resolveConflict.takeTheirs",
+                        label: "Resolve conflict: take theirs",
+                        contextMenuGroupId: "navigation",
+                        contextMenuOrder: 1.6,
+                        run: async () => {
+                          const pos = editor.getPosition();
+                          if (!pos) return;
+                          const blk = findConflictBlock(model, pos.lineNumber);
+                          if (!blk) return;
+
+                          const theirLines: string[] = [];
+                          for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
+                            theirLines.push(model.getLineContent(ln));
+                          }
+
+                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                          model.applyEdits([{ range, text: theirLines.join("\n") }]);
+                          const next = model.getValue();
+                          setResultDraft(next);
+                          await applyContent(next);
+                          setDiffOurs(buildVariantFromWorking(next, "ours"));
+                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          if (listConflictBlocksFromText(next).length === 0) {
+                            await applyAndStageContent(next);
+                          }
+                          return;
+                        },
+                      });
+                    }}
                   options={{
                     readOnly: false,
+                    contextmenu: false,
                     minimap: { enabled: false },
                     scrollBeyondLastLine: false,
                     wordWrap: "on",
                     fontSize: 12,
                   }}
-                />
+                  />
+                </div>
               )}
             </div>
           </div>
         </div>
+
+        {ctxMenu ? (
+          <div
+            className="menuDropdown"
+            ref={ctxMenuRef}
+            style={{
+              position: "fixed",
+              left: ctxMenu.x,
+              top: ctxMenu.y,
+              zIndex: 500,
+              minWidth: 260,
+            }}
+          >
+            {ctxMenu.items.map((it, idx) => (
+              <button
+                key={`${it.label}-${idx}`}
+                type="button"
+                disabled={!!it.disabled}
+                onClick={() => {
+                  it.onClick();
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 10 }}
+              >
+                <span style={{ flex: "1 1 auto" }}>{it.label}</span>
+                {it.shortcut ? <span className="menuShortcut">{it.shortcut}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className="modalFooter" style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div style={{ display: "flex", gap: 8 }}>

@@ -51,29 +51,79 @@
   border: 1px solid rgba(255, 215, 130, 0.30);
  }
 
- body.conflictResolverMenu .monaco-menu-container {
-  --vscode-menu-background: var(--panel);
-  --vscode-menu-foreground: var(--text);
-  --vscode-menu-border: var(--border);
-  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10);
-  --vscode-menu-selectionForeground: var(--text);
-  --vscode-menu-separatorBackground: var(--border);
+ body.conflictResolverMenu,
+ html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(47, 111, 237, 0.55) !important;
+  --vscode-menu-background: var(--panel) !important;
+  --vscode-menu-foreground: var(--text) !important;
+  --vscode-menu-border: var(--border) !important;
+  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-menu-selectionForeground: var(--text) !important;
+  --vscode-menu-selectionBorder: rgba(47, 111, 237, 0.25) !important;
+  --vscode-menu-separatorBackground: var(--border) !important;
 
-  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10);
-  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14);
-  --vscode-list-activeSelectionForeground: var(--text);
-  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10);
-  --vscode-list-inactiveSelectionForeground: var(--text);
-  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14);
-  --vscode-list-focusForeground: var(--text);
+  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-activeSelectionForeground: var(--text) !important;
+  --vscode-list-activeSelectionIconForeground: var(--text) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-inactiveSelectionForeground: var(--text) !important;
+  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-focusForeground: var(--text) !important;
+  --vscode-list-focusOutline: rgba(47, 111, 237, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(47, 111, 237, 0.35) !important;
  }
 
- :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu-container {
-  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16);
-  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16);
-  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20);
-  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16);
-  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20);
+ body.conflictResolverMenu .monaco-menu-container,
+ html.conflictResolverMenu .monaco-menu-container {
+  --vscode-focusBorder: rgba(47, 111, 237, 0.55) !important;
+  --vscode-menu-background: var(--panel) !important;
+  --vscode-menu-foreground: var(--text) !important;
+  --vscode-menu-border: var(--border) !important;
+  --vscode-menu-selectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-menu-selectionForeground: var(--text) !important;
+  --vscode-menu-selectionBorder: rgba(47, 111, 237, 0.25) !important;
+  --vscode-menu-separatorBackground: var(--border) !important;
+
+  --vscode-list-hoverBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-activeSelectionForeground: var(--text) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-list-inactiveSelectionForeground: var(--text) !important;
+  --vscode-list-focusBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-list-focusForeground: var(--text) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu-container,
+ html.conflictResolverMenu .monaco-menu-container,
+ body.conflictResolverMenu .monaco-menu-container *,
+ html.conflictResolverMenu .monaco-menu-container * {
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu,
+ :root[data-theme="dark"] html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(75, 139, 255, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-menu-selectionBorder: rgba(75, 139, 255, 0.35) !important;
+  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-focusOutline: rgba(75, 139, 255, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(75, 139, 255, 0.35) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu-container,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu-container {
+  --vscode-focusBorder: rgba(75, 139, 255, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-menu-selectionBorder: rgba(75, 139, 255, 0.35) !important;
+  --vscode-list-hoverBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-activeSelectionBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-list-focusBackground: rgba(75, 139, 255, 0.20) !important;
  }
 
  .conflictResolverModal .monaco-menu,
@@ -122,6 +172,34 @@
   background: var(--panel) !important;
  }
 
+ body.conflictResolverMenu .monaco-menu .action-menu-item,
+ html.conflictResolverMenu .monaco-menu .action-menu-item {
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+ }
+
+ body.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ body.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ body.conflictResolverMenu .monaco-menu .action-menu-item.focused,
+ html.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ html.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ html.conflictResolverMenu .monaco-menu .action-menu-item.focused {
+  background: rgba(47, 111, 237, 0.10) !important;
+  border-color: rgba(47, 111, 237, 0.35) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-menu-item.focused,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item:hover,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item:focus-within,
+ :root[data-theme="dark"] html.conflictResolverMenu .monaco-menu .action-menu-item.focused {
+  background: rgba(75, 139, 255, 0.16) !important;
+  border-color: rgba(75, 139, 255, 0.35) !important;
+ }
+
  .conflictResolverModal .monaco-menu .action-item .action-menu-item,
  body.conflictResolverMenu .monaco-menu .action-item .action-menu-item {
   padding: 8px 10px !important;
@@ -136,6 +214,13 @@
   background: rgba(47, 111, 237, 0.10) !important;
  }
 
+ body.conflictResolverMenu .monaco-menu .action-item.checked,
+ body.conflictResolverMenu .monaco-menu .action-item.checked .action-menu-item,
+ body.conflictResolverMenu .monaco-menu .action-item.focused,
+ body.conflictResolverMenu .monaco-menu .action-item.focused .action-menu-item {
+  background: rgba(47, 111, 237, 0.14) !important;
+ }
+
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:hover,
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item.focused,
  :root[data-theme="dark"] .conflictResolverModal .monaco-menu .action-item:focus-within,
@@ -143,6 +228,13 @@
  :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused,
  :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item:focus-within {
   background: rgba(75, 139, 255, 0.16) !important;
+ }
+
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.checked,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.checked .action-menu-item,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused,
+ :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu .action-item.focused .action-menu-item {
+  background: rgba(75, 139, 255, 0.20) !important;
  }
 
  .conflictResolverModal .monaco-menu .monaco-action-bar,
