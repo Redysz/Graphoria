@@ -234,9 +234,45 @@ function pickLanguageByPath(path: string) {
 
 export function ConflictResolverModal({ open, repoPath, operation, initialFiles, busy, onClose, onContinue, onAbort, onSkipRebase }: Props) {
   const theme = useAppSettings((s) => s.appearance.theme);
+  const layout = useAppSettings((s) => s.layout);
+  const setLayout = useAppSettings((s) => s.setLayout);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+
+  function startFilesResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = layout.statusFilesWidthPx;
+
+    const containerW = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 260;
+      const minRight = 520;
+      const max = Math.max(min, Math.round(containerW - 6 - minRight));
+      const next = Math.max(min, Math.min(max, Math.round(startW + (ev.clientX - startX))));
+      setLayout({ statusFilesWidthPx: next });
+    };
+
+    const onUp = () => {
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   const [files, setFiles] = useState<GitConflictFileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>("");
@@ -656,7 +692,18 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
           </div>
         </div>
 
-        <div className="modalBody" style={{ padding: 12, display: "grid", gridTemplateColumns: "340px 1fr", gap: 12, minHeight: 0, overflow: "hidden" }}>
+        <div
+          ref={layoutRef}
+          className="modalBody"
+          style={{
+            padding: 12,
+            display: "grid",
+            gridTemplateColumns: `${layout.statusFilesWidthPx}px 6px 1fr`,
+            gap: 12,
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
           <div style={{ minHeight: 0, display: "grid", gridTemplateRows: "auto auto 1fr", gap: 10 }}>
             {error ? <div className="error">{error}</div> : null}
 
@@ -689,7 +736,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       type="button"
                       className={f.path === selectedPath ? "diffFile diffFileActive" : "diffFile"}
                       onClick={() => setSelectedPath(f.path)}
-                      style={{ gridTemplateColumns: "78px 1fr" }}
+                      style={{ gridTemplateColumns: "64px 1fr" }}
                       title={f.path}
                     >
                       <span className="diffStatus">{formatConflictStatus(f.status)}</span>
@@ -700,6 +747,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               )
             ) : null}
           </div>
+
+          <div className="splitterV" onMouseDown={startFilesResize} title="Drag to resize files list" />
 
           <div style={{ minHeight: 0, display: "grid", gridTemplateRows: "auto 1fr", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>

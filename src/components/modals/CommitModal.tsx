@@ -1,8 +1,9 @@
-import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useMemo, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type ReactNode, type SetStateAction } from "react";
 import type { GitStatusEntry } from "../../types/git";
 import { parseUnifiedDiff } from "../../DiffView";
 import { fileExtLower, imageMimeFromExt } from "../../utils/filePreview";
 import { statusBadge } from "../../utils/text";
+import { useAppSettings } from "../../appSettingsStore";
 
 type FilesViewMode = "flat" | "tree";
 
@@ -107,6 +108,10 @@ export function CommitModal({
   onClose,
   onCommit,
 }: Props) {
+  const layout = useAppSettings((s) => s.layout);
+  const setLayout = useAppSettings((s) => s.setLayout);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+
   const selectedFilesCount = statusEntries.filter((e) => selectedPaths[e.path]).length;
   const selectedHunksCount = useMemo(() => {
     let n = 0;
@@ -214,12 +219,44 @@ export function CommitModal({
 
   const gridStyle = {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
+    gridTemplateColumns: `${layout.statusFilesWidthPx}px 6px 1fr`,
     gap: 12,
     alignItems: "stretch",
     minHeight: 0,
     height: "100%",
   } as const;
+
+  function startFilesResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = layout.statusFilesWidthPx;
+
+    const containerW = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 320;
+      const minRight = 420;
+      const max = Math.max(min, Math.round(containerW - 6 - minRight));
+      const next = Math.max(min, Math.min(max, Math.round(startW + (ev.clientX - startX))));
+      setLayout({ statusFilesWidthPx: next });
+    };
+
+    const onUp = () => {
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   const previewBoxStyle = {
     border: "1px solid var(--border)",
@@ -252,7 +289,7 @@ export function CommitModal({
         <div className="modalBody">
           {error ? <div className="error">{error}</div> : null}
 
-          <div style={gridStyle}>
+          <div ref={layoutRef} style={gridStyle}>
             <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
               <div style={{ display: "grid", gap: 8 }}>
                 <div style={{ fontWeight: 800, opacity: 0.8 }}>Message</div>
@@ -294,7 +331,7 @@ export function CommitModal({
                     ? statusEntries.map((e) => (
                         <div
                           key={e.path}
-                          className="statusRow"
+                          className="statusRow statusRowHasActions"
                           onClick={() => {
                             setPreviewPath(e.path);
                             setPreviewStatus(e.status);
@@ -463,7 +500,7 @@ export function CommitModal({
                             rows.push(
                               <div
                                 key={e.path}
-                                className="statusRow"
+                                className="statusRow statusRowHasActions"
                                 onClick={() => {
                                   setPreviewPath(e.path);
                                   setPreviewStatus(e.status);
@@ -573,6 +610,8 @@ export function CommitModal({
                 </div>
               )}
             </div>
+
+            <div className="splitterV" onMouseDown={startFilesResize} title="Drag to resize files list" />
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { GitContinueInfo, GitStatusEntry } from "../../types/git";
 import { parseUnifiedDiff } from "../../DiffView";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "../../utils/filePreview";
 import { statusBadge } from "../../utils/text";
+import { useAppSettings } from "../../appSettingsStore";
 import {
   gitContinueInfo,
   gitMergeContinueWithMessage,
@@ -64,6 +65,10 @@ function extractConflictPathsFromMessage(message: string) {
 }
 
 export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose, onSuccess, onAbort, onResolveConflicts }: Props) {
+  const layout = useAppSettings((s) => s.layout);
+  const setLayout = useAppSettings((s) => s.setLayout);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [continueErrorRaw, setContinueErrorRaw] = useState("");
@@ -306,12 +311,44 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
 
   const gridStyle = {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
+    gridTemplateColumns: `${layout.statusFilesWidthPx}px 6px 1fr`,
     gap: 12,
     alignItems: "stretch",
     minHeight: 0,
     height: "100%",
   } as const;
+
+  function startFilesResize(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = layout.statusFilesWidthPx;
+
+    const containerW = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: MouseEvent) => {
+      const min = 320;
+      const minRight = 420;
+      const max = Math.max(min, Math.round(containerW - 6 - minRight));
+      const next = Math.max(min, Math.min(max, Math.round(startW + (ev.clientX - startX))));
+      setLayout({ statusFilesWidthPx: next });
+    };
+
+    const onUp = () => {
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -386,7 +423,7 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
             </div>
           ) : null}
 
-          <div style={gridStyle}>
+          <div ref={layoutRef} style={gridStyle}>
             <div style={{ display: "grid", gap: 10, minHeight: 0, minWidth: 0 }}>
               <div style={{ display: "grid", gap: 8 }}>
                 <div style={{ opacity: 0.8 }}>
@@ -472,6 +509,8 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                 </div>
               )}
             </div>
+
+            <div className="splitterV" onMouseDown={startFilesResize} title="Drag to resize files list" />
 
             <div style={previewBoxStyle}>
               <div style={{ fontWeight: 800, opacity: 0.8 }}>Preview</div>

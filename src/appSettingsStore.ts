@@ -87,6 +87,7 @@ export type LayoutSettings = {
   sidebarWidthPx: number;
   detailsHeightPx: number;
   diffFilesWidthPx: number;
+  statusFilesWidthPx: number;
 };
 
 export type ShortcutsSettings = {
@@ -222,6 +223,7 @@ export const defaultLayoutSettings: LayoutSettings = {
   sidebarWidthPx: 280,
   detailsHeightPx: 280,
   diffFilesWidthPx: 320,
+  statusFilesWidthPx: 420,
 };
 
 function detectTerminalPlatform(): TerminalPlatform {
@@ -305,7 +307,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 18,
+      version: 19,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -378,6 +380,9 @@ export const useAppSettings = create<AppSettingsState>()(
           }
           if (!Number.isFinite(s.layout.diffFilesWidthPx)) {
             s.layout.diffFilesWidthPx = defaultLayoutSettings.diffFilesWidthPx;
+          }
+          if (!Number.isFinite(s.layout.statusFilesWidthPx)) {
+            s.layout.statusFilesWidthPx = defaultLayoutSettings.statusFilesWidthPx;
           }
         }
         if (!s.terminal || typeof s.terminal !== "object") {
