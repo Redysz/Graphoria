@@ -176,12 +176,12 @@ const defaultShortcutsSettings: ShortcutsSettings = {
 
 export const defaultGeneralSettings: GeneralSettings = {
   openOnStartup: false,
-  showToolbarShortcutHints: false,
+  showToolbarShortcutHints: true,
   tooltips: {
     enabled: true,
     mode: "custom",
     showDelayMs: 250,
-    autoHideMs: 0,
+    autoHideMs: 4000,
   },
 };
 
