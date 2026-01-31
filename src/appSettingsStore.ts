@@ -86,6 +86,8 @@ export type GraphSettings = {
 export type LayoutSettings = {
   sidebarWidthPx: number;
   detailsHeightPx: number;
+  diffFilesWidthPx: number;
+  statusFilesWidthPx: number;
 };
 
 export type ShortcutsSettings = {
@@ -174,12 +176,12 @@ const defaultShortcutsSettings: ShortcutsSettings = {
 
 export const defaultGeneralSettings: GeneralSettings = {
   openOnStartup: false,
-  showToolbarShortcutHints: false,
+  showToolbarShortcutHints: true,
   tooltips: {
     enabled: true,
     mode: "custom",
     showDelayMs: 250,
-    autoHideMs: 0,
+    autoHideMs: 4000,
   },
 };
 
@@ -220,6 +222,8 @@ export const defaultGraphSettings: GraphSettings = {
 export const defaultLayoutSettings: LayoutSettings = {
   sidebarWidthPx: 280,
   detailsHeightPx: 280,
+  diffFilesWidthPx: 320,
+  statusFilesWidthPx: 420,
 };
 
 function detectTerminalPlatform(): TerminalPlatform {
@@ -303,7 +307,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 17,
+      version: 19,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -373,6 +377,12 @@ export const useAppSettings = create<AppSettingsState>()(
           }
           if (!Number.isFinite(s.layout.detailsHeightPx)) {
             s.layout.detailsHeightPx = defaultLayoutSettings.detailsHeightPx;
+          }
+          if (!Number.isFinite(s.layout.diffFilesWidthPx)) {
+            s.layout.diffFilesWidthPx = defaultLayoutSettings.diffFilesWidthPx;
+          }
+          if (!Number.isFinite(s.layout.statusFilesWidthPx)) {
+            s.layout.statusFilesWidthPx = defaultLayoutSettings.statusFilesWidthPx;
           }
         }
         if (!s.terminal || typeof s.terminal !== "object") {

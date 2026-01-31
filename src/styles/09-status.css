@@ -14,13 +14,15 @@
 
 .statusRow {
   display: grid;
-  grid-template-columns: 20px 44px 1fr auto;
-  gap: 10px;
+  grid-template-columns: 20px 36px 1fr 0px;
+  gap: 6px;
   align-items: center;
   padding: 8px;
   border-radius: 10px;
   border: 1px solid rgba(15, 15, 15, 0.10);
   background: var(--panel);
+  position: relative;
+  min-width: 0;
 }
 
 .statusRowSingleCol {
@@ -48,9 +50,16 @@
   gap: 6px;
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  white-space: nowrap;
 }
 
-.statusRow:hover .statusActions {
+.statusRow:hover .statusActions,
+.statusRow:focus-within .statusActions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -79,9 +88,17 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   color: var(--text);
+  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: padding-right 0.12s ease-out;
+}
+
+.statusRowHasActions:hover .statusPath,
+.statusRowHasActions:focus-within .statusPath {
+  padding-right: 128px;
 }
 
 .hunkHeader {

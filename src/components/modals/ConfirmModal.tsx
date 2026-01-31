@@ -9,7 +9,7 @@ type Props = {
 
 export function ConfirmModal({ title, message, okLabel, cancelLabel, onCancel, onOk }: Props) {
   return (
-    <div className="modalOverlay" role="dialog" aria-modal="true">
+    <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 80 }}>
       <div className="modal" style={{ width: "min(540px, 96vw)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>{title}</div>
