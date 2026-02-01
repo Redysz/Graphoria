@@ -6,6 +6,9 @@ import {
   gitConflictApplyAndStage,
   gitConflictFileVersions,
   gitConflictState,
+  gitConflictTakeOurs,
+  gitConflictTakeTheirs,
+  gitConflictResolveRename,
 } from "../../api/git";
 import { useAppSettings } from "../../appSettingsStore";
 
@@ -26,6 +29,11 @@ type Versions = {
   ours: string;
   theirs: string;
   working: string;
+  oursPath: string;
+  theirsPath: string;
+  oursDeleted: boolean;
+  theirsDeleted: boolean;
+  conflictKind: "text" | "rename" | "modify_delete";
 };
 
 type ConflictContextMenuItem = {
@@ -281,6 +289,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState("");
 
+  const [renameKeepName, setRenameKeepName] = useState<"ours" | "theirs" | null>(null);
+
+  const renameDiffOriginalEditorRef = useRef<any>(null);
+  const renameDiffModifiedEditorRef = useRef<any>(null);
+
   const [editMode, setEditMode] = useState<"diff" | "result">("diff");
   const [resultDraft, setResultDraft] = useState<string>("");
   const [applyBusy, setApplyBusy] = useState(false);
@@ -315,6 +328,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setResultDraft("");
     setDiffOurs("");
     setDiffTheirs("");
+    setRenameKeepName(null);
 
     initialWorkingByPathRef.current = {};
 
@@ -417,12 +431,21 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
           ours: normalizeNewlines(res.ours ?? ""),
           theirs: normalizeNewlines(res.theirs ?? ""),
           working: normalizeNewlines(res.working ?? ""),
+          oursPath: (res.ours_path ?? selectedPath) || selectedPath,
+          theirsPath: res.theirs_path ?? "",
+          oursDeleted: !!res.ours_deleted,
+          theirsDeleted: !!res.theirs_deleted,
+          conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
         };
 
         setVersions(next);
         setResultDraft(next.working);
         setDiffOurs(buildVariantFromWorking(next.working, "ours"));
         setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+        if (next.conflictKind === "rename") {
+          setRenameKeepName(null);
+        }
 
         if (!initialWorkingByPathRef.current[selectedPath]) {
           initialWorkingByPathRef.current[selectedPath] = next.working;
@@ -478,11 +501,20 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       ours: normalizeNewlines(res.ours ?? ""),
       theirs: normalizeNewlines(res.theirs ?? ""),
       working: normalizeNewlines(res.working ?? ""),
+      oursPath: (res.ours_path ?? p) || p,
+      theirsPath: res.theirs_path ?? "",
+      oursDeleted: !!res.ours_deleted,
+      theirsDeleted: !!res.theirs_deleted,
+      conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
     };
     setVersions(next);
     setResultDraft(next.working);
     setDiffOurs(buildVariantFromWorking(next.working, "ours"));
     setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+    if (next.conflictKind === "rename") {
+      setRenameKeepName(null);
+    }
 
     if (!initialWorkingByPathRef.current[p]) {
       initialWorkingByPathRef.current[p] = next.working;
@@ -526,8 +558,47 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
   }
 
+  async function resolveRenameWithContent(keepContent: "ours" | "theirs") {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "rename") return;
+    if (!renameKeepName) {
+      setApplyError("Select final name (ours/theirs) first.");
+      return;
+    }
+
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictResolveRename({ repoPath, path: selectedPath, keepName: renameKeepName, keepContent });
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
   async function takeOurs() {
     if (!selectedPath.trim()) return;
+    if (versions?.conflictKind === "modify_delete") {
+      setApplyBusy(true);
+      setApplyError("");
+      try {
+        await gitConflictTakeOurs({ repoPath, path: selectedPath });
+        await reloadSelectedVersions();
+        await refreshStateKeepPath();
+      } catch (e) {
+        setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setApplyBusy(false);
+      }
+      return;
+    }
+    if (versions?.conflictKind === "rename") {
+      await resolveRenameWithContent("ours");
+      return;
+    }
     const current = resultDraftRef.current;
     const blocks = listConflictBlocksFromText(current);
     if (blocks.length === 0) {
@@ -642,6 +713,24 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   async function takeTheirs() {
     if (!selectedPath.trim()) return;
+    if (versions?.conflictKind === "modify_delete") {
+      setApplyBusy(true);
+      setApplyError("");
+      try {
+        await gitConflictTakeTheirs({ repoPath, path: selectedPath });
+        await reloadSelectedVersions();
+        await refreshStateKeepPath();
+      } catch (e) {
+        setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setApplyBusy(false);
+      }
+      return;
+    }
+    if (versions?.conflictKind === "rename") {
+      await resolveRenameWithContent("theirs");
+      return;
+    }
     const current = resultDraftRef.current;
     const blocks = listConflictBlocksFromText(current);
     if (blocks.length === 0) {
@@ -663,6 +752,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const disabled = loading || busy || applyBusy;
   const continueDisabled = disabled || hasUnmergedFiles;
+  const renameNeedsNameChoice = versions?.conflictKind === "rename" && !renameKeepName;
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -781,16 +871,24 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     <button
                       type="button"
                       onClick={() => void takeOurs()}
-                      disabled={disabled || !selectedPath.trim()}
-                      title="Take only our version for the whole file and stage it"
+                      disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
+                      title={
+                        renameNeedsNameChoice
+                          ? "Select final name (ours/theirs) first"
+                          : "Take only our version for the whole file and stage it"
+                      }
                     >
                       Take ours
                     </button>
                     <button
                       type="button"
                       onClick={() => void takeTheirs()}
-                      disabled={disabled || !selectedPath.trim()}
-                      title="Take only their version for the whole file and stage it"
+                      disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
+                      title={
+                        renameNeedsNameChoice
+                          ? "Select final name (ours/theirs) first"
+                          : "Take only their version for the whole file and stage it"
+                      }
                     >
                       Take theirs
                     </button>
@@ -807,6 +905,125 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 <div className="diffEmpty">Loading…</div>
               ) : !versions ? (
                 <div className="diffEmpty">Select a file.</div>
+              ) : versions.conflictKind === "rename" ? (
+                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900, opacity: 0.8 }}>
+                      Rename conflict
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, opacity: 0.75 }}>Final name:</span>
+                      <button
+                        type="button"
+                        onClick={() => setRenameKeepName("ours")}
+                        className="conflictLegend conflictLegend-ours"
+                        style={{
+                          cursor: "pointer",
+                          outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
+                          outlineOffset: 1,
+                        }}
+                        title="Keep our file name"
+                      >
+                        {versions.oursPath}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRenameKeepName("theirs")}
+                        className="conflictLegend conflictLegend-theirs"
+                        style={{
+                          cursor: "pointer",
+                          outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
+                          outlineOffset: 1,
+                        }}
+                        title="Keep their file name"
+                      >
+                        {versions.theirsPath || "(unknown)"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{ height: "100%", minHeight: 0 }}
+                    onContextMenu={(e) => {
+                      const t = e.target as HTMLElement | null;
+                      const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
+                      const editor = isOriginal ? renameDiffOriginalEditorRef.current : renameDiffModifiedEditorRef.current;
+                      const items: ConflictContextMenuItem[] = [
+                        {
+                          label: "Use this version",
+                          disabled: !renameKeepName,
+                          onClick: () => {
+                            setCtxMenu(null);
+                            void resolveRenameWithContent(isOriginal ? "ours" : "theirs");
+                          },
+                        },
+                        makeCopyItem(editor),
+                        makeCommandPaletteItem(editor),
+                      ];
+                      openEditorContextMenu(e, items);
+                    }}
+                  >
+                    <DiffEditor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      original={versions.ours}
+                      modified={versions.theirs}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onMount={(diffEditor, monaco) => {
+                        ensureConflictThemes(monaco);
+                        renameDiffOriginalEditorRef.current = diffEditor.getOriginalEditor();
+                        renameDiffModifiedEditorRef.current = diffEditor.getModifiedEditor();
+                      }}
+                      options={{
+                        readOnly: true,
+                        contextmenu: false,
+                        renderSideBySide: true,
+                        renderSideBySideInlineBreakpoint: 0,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : versions.conflictKind === "modify_delete" ? (
+                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
+                    <div style={{ opacity: 0.75 }}>
+                      {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
+                      {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                    </div>
+                  </div>
+
+                  <DiffEditor
+                    height="100%"
+                    theme={monacoTheme}
+                    language={lang}
+                    original={versions.ours}
+                    modified={versions.theirsDeleted ? "" : versions.theirs}
+                    beforeMount={(monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    onMount={(_, monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    options={{
+                      readOnly: true,
+                      contextmenu: false,
+                      renderSideBySide: true,
+                      renderSideBySideInlineBreakpoint: 0,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      fontSize: 12,
+                    }}
+                  />
+                </div>
               ) : editMode === "diff" ? (
                 <div
                   style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}
@@ -998,6 +1215,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                         readOnly: true,
                         contextmenu: false,
                         renderSideBySide: true,
+                        renderSideBySideInlineBreakpoint: 0,
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",

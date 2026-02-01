@@ -109,6 +109,11 @@ export type GitConflictFileVersions = {
   ours?: string | null;
   theirs?: string | null;
   working?: string | null;
+  ours_path?: string | null;
+  theirs_path?: string | null;
+  ours_deleted?: boolean | null;
+  theirs_deleted?: boolean | null;
+  conflict_kind?: string | null;
 };
 
 export type GitContinueFileEntry = {

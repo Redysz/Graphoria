@@ -272,6 +272,10 @@ export function gitConflictTakeTheirs(params: { repoPath: string; path: string }
   return invoke<string>("git_conflict_take_theirs", params);
 }
 
+export function gitConflictResolveRename(params: { repoPath: string; path: string; keepName: "ours" | "theirs"; keepContent: "ours" | "theirs" }) {
+  return invoke<string>("git_conflict_resolve_rename", params);
+}
+
 export function gitConflictApplyAndStage(params: { repoPath: string; path: string; content: string }) {
   return invoke<string>("git_conflict_apply_and_stage", params);
 }

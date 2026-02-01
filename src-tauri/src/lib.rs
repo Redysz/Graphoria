@@ -96,6 +96,7 @@ use commands::conflicts::{
     git_conflict_apply,
     git_conflict_apply_and_stage,
     git_conflict_file_versions,
+    git_conflict_resolve_rename,
     git_conflict_state,
     git_conflict_take_ours,
     git_conflict_take_theirs,
@@ -2412,7 +2413,7 @@ async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _: () = tauri::Builder::default()
+    tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -2503,6 +2504,7 @@ pub fn run() {
             git_conflict_file_versions,
             git_conflict_take_ours,
             git_conflict_take_theirs,
+            git_conflict_resolve_rename,
             git_conflict_apply_and_stage,
             git_conflict_apply,
             git_continue_info,

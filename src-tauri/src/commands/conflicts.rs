@@ -5,6 +5,188 @@ use std::process::Stdio;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+fn rev_exists(repo_path: &str, rev: &str) -> bool {
+    crate::git_command_in_repo(repo_path)
+        .args(["rev-parse", "-q", "--verify", rev])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[tauri::command]
+pub(crate) fn git_conflict_resolve_rename(repo_path: String, path: String, keep_name: String, keep_content: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+    let keep_name = keep_name.trim().to_string();
+    let keep_content = keep_content.trim().to_string();
+
+    if keep_name != "ours" && keep_name != "theirs" {
+        return Err(String::from("keep_name must be 'ours' or 'theirs'"));
+    }
+    if keep_content != "ours" && keep_content != "theirs" {
+        return Err(String::from("keep_content must be 'ours' or 'theirs'"));
+    }
+
+    let ours_path = path.clone();
+    let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    crate::with_repo_git_lock(&repo_path, || {
+        let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
+        let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+        let theirs_path = renames
+            .get(ours_path.as_str())
+            .cloned()
+            .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
+
+        let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        let content_bytes = if keep_content == "ours" {
+            crate::git_show_path_bytes_or_empty(&repo_path, ":2", ours_path.as_str())?
+        } else {
+            let b = crate::git_show_path_bytes_or_empty(&repo_path, ":3", ours_path.as_str())?;
+            if !b.is_empty() {
+                b
+            } else {
+                crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), theirs_path.as_str())?
+            }
+        };
+
+        if content_bytes.is_empty() {
+            return Err(String::from("Failed to load selected content for rename conflict."));
+        }
+        let content_text = bytes_to_text_or_err(content_bytes.as_slice())?;
+
+        let final_path = if keep_name == "ours" {
+            ours_path.clone()
+        } else {
+            theirs_path.clone()
+        };
+        let remove_path = if final_path == ours_path {
+            theirs_path.clone()
+        } else {
+            ours_path.clone()
+        };
+
+        let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+        if let Some(parent) = full_final.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+        }
+        fs::write(&full_final, content_text.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+
+        crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
+
+        crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
+
+        let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+        if full_remove.exists() {
+            if full_remove.is_dir() {
+                let _ = fs::remove_dir_all(&full_remove);
+            } else {
+                let _ = fs::remove_file(&full_remove);
+            }
+        }
+
+        Ok(String::from("ok"))
+    })
+}
+
+fn detect_theirs_ref(repo_path: &str) -> Option<String> {
+    for r in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"] {
+        if rev_exists(repo_path, r) {
+            return Some(r.to_string());
+        }
+    }
+    None
+}
+
+fn parse_name_status_like_z(stdout: &[u8]) -> Vec<(String, Option<String>, String)> {
+    let mut out: Vec<(String, Option<String>, String)> = Vec::new();
+    let mut tokens: Vec<String> = Vec::new();
+    for t in stdout.split(|c| *c == 0) {
+        if t.is_empty() {
+            continue;
+        }
+        let s = String::from_utf8_lossy(t).to_string();
+        if !s.is_empty() {
+            tokens.push(s);
+        }
+    }
+
+    let mut i: usize = 0;
+    while i < tokens.len() {
+        let status = tokens[i].trim().to_string();
+        i += 1;
+        if status.is_empty() {
+            continue;
+        }
+
+        let has_rename = status.starts_with('R') || status.starts_with('C');
+        if has_rename {
+            if i + 1 >= tokens.len() {
+                break;
+            }
+            let old_path = tokens[i].to_string();
+            let new_path = tokens[i + 1].to_string();
+            i += 2;
+            if !new_path.trim().is_empty() {
+                out.push((status, if old_path.trim().is_empty() { None } else { Some(old_path) }, new_path));
+            }
+        } else {
+            if i >= tokens.len() {
+                break;
+            }
+            let path = tokens[i].to_string();
+            i += 1;
+            if !path.trim().is_empty() {
+                out.push((status, None, path));
+            }
+        }
+    }
+
+    out
+}
+
+fn detect_renames_against_theirs(repo_path: &str, theirs_ref: &str) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+
+    let cmd_out = crate::git_command_in_repo(repo_path)
+        .args(["diff", "--name-status", "-z", "-M20%", "HEAD", theirs_ref])
+        .output();
+    let Ok(cmd_out) = cmd_out else {
+        return out;
+    };
+    let ok = cmd_out.status.success() || cmd_out.status.code() == Some(1);
+    if !ok {
+        return out;
+    }
+
+    for (status, old_path, path) in parse_name_status_like_z(cmd_out.stdout.as_slice()) {
+        if status.starts_with('R') {
+            if let Some(old_path) = old_path {
+                if !old_path.trim().is_empty() && !path.trim().is_empty() {
+                    out.insert(old_path, path);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn git_file_exists_at_rev(repo_path: &str, rev: &str, path: &str) -> bool {
+    let spec = format!("{rev}:{path}");
+    crate::git_command_in_repo(repo_path)
+        .args(["cat-file", "-e", spec.as_str()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitConflictFileEntry {
     status: String,
@@ -220,6 +402,11 @@ pub(crate) struct GitConflictFileVersions {
     ours: Option<String>,
     theirs: Option<String>,
     working: Option<String>,
+    ours_path: Option<String>,
+    theirs_path: Option<String>,
+    ours_deleted: bool,
+    theirs_deleted: bool,
+    conflict_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -580,11 +767,49 @@ pub(crate) fn git_conflict_file_versions(repo_path: String, path: String) -> Res
             Some(b) => Some(bytes_to_text_or_err(b.as_slice())?),
         };
 
+        let ours_deleted = ours.is_none() && !git_file_exists_at_rev(&repo_path, "HEAD", path.as_str());
+
+        let mut theirs_path: Option<String> = None;
+        let mut resolved_theirs = theirs;
+        let mut theirs_deleted = resolved_theirs.is_none();
+        let mut conflict_kind = String::from("text");
+
+        if resolved_theirs.is_none() {
+            if let Some(theirs_ref) = detect_theirs_ref(&repo_path) {
+                let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+                if let Some(new_path) = renames.get(path.as_str()) {
+                    let theirs_alt_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
+                    if !theirs_alt_bytes.is_empty() {
+                        resolved_theirs = Some(bytes_to_text_or_err(theirs_alt_bytes.as_slice())?);
+                        theirs_path = Some(new_path.to_string());
+                        theirs_deleted = false;
+                        conflict_kind = String::from("rename");
+                    }
+                }
+
+                if conflict_kind != "rename" {
+                    theirs_deleted = !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str());
+                    if theirs_deleted {
+                        conflict_kind = String::from("modify_delete");
+                    }
+                }
+            }
+        }
+
+        if ours_deleted {
+            conflict_kind = String::from("modify_delete");
+        }
+
         Ok(GitConflictFileVersions {
             base,
             ours,
-            theirs,
+            theirs: resolved_theirs,
             working,
+            ours_path: Some(path.to_string()),
+            theirs_path,
+            ours_deleted,
+            theirs_deleted,
+            conflict_kind,
         })
     })
 }
@@ -601,6 +826,20 @@ pub(crate) fn git_conflict_take_ours(repo_path: String, path: String) -> Result<
     let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
     crate::with_repo_git_lock(&repo_path, || {
+        let ours_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":2", path.as_str())?;
+        if ours_bytes.is_empty() {
+            crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+            return Ok(String::from("ok"));
+        }
+
+        let theirs_ref = detect_theirs_ref(&repo_path);
+        if let Some(theirs_ref) = theirs_ref {
+            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+            if let Some(new_path) = renames.get(path.as_str()) {
+                crate::run_git(&repo_path, &["rm", "-f", "--", new_path.as_str()])?;
+            }
+        }
+
         crate::run_git(&repo_path, &["checkout", "--ours", "--", path.as_str()])?;
         crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
         Ok(String::from("ok"))
@@ -625,8 +864,40 @@ pub(crate) fn git_conflict_take_theirs(repo_path: String, path: String) -> Resul
     let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
     crate::with_repo_git_lock(&repo_path, || {
-        crate::run_git(&repo_path, &["checkout", "--theirs", "--", path.as_str()])?;
-        crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
+        let theirs_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":3", path.as_str())?;
+        if !theirs_bytes.is_empty() {
+            crate::run_git(&repo_path, &["checkout", "--theirs", "--", path.as_str()])?;
+            crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
+            return Ok(String::from("ok"));
+        }
+
+        if let Some(theirs_ref) = detect_theirs_ref(&repo_path) {
+            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+            if let Some(new_path) = renames.get(path.as_str()) {
+                let full_new = crate::safe_repo_join(&repo_path, new_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+                if let Some(parent) = full_new.parent() {
+                    fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+                }
+
+                let theirs_new_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
+                if theirs_new_bytes.is_empty() {
+                    crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                    return Ok(String::from("ok"));
+                }
+
+                fs::write(&full_new, theirs_new_bytes.as_slice()).map_err(|e| format!("Failed to write file: {e}"))?;
+                crate::run_git(&repo_path, &["add", "-A", "--", new_path.as_str()])?;
+                crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                return Ok(String::from("ok"));
+            }
+
+            if !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str()) {
+                crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                return Ok(String::from("ok"));
+            }
+        }
+
+        crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
         Ok(String::from("ok"))
     })
 }
