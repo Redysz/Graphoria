@@ -58,10 +58,22 @@
   white-space: nowrap;
 }
 
-.statusRow:hover .statusActions,
-.statusRow:focus-within .statusActions {
+.statusRow:hover .statusActions {
   opacity: 1;
   pointer-events: auto;
+}
+
+@supports selector(.statusRow:has(.statusActionBtn:focus-visible)) {
+  .statusRow:focus-within .statusActions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .statusRow:hover .statusActions,
+  .statusRow:has(.statusActionBtn:focus-visible) .statusActions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .statusActionBtn {
@@ -96,9 +108,19 @@
   transition: padding-right 0.12s ease-out;
 }
 
-.statusRowHasActions:hover .statusPath,
-.statusRowHasActions:focus-within .statusPath {
+.statusRowHasActions:hover .statusPath {
   padding-right: 128px;
+}
+
+@supports selector(.statusRow:has(.statusActionBtn:focus-visible)) {
+  .statusRowHasActions:focus-within .statusPath {
+    padding-right: 0;
+  }
+
+  .statusRowHasActions:hover .statusPath,
+  .statusRowHasActions:has(.statusActionBtn:focus-visible) .statusPath {
+    padding-right: 128px;
+  }
 }
 
 .hunkHeader {
