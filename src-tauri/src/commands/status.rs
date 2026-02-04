@@ -4,6 +4,7 @@ use serde::Serialize;
 pub(crate) struct GitStatusEntry {
     status: String,
     path: String,
+    old_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +64,7 @@ pub(crate) fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, Strin
             || status_bytes[1] == b'C';
 
         if has_rename {
-            let old_path = String::from_utf8_lossy(path_bytes).to_string();
+            let first_path = String::from_utf8_lossy(path_bytes).to_string();
 
             let start2 = i;
             while i < b.len() && b[i] != 0 {
@@ -72,22 +73,31 @@ pub(crate) fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, Strin
             let new_path_bytes = &b[start2..i];
             i += 1;
 
-            let new_path = String::from_utf8_lossy(new_path_bytes).to_string();
+            let second_path = String::from_utf8_lossy(new_path_bytes).to_string();
+
+            // In practice (especially during conflict resolution and after staging), Git may report
+            // rename/copy paths in the order: <new_path> NUL <old_path> NUL.
+            // We normalize here so that `path` is always the *new/current* path and `old_path` is the previous path.
+            let new_path = first_path;
+            let old_path = second_path;
+
             if !new_path.trim().is_empty() {
                 entries.push(GitStatusEntry {
                     status,
                     path: new_path,
+                    old_path: if !old_path.trim().is_empty() { Some(old_path) } else { None },
                 });
             } else if !old_path.trim().is_empty() {
                 entries.push(GitStatusEntry {
                     status,
                     path: old_path,
+                    old_path: None,
                 });
             }
         } else {
             let path = String::from_utf8_lossy(path_bytes).to_string();
             if !path.trim().is_empty() {
-                entries.push(GitStatusEntry { status, path });
+                entries.push(GitStatusEntry { status, path, old_path: None });
             }
         }
     }

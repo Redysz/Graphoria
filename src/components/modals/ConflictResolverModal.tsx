@@ -5,7 +5,11 @@ import {
   gitConflictApply,
   gitConflictApplyAndStage,
   gitConflictFileVersions,
+  gitConflictResolveRenameWithContent,
   gitConflictState,
+  gitConflictTakeOurs,
+  gitConflictTakeTheirs,
+  gitConflictResolveRename,
 } from "../../api/git";
 import { useAppSettings } from "../../appSettingsStore";
 
@@ -26,6 +30,11 @@ type Versions = {
   ours: string;
   theirs: string;
   working: string;
+  oursPath: string;
+  theirsPath: string;
+  oursDeleted: boolean;
+  theirsDeleted: boolean;
+  conflictKind: "text" | "rename" | "modify_delete";
 };
 
 type ConflictContextMenuItem = {
@@ -102,6 +111,88 @@ function buildVariantFromWorking(working: string, choice: "ours" | "theirs") {
     out = applyConflictBlock(out, 0, choice === "ours" ? blocks[0]?.oursText ?? "" : blocks[0]?.theirsText ?? "");
   }
   return out;
+}
+
+function splitTextByConflictBlocks(text: string) {
+  const lines = normalizeNewlines(text).split("\n");
+  const parts: Array<{ kind: "plain"; text: string } | { kind: "block"; raw: string }> = [];
+
+  let buf: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i] ?? "";
+    if (t.startsWith("<<<<<<<")) {
+      if (buf.length > 0) {
+        parts.push({ kind: "plain", text: buf.join("\n") });
+        buf = [];
+      }
+      const block: string[] = [];
+      block.push(t);
+      i++;
+      for (; i < lines.length; i++) {
+        const tt = lines[i] ?? "";
+        block.push(tt);
+        if (tt.startsWith(">>>>>>>")) {
+          i++;
+          break;
+        }
+      }
+      parts.push({ kind: "block", raw: block.join("\n") });
+      continue;
+    }
+    buf.push(t);
+    i++;
+  }
+
+  if (buf.length > 0) {
+    parts.push({ kind: "plain", text: buf.join("\n") });
+  }
+
+  return parts;
+}
+
+function makeSyntheticConflictText(oursText: string, theirsText: string) {
+  const ours = normalizeNewlines(oursText ?? "").replace(/\s+$/g, "");
+  const theirs = normalizeNewlines(theirsText ?? "").replace(/\s+$/g, "");
+  return `<<<<<<< ours\n${ours}\n=======\n${theirs}\n>>>>>>> theirs\n`;
+}
+
+function makeLogicalLineLabelsForConflictText(text: string) {
+  const lines = normalizeNewlines(text).split("\n");
+  const labels: string[] = new Array(lines.length);
+
+  let logical = 0;
+  let inConflict = false;
+  let conflictLogical = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i] ?? "";
+    if (ln.startsWith("<<<<<<<")) {
+      inConflict = true;
+      conflictLogical = logical + 1;
+      labels[i] = "";
+      continue;
+    }
+    if (inConflict && ln.startsWith("=======")) {
+      labels[i] = "";
+      continue;
+    }
+    if (inConflict && ln.startsWith(">>>>>>>")) {
+      labels[i] = "";
+      inConflict = false;
+      logical = conflictLogical;
+      continue;
+    }
+
+    if (inConflict) {
+      labels[i] = String(conflictLogical);
+    } else {
+      logical++;
+      labels[i] = String(logical);
+    }
+  }
+
+  return labels;
 }
 
 function formatConflictStatus(status: string) {
@@ -281,6 +372,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState("");
 
+  const [renameKeepName, setRenameKeepName] = useState<"ours" | "theirs" | null>(null);
+
+  const renameDiffOriginalEditorRef = useRef<any>(null);
+  const renameDiffModifiedEditorRef = useRef<any>(null);
+
   const [editMode, setEditMode] = useState<"diff" | "result">("diff");
   const [resultDraft, setResultDraft] = useState<string>("");
   const [applyBusy, setApplyBusy] = useState(false);
@@ -289,12 +385,107 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [diffOurs, setDiffOurs] = useState<string>("");
   const [diffTheirs, setDiffTheirs] = useState<string>("");
 
+  const lastAppliedResultRef = useRef<string>("");
+  const resultInitKeyRef = useRef<string>("");
+
   const [ctxMenu, setCtxMenu] = useState<ConflictContextMenuState | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
 
   const diffOriginalEditorRef = useRef<any>(null);
   const diffModifiedEditorRef = useRef<any>(null);
+  const diffEditorRef = useRef<any>(null);
   const resultEditorRef = useRef<any>(null);
+
+  const pendingRevealResultLineRef = useRef<number | null>(null);
+  const pendingRevealDiffLineRef = useRef<number | null>(null);
+
+  const resultLineLabels = useMemo(() => {
+    return makeLogicalLineLabelsForConflictText(resultDraft);
+  }, [resultDraft]);
+
+  function mapLogicalToPhysicalResultLine(logicalLine: number) {
+    const target = String(logicalLine);
+    const idx = resultLineLabels.findIndex((x) => x === target);
+    return idx >= 0 ? idx + 1 : logicalLine;
+  }
+
+  function mapPhysicalResultLineToLogical(physicalLine: number) {
+    const raw = resultLineLabels[physicalLine - 1] ?? "";
+    if (raw.trim()) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+
+    for (let i = physicalLine - 2; i >= 0; i--) {
+      const v = resultLineLabels[i] ?? "";
+      if (!v.trim()) continue;
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+      break;
+    }
+
+    for (let i = physicalLine; i < resultLineLabels.length; i++) {
+      const v = resultLineLabels[i] ?? "";
+      if (!v.trim()) continue;
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+      break;
+    }
+
+    return physicalLine;
+  }
+
+  function tryRevealResultLine(lineNumber?: number) {
+    const editor = resultEditorRef.current;
+    const model = editor?.getModel?.();
+    if (!editor || !model) return;
+    const target = lineNumber ?? pendingRevealResultLineRef.current;
+    if (!target) return;
+
+    const physicalTarget = mapLogicalToPhysicalResultLine(target);
+    const ln = Math.max(1, Math.min(model.getLineCount(), physicalTarget || 1));
+    editor.focus?.();
+    editor.setPosition?.({ lineNumber: ln, column: 1 });
+    editor.revealLineInCenter?.(ln);
+    pendingRevealResultLineRef.current = null;
+  }
+
+  function tryRevealDiffLine(lineNumber?: number) {
+    const o = diffOriginalEditorRef.current;
+    const m = diffModifiedEditorRef.current;
+    const om = o?.getModel?.();
+    const mm = m?.getModel?.();
+
+    const target = lineNumber ?? pendingRevealDiffLineRef.current;
+    if (!target) return;
+
+    if (o && om) {
+      const ln = Math.max(1, Math.min(om.getLineCount(), target || 1));
+      o.focus?.();
+      o.setPosition?.({ lineNumber: ln, column: 1 });
+      o.revealLineInCenter?.(ln);
+    }
+
+    if (m && mm) {
+      const ln = Math.max(1, Math.min(mm.getLineCount(), target || 1));
+      m.setPosition?.({ lineNumber: ln, column: 1 });
+      m.revealLineInCenter?.(ln);
+    }
+
+    if ((o && om) || (m && mm)) {
+      pendingRevealDiffLineRef.current = null;
+    }
+  }
+
+  function showInResultView(lineNumber: number) {
+    pendingRevealResultLineRef.current = lineNumber;
+    setEditMode("result");
+  }
+
+  function showInDiffView(lineNumber: number) {
+    pendingRevealDiffLineRef.current = lineNumber;
+    setEditMode("diff");
+  }
 
   const initialWorkingByPathRef = useRef<Record<string, string>>({});
 
@@ -315,6 +506,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setResultDraft("");
     setDiffOurs("");
     setDiffTheirs("");
+    setRenameKeepName(null);
 
     initialWorkingByPathRef.current = {};
 
@@ -417,12 +609,22 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
           ours: normalizeNewlines(res.ours ?? ""),
           theirs: normalizeNewlines(res.theirs ?? ""),
           working: normalizeNewlines(res.working ?? ""),
+          oursPath: (res.ours_path ?? selectedPath) || selectedPath,
+          theirsPath: res.theirs_path ?? "",
+          oursDeleted: !!res.ours_deleted,
+          theirsDeleted: !!res.theirs_deleted,
+          conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
         };
 
         setVersions(next);
         setResultDraft(next.working);
+        lastAppliedResultRef.current = next.working;
         setDiffOurs(buildVariantFromWorking(next.working, "ours"));
         setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+        if (next.conflictKind === "rename") {
+          setRenameKeepName(null);
+        }
 
         if (!initialWorkingByPathRef.current[selectedPath]) {
           initialWorkingByPathRef.current[selectedPath] = next.working;
@@ -478,11 +680,51 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       ours: normalizeNewlines(res.ours ?? ""),
       theirs: normalizeNewlines(res.theirs ?? ""),
       working: normalizeNewlines(res.working ?? ""),
+      oursPath: (res.ours_path ?? p) || p,
+      theirsPath: res.theirs_path ?? "",
+      oursDeleted: !!res.ours_deleted,
+      theirsDeleted: !!res.theirs_deleted,
+      conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
     };
+    setVersions(next);
+    setResultDraft(next.working);
+    lastAppliedResultRef.current = next.working;
+    setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+    setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+    if (next.conflictKind === "rename") {
+      setRenameKeepName(null);
+    }
+
+    if (!initialWorkingByPathRef.current[p]) {
+      initialWorkingByPathRef.current[p] = next.working;
+    }
+  }
+
+  async function reloadVersionsForPath(path: string) {
+    const p = (path ?? "").trim();
+    if (!p) return;
+    const res = await gitConflictFileVersions({ repoPath, path: p });
+    const next: Versions = {
+      base: normalizeNewlines(res.base ?? ""),
+      ours: normalizeNewlines(res.ours ?? ""),
+      theirs: normalizeNewlines(res.theirs ?? ""),
+      working: normalizeNewlines(res.working ?? ""),
+      oursPath: (res.ours_path ?? p) || p,
+      theirsPath: res.theirs_path ?? "",
+      oursDeleted: !!res.ours_deleted,
+      theirsDeleted: !!res.theirs_deleted,
+      conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
+    };
+
     setVersions(next);
     setResultDraft(next.working);
     setDiffOurs(buildVariantFromWorking(next.working, "ours"));
     setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+    if (next.conflictKind === "rename") {
+      setRenameKeepName(null);
+    }
 
     if (!initialWorkingByPathRef.current[p]) {
       initialWorkingByPathRef.current[p] = next.working;
@@ -526,8 +768,53 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
   }
 
+  async function resolveRenameWithContent(keepContent: "ours" | "theirs") {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "rename") return;
+    if (!renameKeepName) {
+      setApplyError("Select final name (ours/theirs) first.");
+      return;
+    }
+
+    const finalPath =
+      renameKeepName === "ours"
+        ? versions.oursPath
+        : (versions.theirsPath || "").trim() || versions.oursPath;
+
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictResolveRename({ repoPath, path: selectedPath, keepName: renameKeepName, keepContent });
+      setSelectedPath(finalPath);
+      await refreshStateKeepPath();
+      await reloadVersionsForPath(finalPath);
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
   async function takeOurs() {
     if (!selectedPath.trim()) return;
+    if (versions?.conflictKind === "modify_delete") {
+      setApplyBusy(true);
+      setApplyError("");
+      try {
+        await gitConflictTakeOurs({ repoPath, path: selectedPath });
+        await reloadSelectedVersions();
+        await refreshStateKeepPath();
+      } catch (e) {
+        setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setApplyBusy(false);
+      }
+      return;
+    }
+    if (versions?.conflictKind === "rename") {
+      await resolveRenameWithContent("ours");
+      return;
+    }
     const current = resultDraftRef.current;
     const blocks = listConflictBlocksFromText(current);
     if (blocks.length === 0) {
@@ -566,11 +853,133 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictApply({ repoPath, path: selectedPath, content });
+      lastAppliedResultRef.current = content;
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setApplyBusy(false);
     }
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (editMode !== "result") return;
+    if (!selectedPath.trim()) return;
+    if (!versions) return;
+    if (applyBusy) return;
+    if (versions.conflictKind === "rename" || versions.conflictKind === "modify_delete") return;
+    if (resultDraft === lastAppliedResultRef.current) return;
+
+    const t = window.setTimeout(() => {
+      if (applyBusy) return;
+      if (!selectedPath.trim()) return;
+      if (!versions) return;
+      if (versions.conflictKind === "rename" || versions.conflictKind === "modify_delete") return;
+
+      const content = resultDraftRef.current;
+      void (async () => {
+        await applyContent(content);
+      })();
+    }, 550);
+
+    return () => {
+      window.clearTimeout(t);
+    };
+  }, [open, editMode, selectedPath, versions, resultDraft, applyBusy]);
+
+  async function applyRenameResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "rename") return;
+    if (!renameKeepName) {
+      setApplyError("Select final name (ours/theirs) first.");
+      return;
+    }
+
+    const finalPath =
+      renameKeepName === "ours"
+        ? versions.oursPath
+        : (versions.theirsPath || "").trim() || versions.oursPath;
+
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictResolveRenameWithContent({ repoPath, path: selectedPath, keepName: renameKeepName, content: resultDraftRef.current });
+      setSelectedPath(finalPath);
+      await refreshStateKeepPath();
+      await reloadVersionsForPath(finalPath);
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function applyModifyDeleteResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "modify_delete") return;
+
+    const content = resultDraftRef.current;
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      if (!content.trim()) {
+        if (versions.theirsDeleted) {
+          await gitConflictTakeTheirs({ repoPath, path: selectedPath });
+        } else if (versions.oursDeleted) {
+          await gitConflictTakeOurs({ repoPath, path: selectedPath });
+        } else {
+          await gitConflictApplyAndStage({ repoPath, path: selectedPath, content: "" });
+        }
+      } else {
+        await gitConflictApplyAndStage({ repoPath, path: selectedPath, content });
+      }
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function applyTextResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "text") return;
+
+    const content = resultDraftRef.current;
+    setApplyError("");
+
+    const blocks = listConflictBlocksFromText(content);
+    if (blocks.length === 0) {
+      await applyAndStageContent(content);
+      return;
+    }
+
+    const working = versions.working ?? "";
+    const workingBlocks = splitTextByConflictBlocks(working).filter((p) => p.kind === "block") as Array<{ kind: "block"; raw: string }>;
+
+    let blkIdx = 0;
+    const merged = splitTextByConflictBlocks(content)
+      .map((p) => {
+        if (p.kind === "block") {
+          const raw = workingBlocks[blkIdx]?.raw ?? p.raw;
+          blkIdx++;
+          return raw;
+        }
+        return p.text;
+      })
+      .join("\n");
+
+    await applyContent(merged);
+
+    setVersions((prev) => {
+      if (!prev) return prev;
+      return { ...prev, working: merged };
+    });
+    setResultDraft(merged);
+    lastAppliedResultRef.current = merged;
+    setDiffOurs(buildVariantFromWorking(merged, "ours"));
+    setDiffTheirs(buildVariantFromWorking(merged, "theirs"));
   }
 
   const selectedIsUnmerged = useMemo(() => {
@@ -580,6 +989,23 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     if (!f) return false;
     return (f.status ?? "").replace(/\s+/g, "").includes("U");
   }, [files, selectedPath]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (editMode !== "result") return;
+    if (!selectedPath.trim()) return;
+    if (!versions) return;
+    if (!selectedIsUnmerged) return;
+    if (versions.conflictKind !== "rename" && versions.conflictKind !== "modify_delete") return;
+
+    const key = `${selectedPath}::${versions.conflictKind}::${versions.oursDeleted ? "od" : ""}${versions.theirsDeleted ? "td" : ""}`;
+    if (resultInitKeyRef.current === key) return;
+
+    const oursText = versions.oursDeleted ? "" : versions.ours;
+    const theirsText = versions.theirsDeleted ? "" : versions.theirs;
+    setResultDraft(makeSyntheticConflictText(oursText, theirsText));
+    resultInitKeyRef.current = key;
+  }, [open, editMode, selectedIsUnmerged, selectedPath, versions]);
 
   const nextUnmergedPath = useMemo(() => {
     const p = selectedPath.trim();
@@ -642,6 +1068,24 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   async function takeTheirs() {
     if (!selectedPath.trim()) return;
+    if (versions?.conflictKind === "modify_delete") {
+      setApplyBusy(true);
+      setApplyError("");
+      try {
+        await gitConflictTakeTheirs({ repoPath, path: selectedPath });
+        await reloadSelectedVersions();
+        await refreshStateKeepPath();
+      } catch (e) {
+        setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setApplyBusy(false);
+      }
+      return;
+    }
+    if (versions?.conflictKind === "rename") {
+      await resolveRenameWithContent("theirs");
+      return;
+    }
     const current = resultDraftRef.current;
     const blocks = listConflictBlocksFromText(current);
     if (blocks.length === 0) {
@@ -663,6 +1107,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const disabled = loading || busy || applyBusy;
   const continueDisabled = disabled || hasUnmergedFiles;
+  const renameNeedsNameChoice = versions?.conflictKind === "rename" && !renameKeepName;
 
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
@@ -781,16 +1226,24 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     <button
                       type="button"
                       onClick={() => void takeOurs()}
-                      disabled={disabled || !selectedPath.trim()}
-                      title="Take only our version for the whole file and stage it"
+                      disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
+                      title={
+                        renameNeedsNameChoice
+                          ? "Select final name (ours/theirs) first"
+                          : "Take only our version for the whole file and stage it"
+                      }
                     >
                       Take ours
                     </button>
                     <button
                       type="button"
                       onClick={() => void takeTheirs()}
-                      disabled={disabled || !selectedPath.trim()}
-                      title="Take only their version for the whole file and stage it"
+                      disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
+                      title={
+                        renameNeedsNameChoice
+                          ? "Select final name (ours/theirs) first"
+                          : "Take only their version for the whole file and stage it"
+                      }
                     >
                       Take theirs
                     </button>
@@ -807,6 +1260,277 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 <div className="diffEmpty">Loading…</div>
               ) : !versions ? (
                 <div className="diffEmpty">Select a file.</div>
+              ) : !selectedIsUnmerged && selectedPath.trim() ? (
+                versions.working.trim() ? (
+                  <Editor
+                    height="100%"
+                    theme={monacoTheme}
+                    language={lang}
+                    value={versions.working}
+                    beforeMount={(monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    onMount={(_, monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    options={{
+                      readOnly: true,
+                      contextmenu: false,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      fontSize: 12,
+                    }}
+                  />
+                ) : (
+                  <div className="diffEmpty">File does not exist.</div>
+                )
+              ) : versions.conflictKind === "rename" ? (
+                editMode === "diff" ? (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.8 }}>
+                        <span style={renameNeedsNameChoice ? { color: "var(--danger)" } : undefined}>
+                          {renameNeedsNameChoice ? "Rename conflict!" : "Rename conflict"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={renameNeedsNameChoice ? { fontWeight: 900, color: "var(--danger)" } : { fontWeight: 800, opacity: 0.75 }}>
+                          {renameNeedsNameChoice ? "Set final name first:" : "Final name:"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("ours")}
+                          className="conflictLegend conflictLegend-ours"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.22)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.32)" : undefined,
+                            outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep our file name"
+                        >
+                          {versions.oursPath}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("theirs")}
+                          className="conflictLegend conflictLegend-theirs"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.35)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.55)" : undefined,
+                            outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep their file name"
+                        >
+                          {versions.theirsPath || "(unknown)"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{ height: "100%", minHeight: 0 }}
+                      onContextMenu={(e) => {
+                        const t = e.target as HTMLElement | null;
+                        const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
+                        const editor = isOriginal ? renameDiffOriginalEditorRef.current : renameDiffModifiedEditorRef.current;
+                        const items: ConflictContextMenuItem[] = [
+                          {
+                            label: "Use this version",
+                            disabled: !renameKeepName,
+                            onClick: () => {
+                              setCtxMenu(null);
+                              void resolveRenameWithContent(isOriginal ? "ours" : "theirs");
+                            },
+                          },
+                          makeCopyItem(editor),
+                          makeCommandPaletteItem(editor),
+                        ];
+                        openEditorContextMenu(e, items);
+                      }}
+                    >
+                      <DiffEditor
+                        height="100%"
+                        theme={monacoTheme}
+                        language={lang}
+                        original={versions.ours}
+                        modified={versions.theirs}
+                        beforeMount={(monaco) => {
+                          ensureConflictThemes(monaco);
+                        }}
+                        onMount={(diffEditor, monaco) => {
+                          ensureConflictThemes(monaco);
+                          renameDiffOriginalEditorRef.current = diffEditor.getOriginalEditor();
+                          renameDiffModifiedEditorRef.current = diffEditor.getModifiedEditor();
+                        }}
+                        options={{
+                          readOnly: true,
+                          contextmenu: false,
+                          renderSideBySide: true,
+                          renderSideBySideInlineBreakpoint: 0,
+                          minimap: { enabled: false },
+                          scrollBeyondLastLine: false,
+                          wordWrap: "on",
+                          fontSize: 12,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>
+                          <span style={renameNeedsNameChoice ? { color: "var(--danger)" } : undefined}>
+                            {renameNeedsNameChoice ? "Rename conflict!" : "Rename conflict"}
+                          </span>
+                        </div>
+                        <button type="button" onClick={() => void applyRenameResult()} disabled={disabled || renameNeedsNameChoice}>
+                          Apply result
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={renameNeedsNameChoice ? { fontWeight: 900, color: "var(--danger)" } : { fontWeight: 800, opacity: 0.75 }}>
+                          {renameNeedsNameChoice ? "Set final name first:" : "Final name:"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("ours")}
+                          className="conflictLegend conflictLegend-ours"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.22)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.32)" : undefined,
+                            outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep our file name"
+                        >
+                          {versions.oursPath}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("theirs")}
+                          className="conflictLegend conflictLegend-theirs"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.35)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.55)" : undefined,
+                            outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep their file name"
+                        >
+                          {versions.theirsPath || "(unknown)"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                        lineNumbers: (n: number) => {
+                          return resultLineLabels[n - 1] ?? String(n);
+                        },
+                      }}
+                    />
+                  </div>
+                )
+              ) : versions.conflictKind === "modify_delete" ? (
+                editMode === "diff" ? (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
+                      <div style={{ opacity: 0.75 }}>
+                        {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
+                        {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                      </div>
+                    </div>
+
+                    <DiffEditor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      original={versions.ours}
+                      modified={versions.theirsDeleted ? "" : versions.theirs}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      options={{
+                        readOnly: true,
+                        contextmenu: false,
+                        renderSideBySide: true,
+                        renderSideBySideInlineBreakpoint: 0,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
+                        <button type="button" onClick={() => void applyModifyDeleteResult()} disabled={disabled}>
+                          Apply result
+                        </button>
+                      </div>
+                      <div style={{ opacity: 0.75 }}>
+                        {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
+                        {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                      </div>
+                    </div>
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                )
               ) : editMode === "diff" ? (
                 <div
                   style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}
@@ -815,17 +1539,71 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
                     const editor = isOriginal ? diffOriginalEditorRef.current : diffModifiedEditorRef.current;
                     const useActionId = isOriginal ? "graphoria.conflict.useThisVersion.original" : "graphoria.conflict.useThisVersion.modified";
+                    const useBothActionId = isOriginal ? "graphoria.conflict.useBoth.original" : "graphoria.conflict.useBoth.modified";
+
+                    const diffEditor = diffEditorRef.current;
+                    const target = editor?.getTargetAtClientPoint?.(e.clientX, e.clientY);
+                    const clickLine = target?.position?.lineNumber ?? editor?.getPosition?.()?.lineNumber ?? 1;
+                    try {
+                      editor?.setPosition?.({ lineNumber: clickLine, column: 1 });
+                    } catch {
+                      // ignore
+                    }
+
+                    const canUseThisVersion = (() => {
+                      if (!diffEditor) return false;
+                      const changes = diffEditor.getLineChanges?.() ?? [];
+                      const ln = clickLine;
+                      for (const c of changes) {
+                        if (isOriginal) {
+                          const a = c.originalStartLineNumber;
+                          const b = c.originalEndLineNumber;
+                          if (!a || !b || a === 0 || b === 0) continue;
+                          if (ln >= a && ln <= b) return true;
+                        } else {
+                          const a = c.modifiedStartLineNumber;
+                          const b = c.modifiedEndLineNumber;
+                          if (!a || !b || a === 0 || b === 0) continue;
+                          if (ln >= a && ln <= b) return true;
+                        }
+                      }
+                      return false;
+                    })();
+
                     const items: ConflictContextMenuItem[] = [
                       {
                         label: "Use this version",
+                        disabled: !canUseThisVersion,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canUseThisVersion) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.(useActionId)?.run?.();
                           } catch {
                             // ignore
                           }
+                        },
+                      },
+                      {
+                        label: "Use both (this goes first)",
+                        disabled: !canUseThisVersion,
+                        onClick: () => {
+                          setCtxMenu(null);
+                          if (!canUseThisVersion) return;
+                          try {
+                            editor?.focus?.();
+                            editor?.getAction?.(useBothActionId)?.run?.();
+                          } catch {
+                            // ignore
+                          }
+                        },
+                      },
+                      {
+                        label: "Show in the Result view",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          showInResultView(clickLine);
                         },
                       },
                       makeCopyItem(editor),
@@ -854,6 +1632,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       }}
                       onMount={(diffEditor, monaco) => {
                         ensureConflictThemes(monaco);
+
+                        diffEditorRef.current = diffEditor;
 
                         const originalEditor = diffEditor.getOriginalEditor();
                         const modifiedEditor = diffEditor.getModifiedEditor();
@@ -964,9 +1744,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             await applyContent(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                            if (listConflictBlocksFromText(next).length === 0) {
-                              await applyAndStageContent(next);
-                            }
                           },
                         });
 
@@ -988,16 +1765,64 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             await applyContent(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                            if (listConflictBlocksFromText(next).length === 0) {
-                              await applyAndStageContent(next);
-                            }
                           },
                         });
+
+                        originalEditor.addAction({
+                          id: "graphoria.conflict.useBoth.original",
+                          label: "Use both (this goes first)",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.21,
+                          run: async () => {
+                            const pos = originalEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(true, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(true, changeIdx);
+                            if (blkIdx < 0) return;
+                            const blocksNow = getBlocksNow();
+                            const ours = blocksNow[blkIdx]?.oursText ?? "";
+                            const theirs = blocksNow[blkIdx]?.theirsText ?? "";
+                            const combined = ours && theirs ? `${ours}\n${theirs}` : `${ours}${theirs}`;
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          },
+                        });
+
+                        modifiedEditor.addAction({
+                          id: "graphoria.conflict.useBoth.modified",
+                          label: "Use both (this goes first)",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.21,
+                          run: async () => {
+                            const pos = modifiedEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(false, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(false, changeIdx);
+                            if (blkIdx < 0) return;
+                            const blocksNow = getBlocksNow();
+                            const ours = blocksNow[blkIdx]?.oursText ?? "";
+                            const theirs = blocksNow[blkIdx]?.theirsText ?? "";
+                            const combined = theirs && ours ? `${theirs}\n${ours}` : `${theirs}${ours}`;
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          },
+                        });
+
+                        tryRevealDiffLine();
                       }}
                       options={{
                         readOnly: true,
                         contextmenu: false,
                         renderSideBySide: true,
+                        renderSideBySideInlineBreakpoint: 0,
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
@@ -1032,11 +1857,26 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   style={{ height: "100%" }}
                   onContextMenu={(e) => {
                     const editor = resultEditorRef.current;
+
+                    const target = editor?.getTargetAtClientPoint?.(e.clientX, e.clientY);
+                    const clickLine = target?.position?.lineNumber ?? editor?.getPosition?.()?.lineNumber ?? 1;
+                    try {
+                      editor?.setPosition?.({ lineNumber: clickLine, column: 1 });
+                    } catch {
+                      // ignore
+                    }
+
+                    const pos = editor?.getPosition?.();
+                    const model = editor?.getModel?.();
+                    const canResolveAtCursor = !!(pos && model && findConflictBlock(model, pos.lineNumber));
+
                     const items: ConflictContextMenuItem[] = [
                       {
                         label: "Resolve conflict: take ours",
+                        disabled: !canResolveAtCursor,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canResolveAtCursor) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.("graphoria.resolveConflict.takeOurs")?.run?.();
@@ -1047,8 +1887,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       },
                       {
                         label: "Resolve conflict: take theirs",
+                        disabled: !canResolveAtCursor,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canResolveAtCursor) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.("graphoria.resolveConflict.takeTheirs")?.run?.();
@@ -1057,112 +1899,138 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           }
                         },
                       },
+                      {
+                        label: "Show in the Diff view",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          showInDiffView(mapPhysicalResultLineToLogical(clickLine));
+                        },
+                      },
                       makeCopyItem(editor),
                       makeCommandPaletteItem(editor),
                     ];
                     openEditorContextMenu(e, items);
                   }}
                 >
-                  <Editor
-                    height="100%"
-                    theme={monacoTheme}
-                    language={lang}
-                    value={resultDraft}
-                    beforeMount={(monaco) => {
-                      ensureConflictThemes(monaco);
-                    }}
-                    onChange={(v: string | undefined) => {
-                      setResultDraft(v ?? "");
-                    }}
-                    onMount={(editor, monaco) => {
-                      ensureConflictThemes(monaco);
-                      resultEditorRef.current = editor;
-
-                      const model = editor.getModel();
-                      if (!model) return;
-
-                      const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
-                      const updateKey = () => {
-                        const pos = editor.getPosition();
-                        if (!pos) {
-                          key.set(false);
-                          return;
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Text conflict</div>
+                      <button
+                        type="button"
+                        onClick={() => void applyTextResult()}
+                        disabled={disabled}
+                        title={
+                          listConflictBlocksFromText(resultDraft).length > 0
+                            ? "Apply resolved changes and keep the remaining conflicts unresolved"
+                            : "Stage the result and mark this conflict as resolved"
                         }
-                        const blk = findConflictBlock(model, pos.lineNumber);
-                        key.set(!!blk);
-                      };
-                      updateKey();
-                      editor.onDidChangeCursorPosition(updateKey);
+                      >
+                        Apply result
+                      </button>
+                      </div>
+                    </div>
 
-                      editor.addAction({
-                        id: "graphoria.resolveConflict.takeOurs",
-                        label: "Resolve conflict: take ours",
-                        contextMenuGroupId: "navigation",
-                        contextMenuOrder: 1.5,
-                        run: async () => {
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(editor, monaco) => {
+                        ensureConflictThemes(monaco);
+                        resultEditorRef.current = editor;
+
+                        const model = editor.getModel();
+                        if (!model) return;
+
+                        const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
+                        const updateKey = () => {
                           const pos = editor.getPosition();
-                          if (!pos) return;
+                          if (!pos) {
+                            key.set(false);
+                            return;
+                          }
                           const blk = findConflictBlock(model, pos.lineNumber);
-                          if (!blk) return;
+                          key.set(!!blk);
+                        };
+                        updateKey();
+                        editor.onDidChangeCursorPosition(updateKey);
 
-                          const oursLines: string[] = [];
-                          for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
-                            oursLines.push(model.getLineContent(ln));
-                          }
+                        editor.addAction({
+                          id: "graphoria.resolveConflict.takeOurs",
+                          label: "Resolve conflict: take ours",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.5,
+                          run: async () => {
+                            const pos = editor.getPosition();
+                            if (!pos) return;
+                            const blk = findConflictBlock(model, pos.lineNumber);
+                            if (!blk) return;
 
-                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
-                          model.applyEdits([{ range, text: oursLines.join("\n") }]);
-                          const next = model.getValue();
-                          setResultDraft(next);
-                          await applyContent(next);
-                          setDiffOurs(buildVariantFromWorking(next, "ours"));
-                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                          if (listConflictBlocksFromText(next).length === 0) {
-                            await applyAndStageContent(next);
-                          }
-                          return;
+                            const oursLines: string[] = [];
+                            for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
+                              oursLines.push(model.getLineContent(ln));
+                            }
+
+                            const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                            model.applyEdits([{ range, text: oursLines.join("\n") }]);
+                            const next = model.getValue();
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                            return;
+                          },
+                        });
+
+                        editor.addAction({
+                          id: "graphoria.resolveConflict.takeTheirs",
+                          label: "Resolve conflict: take theirs",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.6,
+                          run: async () => {
+                            const pos = editor.getPosition();
+                            if (!pos) return;
+                            const blk = findConflictBlock(model, pos.lineNumber);
+                            if (!blk) return;
+
+                            const theirLines: string[] = [];
+                            for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
+                              theirLines.push(model.getLineContent(ln));
+                            }
+
+                            const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                            model.applyEdits([{ range, text: theirLines.join("\n") }]);
+                            const next = model.getValue();
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                            return;
+                          },
+                        });
+
+                        tryRevealResultLine();
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                        lineNumbers: (n: number) => {
+                          return resultLineLabels[n - 1] ?? String(n);
                         },
-                      });
-
-                      editor.addAction({
-                        id: "graphoria.resolveConflict.takeTheirs",
-                        label: "Resolve conflict: take theirs",
-                        contextMenuGroupId: "navigation",
-                        contextMenuOrder: 1.6,
-                        run: async () => {
-                          const pos = editor.getPosition();
-                          if (!pos) return;
-                          const blk = findConflictBlock(model, pos.lineNumber);
-                          if (!blk) return;
-
-                          const theirLines: string[] = [];
-                          for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
-                            theirLines.push(model.getLineContent(ln));
-                          }
-
-                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
-                          model.applyEdits([{ range, text: theirLines.join("\n") }]);
-                          const next = model.getValue();
-                          setResultDraft(next);
-                          await applyContent(next);
-                          setDiffOurs(buildVariantFromWorking(next, "ours"));
-                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                          if (listConflictBlocksFromText(next).length === 0) {
-                            await applyAndStageContent(next);
-                          }
-                          return;
-                        },
-                      });
-                    }}
-                  options={{
-                    readOnly: false,
-                    contextmenu: false,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                    fontSize: 12,
-                  }}
-                  />
+                      }}
+                    />
+                  </div>
                 </div>
               )}
             </div>

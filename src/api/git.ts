@@ -272,6 +272,14 @@ export function gitConflictTakeTheirs(params: { repoPath: string; path: string }
   return invoke<string>("git_conflict_take_theirs", params);
 }
 
+export function gitConflictResolveRename(params: { repoPath: string; path: string; keepName: "ours" | "theirs"; keepContent: "ours" | "theirs" }) {
+  return invoke<string>("git_conflict_resolve_rename", params);
+}
+
+export function gitConflictResolveRenameWithContent(params: { repoPath: string; path: string; keepName: "ours" | "theirs"; content: string }) {
+  return invoke<string>("git_conflict_resolve_rename_with_content", params);
+}
+
 export function gitConflictApplyAndStage(params: { repoPath: string; path: string; content: string }) {
   return invoke<string>("git_conflict_apply_and_stage", params);
 }
@@ -286,6 +294,10 @@ export function gitContinueInfo(repoPath: string) {
 
 export function gitContinueFileDiff(params: { repoPath: string; path: string; unified: number }) {
   return invoke<string>("git_continue_file_diff", params);
+}
+
+export function gitContinueRenameDiff(params: { repoPath: string; oldPath: string; newPath: string; unified: number }) {
+  return invoke<string>("git_continue_rename_diff", params);
 }
 
 export function gitMergeContinueWithMessage(params: { repoPath: string; message: string }) {
