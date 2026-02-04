@@ -157,6 +157,44 @@ function makeSyntheticConflictText(oursText: string, theirsText: string) {
   return `<<<<<<< ours\n${ours}\n=======\n${theirs}\n>>>>>>> theirs\n`;
 }
 
+function makeLogicalLineLabelsForConflictText(text: string) {
+  const lines = normalizeNewlines(text).split("\n");
+  const labels: string[] = new Array(lines.length);
+
+  let logical = 0;
+  let inConflict = false;
+  let conflictLogical = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i] ?? "";
+    if (ln.startsWith("<<<<<<<")) {
+      inConflict = true;
+      conflictLogical = logical + 1;
+      labels[i] = "";
+      continue;
+    }
+    if (inConflict && ln.startsWith("=======")) {
+      labels[i] = "";
+      continue;
+    }
+    if (inConflict && ln.startsWith(">>>>>>>")) {
+      labels[i] = "";
+      inConflict = false;
+      logical = conflictLogical;
+      continue;
+    }
+
+    if (inConflict) {
+      labels[i] = String(conflictLogical);
+    } else {
+      logical++;
+      labels[i] = String(logical);
+    }
+  }
+
+  return labels;
+}
+
 function formatConflictStatus(status: string) {
   const s = (status ?? "").trim();
   if (!s) return "U";
@@ -357,6 +395,97 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const diffModifiedEditorRef = useRef<any>(null);
   const diffEditorRef = useRef<any>(null);
   const resultEditorRef = useRef<any>(null);
+
+  const pendingRevealResultLineRef = useRef<number | null>(null);
+  const pendingRevealDiffLineRef = useRef<number | null>(null);
+
+  const resultLineLabels = useMemo(() => {
+    return makeLogicalLineLabelsForConflictText(resultDraft);
+  }, [resultDraft]);
+
+  function mapLogicalToPhysicalResultLine(logicalLine: number) {
+    const target = String(logicalLine);
+    const idx = resultLineLabels.findIndex((x) => x === target);
+    return idx >= 0 ? idx + 1 : logicalLine;
+  }
+
+  function mapPhysicalResultLineToLogical(physicalLine: number) {
+    const raw = resultLineLabels[physicalLine - 1] ?? "";
+    if (raw.trim()) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+
+    for (let i = physicalLine - 2; i >= 0; i--) {
+      const v = resultLineLabels[i] ?? "";
+      if (!v.trim()) continue;
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+      break;
+    }
+
+    for (let i = physicalLine; i < resultLineLabels.length; i++) {
+      const v = resultLineLabels[i] ?? "";
+      if (!v.trim()) continue;
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+      break;
+    }
+
+    return physicalLine;
+  }
+
+  function tryRevealResultLine(lineNumber?: number) {
+    const editor = resultEditorRef.current;
+    const model = editor?.getModel?.();
+    if (!editor || !model) return;
+    const target = lineNumber ?? pendingRevealResultLineRef.current;
+    if (!target) return;
+
+    const physicalTarget = mapLogicalToPhysicalResultLine(target);
+    const ln = Math.max(1, Math.min(model.getLineCount(), physicalTarget || 1));
+    editor.focus?.();
+    editor.setPosition?.({ lineNumber: ln, column: 1 });
+    editor.revealLineInCenter?.(ln);
+    pendingRevealResultLineRef.current = null;
+  }
+
+  function tryRevealDiffLine(lineNumber?: number) {
+    const o = diffOriginalEditorRef.current;
+    const m = diffModifiedEditorRef.current;
+    const om = o?.getModel?.();
+    const mm = m?.getModel?.();
+
+    const target = lineNumber ?? pendingRevealDiffLineRef.current;
+    if (!target) return;
+
+    if (o && om) {
+      const ln = Math.max(1, Math.min(om.getLineCount(), target || 1));
+      o.focus?.();
+      o.setPosition?.({ lineNumber: ln, column: 1 });
+      o.revealLineInCenter?.(ln);
+    }
+
+    if (m && mm) {
+      const ln = Math.max(1, Math.min(mm.getLineCount(), target || 1));
+      m.setPosition?.({ lineNumber: ln, column: 1 });
+      m.revealLineInCenter?.(ln);
+    }
+
+    if ((o && om) || (m && mm)) {
+      pendingRevealDiffLineRef.current = null;
+    }
+  }
+
+  function showInResultView(lineNumber: number) {
+    pendingRevealResultLineRef.current = lineNumber;
+    setEditMode("result");
+  }
+
+  function showInDiffView(lineNumber: number) {
+    pendingRevealDiffLineRef.current = lineNumber;
+    setEditMode("diff");
+  }
 
   const initialWorkingByPathRef = useRef<Record<string, string>>({});
 
@@ -1321,6 +1450,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
                         fontSize: 12,
+                        lineNumbers: (n: number) => {
+                          return resultLineLabels[n - 1] ?? String(n);
+                        },
                       }}
                     />
                   </div>
@@ -1407,13 +1539,21 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
                     const editor = isOriginal ? diffOriginalEditorRef.current : diffModifiedEditorRef.current;
                     const useActionId = isOriginal ? "graphoria.conflict.useThisVersion.original" : "graphoria.conflict.useThisVersion.modified";
+                    const useBothActionId = isOriginal ? "graphoria.conflict.useBoth.original" : "graphoria.conflict.useBoth.modified";
 
                     const diffEditor = diffEditorRef.current;
-                    const pos = editor?.getPosition?.();
+                    const target = editor?.getTargetAtClientPoint?.(e.clientX, e.clientY);
+                    const clickLine = target?.position?.lineNumber ?? editor?.getPosition?.()?.lineNumber ?? 1;
+                    try {
+                      editor?.setPosition?.({ lineNumber: clickLine, column: 1 });
+                    } catch {
+                      // ignore
+                    }
+
                     const canUseThisVersion = (() => {
-                      if (!diffEditor || !pos) return false;
+                      if (!diffEditor) return false;
                       const changes = diffEditor.getLineChanges?.() ?? [];
-                      const ln = pos.lineNumber;
+                      const ln = clickLine;
                       for (const c of changes) {
                         if (isOriginal) {
                           const a = c.originalStartLineNumber;
@@ -1443,6 +1583,27 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           } catch {
                             // ignore
                           }
+                        },
+                      },
+                      {
+                        label: "Use both (this goes first)",
+                        disabled: !canUseThisVersion,
+                        onClick: () => {
+                          setCtxMenu(null);
+                          if (!canUseThisVersion) return;
+                          try {
+                            editor?.focus?.();
+                            editor?.getAction?.(useBothActionId)?.run?.();
+                          } catch {
+                            // ignore
+                          }
+                        },
+                      },
+                      {
+                        label: "Show in the Result view",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          showInResultView(clickLine);
                         },
                       },
                       makeCopyItem(editor),
@@ -1606,6 +1767,56 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                           },
                         });
+
+                        originalEditor.addAction({
+                          id: "graphoria.conflict.useBoth.original",
+                          label: "Use both (this goes first)",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.21,
+                          run: async () => {
+                            const pos = originalEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(true, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(true, changeIdx);
+                            if (blkIdx < 0) return;
+                            const blocksNow = getBlocksNow();
+                            const ours = blocksNow[blkIdx]?.oursText ?? "";
+                            const theirs = blocksNow[blkIdx]?.theirsText ?? "";
+                            const combined = ours && theirs ? `${ours}\n${theirs}` : `${ours}${theirs}`;
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          },
+                        });
+
+                        modifiedEditor.addAction({
+                          id: "graphoria.conflict.useBoth.modified",
+                          label: "Use both (this goes first)",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.21,
+                          run: async () => {
+                            const pos = modifiedEditor.getPosition();
+                            if (!pos) return;
+                            const changeIdx = findChangeIndex(false, pos.lineNumber);
+                            if (changeIdx < 0) return;
+                            const blkIdx = findConflictBlockIndexFromChange(false, changeIdx);
+                            if (blkIdx < 0) return;
+                            const blocksNow = getBlocksNow();
+                            const ours = blocksNow[blkIdx]?.oursText ?? "";
+                            const theirs = blocksNow[blkIdx]?.theirsText ?? "";
+                            const combined = theirs && ours ? `${theirs}\n${ours}` : `${theirs}${ours}`;
+                            const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                          },
+                        });
+
+                        tryRevealDiffLine();
                       }}
                       options={{
                         readOnly: true,
@@ -1647,6 +1858,14 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   onContextMenu={(e) => {
                     const editor = resultEditorRef.current;
 
+                    const target = editor?.getTargetAtClientPoint?.(e.clientX, e.clientY);
+                    const clickLine = target?.position?.lineNumber ?? editor?.getPosition?.()?.lineNumber ?? 1;
+                    try {
+                      editor?.setPosition?.({ lineNumber: clickLine, column: 1 });
+                    } catch {
+                      // ignore
+                    }
+
                     const pos = editor?.getPosition?.();
                     const model = editor?.getModel?.();
                     const canResolveAtCursor = !!(pos && model && findConflictBlock(model, pos.lineNumber));
@@ -1678,6 +1897,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                           } catch {
                             // ignore
                           }
+                        },
+                      },
+                      {
+                        label: "Show in the Diff view",
+                        onClick: () => {
+                          setCtxMenu(null);
+                          showInDiffView(mapPhysicalResultLineToLogical(clickLine));
                         },
                       },
                       makeCopyItem(editor),
@@ -1789,6 +2015,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             return;
                           },
                         });
+
+                        tryRevealResultLine();
                       }}
                       options={{
                         readOnly: false,
@@ -1797,6 +2025,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
                         fontSize: 12,
+                        lineNumbers: (n: number) => {
+                          return resultLineLabels[n - 1] ?? String(n);
+                        },
                       }}
                     />
                   </div>
