@@ -113,6 +113,44 @@ function buildVariantFromWorking(working: string, choice: "ours" | "theirs") {
   return out;
 }
 
+function splitTextByConflictBlocks(text: string) {
+  const lines = normalizeNewlines(text).split("\n");
+  const parts: Array<{ kind: "plain"; text: string } | { kind: "block"; raw: string }> = [];
+
+  let buf: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i] ?? "";
+    if (t.startsWith("<<<<<<<")) {
+      if (buf.length > 0) {
+        parts.push({ kind: "plain", text: buf.join("\n") });
+        buf = [];
+      }
+      const block: string[] = [];
+      block.push(t);
+      i++;
+      for (; i < lines.length; i++) {
+        const tt = lines[i] ?? "";
+        block.push(tt);
+        if (tt.startsWith(">>>>>>>")) {
+          i++;
+          break;
+        }
+      }
+      parts.push({ kind: "block", raw: block.join("\n") });
+      continue;
+    }
+    buf.push(t);
+    i++;
+  }
+
+  if (buf.length > 0) {
+    parts.push({ kind: "plain", text: buf.join("\n") });
+  }
+
+  return parts;
+}
+
 function makeSyntheticConflictText(oursText: string, theirsText: string) {
   const ours = normalizeNewlines(oursText ?? "").replace(/\s+$/g, "");
   const theirs = normalizeNewlines(theirsText ?? "").replace(/\s+$/g, "");
@@ -317,6 +355,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const diffOriginalEditorRef = useRef<any>(null);
   const diffModifiedEditorRef = useRef<any>(null);
+  const diffEditorRef = useRef<any>(null);
   const resultEditorRef = useRef<any>(null);
 
   const initialWorkingByPathRef = useRef<Record<string, string>>({});
@@ -711,11 +750,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       const content = resultDraftRef.current;
       void (async () => {
         await applyContent(content);
-        if (versions.conflictKind !== "modify_delete") {
-          if (listConflictBlocksFromText(content).length === 0) {
-            await applyAndStageContent(content);
-          }
-        }
       })();
     }, 550);
 
@@ -777,6 +811,46 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     } finally {
       setApplyBusy(false);
     }
+  }
+
+  async function applyTextResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "text") return;
+
+    const content = resultDraftRef.current;
+    setApplyError("");
+
+    const blocks = listConflictBlocksFromText(content);
+    if (blocks.length === 0) {
+      await applyAndStageContent(content);
+      return;
+    }
+
+    const working = versions.working ?? "";
+    const workingBlocks = splitTextByConflictBlocks(working).filter((p) => p.kind === "block") as Array<{ kind: "block"; raw: string }>;
+
+    let blkIdx = 0;
+    const merged = splitTextByConflictBlocks(content)
+      .map((p) => {
+        if (p.kind === "block") {
+          const raw = workingBlocks[blkIdx]?.raw ?? p.raw;
+          blkIdx++;
+          return raw;
+        }
+        return p.text;
+      })
+      .join("\n");
+
+    await applyContent(merged);
+
+    setVersions((prev) => {
+      if (!prev) return prev;
+      return { ...prev, working: merged };
+    });
+    setResultDraft(merged);
+    lastAppliedResultRef.current = merged;
+    setDiffOurs(buildVariantFromWorking(merged, "ours"));
+    setDiffTheirs(buildVariantFromWorking(merged, "theirs"));
   }
 
   const selectedIsUnmerged = useMemo(() => {
@@ -1333,11 +1407,36 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
                     const editor = isOriginal ? diffOriginalEditorRef.current : diffModifiedEditorRef.current;
                     const useActionId = isOriginal ? "graphoria.conflict.useThisVersion.original" : "graphoria.conflict.useThisVersion.modified";
+
+                    const diffEditor = diffEditorRef.current;
+                    const pos = editor?.getPosition?.();
+                    const canUseThisVersion = (() => {
+                      if (!diffEditor || !pos) return false;
+                      const changes = diffEditor.getLineChanges?.() ?? [];
+                      const ln = pos.lineNumber;
+                      for (const c of changes) {
+                        if (isOriginal) {
+                          const a = c.originalStartLineNumber;
+                          const b = c.originalEndLineNumber;
+                          if (!a || !b || a === 0 || b === 0) continue;
+                          if (ln >= a && ln <= b) return true;
+                        } else {
+                          const a = c.modifiedStartLineNumber;
+                          const b = c.modifiedEndLineNumber;
+                          if (!a || !b || a === 0 || b === 0) continue;
+                          if (ln >= a && ln <= b) return true;
+                        }
+                      }
+                      return false;
+                    })();
+
                     const items: ConflictContextMenuItem[] = [
                       {
                         label: "Use this version",
+                        disabled: !canUseThisVersion,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canUseThisVersion) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.(useActionId)?.run?.();
@@ -1372,6 +1471,8 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       }}
                       onMount={(diffEditor, monaco) => {
                         ensureConflictThemes(monaco);
+
+                        diffEditorRef.current = diffEditor;
 
                         const originalEditor = diffEditor.getOriginalEditor();
                         const modifiedEditor = diffEditor.getModifiedEditor();
@@ -1482,9 +1583,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             await applyContent(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                            if (listConflictBlocksFromText(next).length === 0) {
-                              await applyAndStageContent(next);
-                            }
                           },
                         });
 
@@ -1506,9 +1604,6 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             await applyContent(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                            if (listConflictBlocksFromText(next).length === 0) {
-                              await applyAndStageContent(next);
-                            }
                           },
                         });
                       }}
@@ -1551,11 +1646,18 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                   style={{ height: "100%" }}
                   onContextMenu={(e) => {
                     const editor = resultEditorRef.current;
+
+                    const pos = editor?.getPosition?.();
+                    const model = editor?.getModel?.();
+                    const canResolveAtCursor = !!(pos && model && findConflictBlock(model, pos.lineNumber));
+
                     const items: ConflictContextMenuItem[] = [
                       {
                         label: "Resolve conflict: take ours",
+                        disabled: !canResolveAtCursor,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canResolveAtCursor) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.("graphoria.resolveConflict.takeOurs")?.run?.();
@@ -1566,8 +1668,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       },
                       {
                         label: "Resolve conflict: take theirs",
+                        disabled: !canResolveAtCursor,
                         onClick: () => {
                           setCtxMenu(null);
+                          if (!canResolveAtCursor) return;
                           try {
                             editor?.focus?.();
                             editor?.getAction?.("graphoria.resolveConflict.takeTheirs")?.run?.();
@@ -1582,106 +1686,120 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                     openEditorContextMenu(e, items);
                   }}
                 >
-                  <Editor
-                    height="100%"
-                    theme={monacoTheme}
-                    language={lang}
-                    value={resultDraft}
-                    beforeMount={(monaco) => {
-                      ensureConflictThemes(monaco);
-                    }}
-                    onChange={(v: string | undefined) => {
-                      setResultDraft(v ?? "");
-                    }}
-                    onMount={(editor, monaco) => {
-                      ensureConflictThemes(monaco);
-                      resultEditorRef.current = editor;
-
-                      const model = editor.getModel();
-                      if (!model) return;
-
-                      const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
-                      const updateKey = () => {
-                        const pos = editor.getPosition();
-                        if (!pos) {
-                          key.set(false);
-                          return;
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Text conflict</div>
+                      <button
+                        type="button"
+                        onClick={() => void applyTextResult()}
+                        disabled={disabled}
+                        title={
+                          listConflictBlocksFromText(resultDraft).length > 0
+                            ? "Apply resolved changes and keep the remaining conflicts unresolved"
+                            : "Stage the result and mark this conflict as resolved"
                         }
-                        const blk = findConflictBlock(model, pos.lineNumber);
-                        key.set(!!blk);
-                      };
-                      updateKey();
-                      editor.onDidChangeCursorPosition(updateKey);
+                      >
+                        Apply result
+                      </button>
+                      </div>
+                    </div>
 
-                      editor.addAction({
-                        id: "graphoria.resolveConflict.takeOurs",
-                        label: "Resolve conflict: take ours",
-                        contextMenuGroupId: "navigation",
-                        contextMenuOrder: 1.5,
-                        run: async () => {
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(editor, monaco) => {
+                        ensureConflictThemes(monaco);
+                        resultEditorRef.current = editor;
+
+                        const model = editor.getModel();
+                        if (!model) return;
+
+                        const key = editor.createContextKey<boolean>("graphoriaHasConflictAtCursor", false);
+                        const updateKey = () => {
                           const pos = editor.getPosition();
-                          if (!pos) return;
+                          if (!pos) {
+                            key.set(false);
+                            return;
+                          }
                           const blk = findConflictBlock(model, pos.lineNumber);
-                          if (!blk) return;
+                          key.set(!!blk);
+                        };
+                        updateKey();
+                        editor.onDidChangeCursorPosition(updateKey);
 
-                          const oursLines: string[] = [];
-                          for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
-                            oursLines.push(model.getLineContent(ln));
-                          }
+                        editor.addAction({
+                          id: "graphoria.resolveConflict.takeOurs",
+                          label: "Resolve conflict: take ours",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.5,
+                          run: async () => {
+                            const pos = editor.getPosition();
+                            if (!pos) return;
+                            const blk = findConflictBlock(model, pos.lineNumber);
+                            if (!blk) return;
 
-                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
-                          model.applyEdits([{ range, text: oursLines.join("\n") }]);
-                          const next = model.getValue();
-                          setResultDraft(next);
-                          await applyContent(next);
-                          setDiffOurs(buildVariantFromWorking(next, "ours"));
-                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                          if (listConflictBlocksFromText(next).length === 0) {
-                            await applyAndStageContent(next);
-                          }
-                          return;
-                        },
-                      });
+                            const oursLines: string[] = [];
+                            for (let ln = blk.start + 1; ln <= blk.mid - 1; ln++) {
+                              oursLines.push(model.getLineContent(ln));
+                            }
 
-                      editor.addAction({
-                        id: "graphoria.resolveConflict.takeTheirs",
-                        label: "Resolve conflict: take theirs",
-                        contextMenuGroupId: "navigation",
-                        contextMenuOrder: 1.6,
-                        run: async () => {
-                          const pos = editor.getPosition();
-                          if (!pos) return;
-                          const blk = findConflictBlock(model, pos.lineNumber);
-                          if (!blk) return;
+                            const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                            model.applyEdits([{ range, text: oursLines.join("\n") }]);
+                            const next = model.getValue();
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                            return;
+                          },
+                        });
 
-                          const theirLines: string[] = [];
-                          for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
-                            theirLines.push(model.getLineContent(ln));
-                          }
+                        editor.addAction({
+                          id: "graphoria.resolveConflict.takeTheirs",
+                          label: "Resolve conflict: take theirs",
+                          contextMenuGroupId: "navigation",
+                          contextMenuOrder: 1.6,
+                          run: async () => {
+                            const pos = editor.getPosition();
+                            if (!pos) return;
+                            const blk = findConflictBlock(model, pos.lineNumber);
+                            if (!blk) return;
 
-                          const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
-                          model.applyEdits([{ range, text: theirLines.join("\n") }]);
-                          const next = model.getValue();
-                          setResultDraft(next);
-                          await applyContent(next);
-                          setDiffOurs(buildVariantFromWorking(next, "ours"));
-                          setDiffTheirs(buildVariantFromWorking(next, "theirs"));
-                          if (listConflictBlocksFromText(next).length === 0) {
-                            await applyAndStageContent(next);
-                          }
-                          return;
-                        },
-                      });
-                    }}
-                  options={{
-                    readOnly: false,
-                    contextmenu: false,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                    fontSize: 12,
-                  }}
-                  />
+                            const theirLines: string[] = [];
+                            for (let ln = blk.mid + 1; ln <= blk.end - 1; ln++) {
+                              theirLines.push(model.getLineContent(ln));
+                            }
+
+                            const range = new monaco.Range(blk.start, 1, blk.end, model.getLineMaxColumn(blk.end));
+                            model.applyEdits([{ range, text: theirLines.join("\n") }]);
+                            const next = model.getValue();
+                            setResultDraft(next);
+                            await applyContent(next);
+                            setDiffOurs(buildVariantFromWorking(next, "ours"));
+                            setDiffTheirs(buildVariantFromWorking(next, "theirs"));
+                            return;
+                          },
+                        });
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
                 </div>
               )}
             </div>
