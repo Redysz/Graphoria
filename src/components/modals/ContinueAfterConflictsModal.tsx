@@ -601,7 +601,15 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
               const run = async () => {
                 try {
                   const realEntries = statusEntries;
-                  const selected = realEntries.filter((e) => selectedPaths[e.path]).map((e) => e.path);
+                  const selected = realEntries
+                    .filter((e) => selectedPaths[e.path])
+                    .filter((e) => {
+                      const st = (e.status ?? "").trimEnd();
+                      if (st.startsWith("??")) return false;
+                      const idx = st[0] ?? " ";
+                      return idx === " " || idx === "?";
+                    })
+                    .map((e) => e.path);
 
                   const toUnstage: string[] = [];
                   for (const e of realEntries) {
