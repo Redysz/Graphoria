@@ -95,6 +95,75 @@ pub(crate) fn git_conflict_resolve_rename(repo_path: String, path: String, keep_
     })
 }
 
+#[tauri::command]
+pub(crate) fn git_conflict_resolve_rename_with_content(
+    repo_path: String,
+    path: String,
+    keep_name: String,
+    content: String,
+) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+    let keep_name = keep_name.trim().to_string();
+    if keep_name != "ours" && keep_name != "theirs" {
+        return Err(String::from("keep_name must be 'ours' or 'theirs'"));
+    }
+
+    let ours_path = path.clone();
+    let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+    crate::with_repo_git_lock(&repo_path, || {
+        let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
+        let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+        let theirs_path = renames
+            .get(ours_path.as_str())
+            .cloned()
+            .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
+
+        let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        let content = content;
+        if content.trim().is_empty() {
+            return Err(String::from("Content is empty."));
+        }
+
+        let final_path = if keep_name == "ours" {
+            ours_path.clone()
+        } else {
+            theirs_path.clone()
+        };
+        let remove_path = if final_path == ours_path {
+            theirs_path.clone()
+        } else {
+            ours_path.clone()
+        };
+
+        let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+        if let Some(parent) = full_final.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+        }
+        fs::write(&full_final, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+
+        crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
+        crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
+
+        let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+        if full_remove.exists() {
+            if full_remove.is_dir() {
+                let _ = fs::remove_dir_all(&full_remove);
+            } else {
+                let _ = fs::remove_file(&full_remove);
+            }
+        }
+
+        Ok(String::from("ok"))
+    })
+}
+
 fn detect_theirs_ref(repo_path: &str) -> Option<String> {
     for r in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"] {
         if rev_exists(repo_path, r) {
@@ -288,6 +357,40 @@ pub(crate) fn git_continue_file_diff(repo_path: String, path: String, unified: u
     crate::run_git_stdout_raw(
         &repo_path,
         &["diff", "--cached", "--no-color", unified_arg.as_str(), "--", path.as_str()],
+    )
+}
+
+#[tauri::command]
+pub(crate) fn git_continue_rename_diff(
+    repo_path: String,
+    old_path: String,
+    new_path: String,
+    unified: u32,
+) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let old_path = old_path.trim().to_string();
+    let new_path = new_path.trim().to_string();
+    if old_path.is_empty() || new_path.is_empty() {
+        return Err(String::from("old_path/new_path is empty"));
+    }
+    crate::ensure_rel_path_safe(old_path.as_str())?;
+    crate::ensure_rel_path_safe(new_path.as_str())?;
+
+    let u = unified.min(50);
+    let unified_arg = format!("--unified={u}");
+    crate::run_git_stdout_raw(
+        &repo_path,
+        &[
+            "diff",
+            "--cached",
+            "--no-color",
+            "-M",
+            unified_arg.as_str(),
+            "--",
+            old_path.as_str(),
+            new_path.as_str(),
+        ],
     )
 }
 

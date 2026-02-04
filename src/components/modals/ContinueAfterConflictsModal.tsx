@@ -6,6 +6,8 @@ import { statusBadge } from "../../utils/text";
 import { useAppSettings } from "../../appSettingsStore";
 import {
   gitContinueInfo,
+  gitContinueFileDiff,
+  gitContinueRenameDiff,
   gitMergeContinueWithMessage,
   gitRebaseContinueWithMessage,
   gitStagePaths,
@@ -95,6 +97,10 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
   const derivedEntries = useMemo(() => {
     const real = statusEntries;
     const realSet = new Set(real.map((e) => e.path));
+    for (const e of real) {
+      const oldp = (e as any).old_path as string | undefined | null;
+      if (oldp && oldp.trim()) realSet.add(oldp);
+    }
     const paths = extractConflictPathsFromMessage(conflictPathsSourceMessage);
     const uniq = Array.from(new Set(paths)).filter((p) => p.trim().length > 0);
     const virtual = uniq.filter((p) => !realSet.has(p)).map((p) => ({ status: "NC", path: p } as GitStatusEntry));
@@ -192,6 +198,9 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
           return;
         }
 
+        const statusEntry = statusEntries.find((e) => e.path === previewPath) as any;
+        const oldPath = (statusEntry?.old_path as string | undefined | null) ?? null;
+
         const ext = fileExtLower(previewPath);
         if (isImageExt(ext)) {
           const b64 = await gitWorkingFileImageBase64({ repoPath, path: previewPath });
@@ -200,6 +209,10 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
           return;
         }
 
+        const idx = st[0] ?? " ";
+        const isStaged = idx !== " " && idx !== "?";
+        const isRename = (st.includes("R") || st.includes("C")) && !!(oldPath && oldPath.trim());
+
         if (isDocTextPreviewExt(ext)) {
           if (st.startsWith("??")) {
             const content = await gitWorkingFileTextPreview({ repoPath, path: previewPath });
@@ -207,7 +220,11 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
             setPreviewContent(content);
             return;
           }
-          const diff = await gitHeadVsWorkingTextDiff({ repoPath, path: previewPath, unified: 3 });
+          const diff = isStaged
+            ? isRename
+              ? await gitContinueRenameDiff({ repoPath, oldPath: oldPath!, newPath: previewPath, unified: 3 })
+              : await gitContinueFileDiff({ repoPath, path: previewPath, unified: 3 })
+            : await gitHeadVsWorkingTextDiff({ repoPath, path: previewPath, unified: 3 });
           if (!alive) return;
           if (diff.trim()) {
             setPreviewDiff(diff);
@@ -226,7 +243,11 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
           return;
         }
 
-        const diff = await gitWorkingFileDiffUnified({ repoPath, path: previewPath, unified: 20 });
+        const diff = isStaged
+          ? isRename
+            ? await gitContinueRenameDiff({ repoPath, oldPath: oldPath!, newPath: previewPath, unified: 20 })
+            : await gitContinueFileDiff({ repoPath, path: previewPath, unified: 20 })
+          : await gitWorkingFileDiffUnified({ repoPath, path: previewPath, unified: 20 });
         if (!alive) return;
         setPreviewDiff(diff);
       } catch (e) {
@@ -499,7 +520,15 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                         {statusBadge(e.status)}
                       </span>
                       <span className="statusPath">
-                        {e.path}
+                        {(e as any).old_path ? (
+                          <>
+                            {(e as any).old_path}
+                            <span style={{ opacity: 0.55, margin: "0 6px" }}>→</span>
+                            {e.path}
+                          </>
+                        ) : (
+                          e.path
+                        )}
                         {(e.status ?? "") === "NC" ? (
                           <span style={{ opacity: 0.65, marginLeft: 8, fontSize: 12 }}>conflict fixed, no changes</span>
                         ) : null}

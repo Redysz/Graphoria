@@ -5,6 +5,7 @@ import {
   gitConflictApply,
   gitConflictApplyAndStage,
   gitConflictFileVersions,
+  gitConflictResolveRenameWithContent,
   gitConflictState,
   gitConflictTakeOurs,
   gitConflictTakeTheirs,
@@ -110,6 +111,12 @@ function buildVariantFromWorking(working: string, choice: "ours" | "theirs") {
     out = applyConflictBlock(out, 0, choice === "ours" ? blocks[0]?.oursText ?? "" : blocks[0]?.theirsText ?? "");
   }
   return out;
+}
+
+function makeSyntheticConflictText(oursText: string, theirsText: string) {
+  const ours = normalizeNewlines(oursText ?? "").replace(/\s+$/g, "");
+  const theirs = normalizeNewlines(theirsText ?? "").replace(/\s+$/g, "");
+  return `<<<<<<< ours\n${ours}\n=======\n${theirs}\n>>>>>>> theirs\n`;
 }
 
 function formatConflictStatus(status: string) {
@@ -302,6 +309,9 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const [diffOurs, setDiffOurs] = useState<string>("");
   const [diffTheirs, setDiffTheirs] = useState<string>("");
 
+  const lastAppliedResultRef = useRef<string>("");
+  const resultInitKeyRef = useRef<string>("");
+
   const [ctxMenu, setCtxMenu] = useState<ConflictContextMenuState | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -440,6 +450,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
         setVersions(next);
         setResultDraft(next.working);
+        lastAppliedResultRef.current = next.working;
         setDiffOurs(buildVariantFromWorking(next.working, "ours"));
         setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
 
@@ -509,6 +520,37 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
     setVersions(next);
     setResultDraft(next.working);
+    lastAppliedResultRef.current = next.working;
+    setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+    setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+
+    if (next.conflictKind === "rename") {
+      setRenameKeepName(null);
+    }
+
+    if (!initialWorkingByPathRef.current[p]) {
+      initialWorkingByPathRef.current[p] = next.working;
+    }
+  }
+
+  async function reloadVersionsForPath(path: string) {
+    const p = (path ?? "").trim();
+    if (!p) return;
+    const res = await gitConflictFileVersions({ repoPath, path: p });
+    const next: Versions = {
+      base: normalizeNewlines(res.base ?? ""),
+      ours: normalizeNewlines(res.ours ?? ""),
+      theirs: normalizeNewlines(res.theirs ?? ""),
+      working: normalizeNewlines(res.working ?? ""),
+      oursPath: (res.ours_path ?? p) || p,
+      theirsPath: res.theirs_path ?? "",
+      oursDeleted: !!res.ours_deleted,
+      theirsDeleted: !!res.theirs_deleted,
+      conflictKind: (res.conflict_kind === "rename" || res.conflict_kind === "modify_delete" ? res.conflict_kind : "text") as any,
+    };
+
+    setVersions(next);
+    setResultDraft(next.working);
     setDiffOurs(buildVariantFromWorking(next.working, "ours"));
     setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
 
@@ -566,12 +608,18 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
       return;
     }
 
+    const finalPath =
+      renameKeepName === "ours"
+        ? versions.oursPath
+        : (versions.theirsPath || "").trim() || versions.oursPath;
+
     setApplyBusy(true);
     setApplyError("");
     try {
       await gitConflictResolveRename({ repoPath, path: selectedPath, keepName: renameKeepName, keepContent });
-      await reloadSelectedVersions();
+      setSelectedPath(finalPath);
       await refreshStateKeepPath();
+      await reloadVersionsForPath(finalPath);
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -637,6 +685,93 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setApplyError("");
     try {
       await gitConflictApply({ repoPath, path: selectedPath, content });
+      lastAppliedResultRef.current = content;
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (editMode !== "result") return;
+    if (!selectedPath.trim()) return;
+    if (!versions) return;
+    if (applyBusy) return;
+    if (versions.conflictKind === "rename" || versions.conflictKind === "modify_delete") return;
+    if (resultDraft === lastAppliedResultRef.current) return;
+
+    const t = window.setTimeout(() => {
+      if (applyBusy) return;
+      if (!selectedPath.trim()) return;
+      if (!versions) return;
+      if (versions.conflictKind === "rename" || versions.conflictKind === "modify_delete") return;
+
+      const content = resultDraftRef.current;
+      void (async () => {
+        await applyContent(content);
+        if (versions.conflictKind !== "modify_delete") {
+          if (listConflictBlocksFromText(content).length === 0) {
+            await applyAndStageContent(content);
+          }
+        }
+      })();
+    }, 550);
+
+    return () => {
+      window.clearTimeout(t);
+    };
+  }, [open, editMode, selectedPath, versions, resultDraft, applyBusy]);
+
+  async function applyRenameResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "rename") return;
+    if (!renameKeepName) {
+      setApplyError("Select final name (ours/theirs) first.");
+      return;
+    }
+
+    const finalPath =
+      renameKeepName === "ours"
+        ? versions.oursPath
+        : (versions.theirsPath || "").trim() || versions.oursPath;
+
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      await gitConflictResolveRenameWithContent({ repoPath, path: selectedPath, keepName: renameKeepName, content: resultDraftRef.current });
+      setSelectedPath(finalPath);
+      await refreshStateKeepPath();
+      await reloadVersionsForPath(finalPath);
+    } catch (e) {
+      setApplyError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function applyModifyDeleteResult() {
+    if (!selectedPath.trim()) return;
+    if (!versions || versions.conflictKind !== "modify_delete") return;
+
+    const content = resultDraftRef.current;
+    setApplyBusy(true);
+    setApplyError("");
+    try {
+      if (!content.trim()) {
+        if (versions.theirsDeleted) {
+          await gitConflictTakeTheirs({ repoPath, path: selectedPath });
+        } else if (versions.oursDeleted) {
+          await gitConflictTakeOurs({ repoPath, path: selectedPath });
+        } else {
+          await gitConflictApplyAndStage({ repoPath, path: selectedPath, content: "" });
+        }
+      } else {
+        await gitConflictApplyAndStage({ repoPath, path: selectedPath, content });
+      }
+      await reloadSelectedVersions();
+      await refreshStateKeepPath();
     } catch (e) {
       setApplyError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -651,6 +786,23 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     if (!f) return false;
     return (f.status ?? "").replace(/\s+/g, "").includes("U");
   }, [files, selectedPath]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (editMode !== "result") return;
+    if (!selectedPath.trim()) return;
+    if (!versions) return;
+    if (!selectedIsUnmerged) return;
+    if (versions.conflictKind !== "rename" && versions.conflictKind !== "modify_delete") return;
+
+    const key = `${selectedPath}::${versions.conflictKind}::${versions.oursDeleted ? "od" : ""}${versions.theirsDeleted ? "td" : ""}`;
+    if (resultInitKeyRef.current === key) return;
+
+    const oursText = versions.oursDeleted ? "" : versions.ours;
+    const theirsText = versions.theirsDeleted ? "" : versions.theirs;
+    setResultDraft(makeSyntheticConflictText(oursText, theirsText));
+    resultInitKeyRef.current = key;
+  }, [open, editMode, selectedIsUnmerged, selectedPath, versions]);
 
   const nextUnmergedPath = useMemo(() => {
     const p = selectedPath.trim();
@@ -905,77 +1057,222 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 <div className="diffEmpty">Loading…</div>
               ) : !versions ? (
                 <div className="diffEmpty">Select a file.</div>
+              ) : !selectedIsUnmerged && selectedPath.trim() ? (
+                versions.working.trim() ? (
+                  <Editor
+                    height="100%"
+                    theme={monacoTheme}
+                    language={lang}
+                    value={versions.working}
+                    beforeMount={(monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    onMount={(_, monaco) => {
+                      ensureConflictThemes(monaco);
+                    }}
+                    options={{
+                      readOnly: true,
+                      contextmenu: false,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      fontSize: 12,
+                    }}
+                  />
+                ) : (
+                  <div className="diffEmpty">File does not exist.</div>
+                )
               ) : versions.conflictKind === "rename" ? (
-                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 900, opacity: 0.8 }}>
-                      Rename conflict
+                editMode === "diff" ? (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.8 }}>
+                        <span style={renameNeedsNameChoice ? { color: "var(--danger)" } : undefined}>
+                          {renameNeedsNameChoice ? "Rename conflict!" : "Rename conflict"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={renameNeedsNameChoice ? { fontWeight: 900, color: "var(--danger)" } : { fontWeight: 800, opacity: 0.75 }}>
+                          {renameNeedsNameChoice ? "Set final name first:" : "Final name:"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("ours")}
+                          className="conflictLegend conflictLegend-ours"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.22)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.32)" : undefined,
+                            outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep our file name"
+                        >
+                          {versions.oursPath}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("theirs")}
+                          className="conflictLegend conflictLegend-theirs"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.35)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.55)" : undefined,
+                            outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep their file name"
+                        >
+                          {versions.theirsPath || "(unknown)"}
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 800, opacity: 0.75 }}>Final name:</span>
-                      <button
-                        type="button"
-                        onClick={() => setRenameKeepName("ours")}
-                        className="conflictLegend conflictLegend-ours"
-                        style={{
-                          cursor: "pointer",
-                          outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
-                          outlineOffset: 1,
+
+                    <div
+                      style={{ height: "100%", minHeight: 0 }}
+                      onContextMenu={(e) => {
+                        const t = e.target as HTMLElement | null;
+                        const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
+                        const editor = isOriginal ? renameDiffOriginalEditorRef.current : renameDiffModifiedEditorRef.current;
+                        const items: ConflictContextMenuItem[] = [
+                          {
+                            label: "Use this version",
+                            disabled: !renameKeepName,
+                            onClick: () => {
+                              setCtxMenu(null);
+                              void resolveRenameWithContent(isOriginal ? "ours" : "theirs");
+                            },
+                          },
+                          makeCopyItem(editor),
+                          makeCommandPaletteItem(editor),
+                        ];
+                        openEditorContextMenu(e, items);
+                      }}
+                    >
+                      <DiffEditor
+                        height="100%"
+                        theme={monacoTheme}
+                        language={lang}
+                        original={versions.ours}
+                        modified={versions.theirs}
+                        beforeMount={(monaco) => {
+                          ensureConflictThemes(monaco);
                         }}
-                        title="Keep our file name"
-                      >
-                        {versions.oursPath}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRenameKeepName("theirs")}
-                        className="conflictLegend conflictLegend-theirs"
-                        style={{
-                          cursor: "pointer",
-                          outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
-                          outlineOffset: 1,
+                        onMount={(diffEditor, monaco) => {
+                          ensureConflictThemes(monaco);
+                          renameDiffOriginalEditorRef.current = diffEditor.getOriginalEditor();
+                          renameDiffModifiedEditorRef.current = diffEditor.getModifiedEditor();
                         }}
-                        title="Keep their file name"
-                      >
-                        {versions.theirsPath || "(unknown)"}
-                      </button>
+                        options={{
+                          readOnly: true,
+                          contextmenu: false,
+                          renderSideBySide: true,
+                          renderSideBySideInlineBreakpoint: 0,
+                          minimap: { enabled: false },
+                          scrollBeyondLastLine: false,
+                          wordWrap: "on",
+                          fontSize: 12,
+                        }}
+                      />
                     </div>
                   </div>
+                ) : (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>
+                          <span style={renameNeedsNameChoice ? { color: "var(--danger)" } : undefined}>
+                            {renameNeedsNameChoice ? "Rename conflict!" : "Rename conflict"}
+                          </span>
+                        </div>
+                        <button type="button" onClick={() => void applyRenameResult()} disabled={disabled || renameNeedsNameChoice}>
+                          Apply result
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={renameNeedsNameChoice ? { fontWeight: 900, color: "var(--danger)" } : { fontWeight: 800, opacity: 0.75 }}>
+                          {renameNeedsNameChoice ? "Set final name first:" : "Final name:"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("ours")}
+                          className="conflictLegend conflictLegend-ours"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.22)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(0, 140, 0, 0.32)" : undefined,
+                            outline: renameKeepName === "ours" ? "2px solid rgba(0, 140, 0, 0.28)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep our file name"
+                        >
+                          {versions.oursPath}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenameKeepName("theirs")}
+                          className="conflictLegend conflictLegend-theirs"
+                          style={{
+                            cursor: "pointer",
+                            background: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.35)" : undefined,
+                            borderColor: renameNeedsNameChoice ? "rgba(255, 215, 130, 0.55)" : undefined,
+                            outline: renameKeepName === "theirs" ? "2px solid rgba(255, 215, 130, 0.55)" : "none",
+                            outlineOffset: 1,
+                          }}
+                          title="Keep their file name"
+                        >
+                          {versions.theirsPath || "(unknown)"}
+                        </button>
+                      </div>
+                    </div>
 
-                  <div
-                    style={{ height: "100%", minHeight: 0 }}
-                    onContextMenu={(e) => {
-                      const t = e.target as HTMLElement | null;
-                      const isOriginal = !!t?.closest?.(".original") && !t?.closest?.(".modified");
-                      const editor = isOriginal ? renameDiffOriginalEditorRef.current : renameDiffModifiedEditorRef.current;
-                      const items: ConflictContextMenuItem[] = [
-                        {
-                          label: "Use this version",
-                          disabled: !renameKeepName,
-                          onClick: () => {
-                            setCtxMenu(null);
-                            void resolveRenameWithContent(isOriginal ? "ours" : "theirs");
-                          },
-                        },
-                        makeCopyItem(editor),
-                        makeCommandPaletteItem(editor),
-                      ];
-                      openEditorContextMenu(e, items);
-                    }}
-                  >
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                )
+              ) : versions.conflictKind === "modify_delete" ? (
+                editMode === "diff" ? (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
+                      <div style={{ opacity: 0.75 }}>
+                        {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
+                        {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                      </div>
+                    </div>
+
                     <DiffEditor
                       height="100%"
                       theme={monacoTheme}
                       language={lang}
                       original={versions.ours}
-                      modified={versions.theirs}
+                      modified={versions.theirsDeleted ? "" : versions.theirs}
                       beforeMount={(monaco) => {
                         ensureConflictThemes(monaco);
                       }}
-                      onMount={(diffEditor, monaco) => {
+                      onMount={(_, monaco) => {
                         ensureConflictThemes(monaco);
-                        renameDiffOriginalEditorRef.current = diffEditor.getOriginalEditor();
-                        renameDiffModifiedEditorRef.current = diffEditor.getModifiedEditor();
                       }}
                       options={{
                         readOnly: true,
@@ -989,41 +1286,45 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       }}
                     />
                   </div>
-                </div>
-              ) : versions.conflictKind === "modify_delete" ? (
-                <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
-                    <div style={{ opacity: 0.75 }}>
-                      {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
-                      {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                ) : (
+                  <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, opacity: 0.8 }}>Modify / Delete conflict</div>
+                        <button type="button" onClick={() => void applyModifyDeleteResult()} disabled={disabled}>
+                          Apply result
+                        </button>
+                      </div>
+                      <div style={{ opacity: 0.75 }}>
+                        {versions.theirsDeleted ? <span className="conflictLegend conflictLegend-theirs">deleted on theirs</span> : null}
+                        {versions.oursDeleted ? <span className="conflictLegend conflictLegend-ours">deleted on ours</span> : null}
+                      </div>
                     </div>
+                    <Editor
+                      height="100%"
+                      theme={monacoTheme}
+                      language={lang}
+                      value={resultDraft}
+                      beforeMount={(monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
+                      onMount={(_, monaco) => {
+                        ensureConflictThemes(monaco);
+                      }}
+                      options={{
+                        readOnly: false,
+                        contextmenu: false,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        fontSize: 12,
+                      }}
+                    />
                   </div>
-
-                  <DiffEditor
-                    height="100%"
-                    theme={monacoTheme}
-                    language={lang}
-                    original={versions.ours}
-                    modified={versions.theirsDeleted ? "" : versions.theirs}
-                    beforeMount={(monaco) => {
-                      ensureConflictThemes(monaco);
-                    }}
-                    onMount={(_, monaco) => {
-                      ensureConflictThemes(monaco);
-                    }}
-                    options={{
-                      readOnly: true,
-                      contextmenu: false,
-                      renderSideBySide: true,
-                      renderSideBySideInlineBreakpoint: 0,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      wordWrap: "on",
-                      fontSize: 12,
-                    }}
-                  />
-                </div>
+                )
               ) : editMode === "diff" ? (
                 <div
                   style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", minHeight: 0 }}

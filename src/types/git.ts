@@ -25,6 +25,7 @@ export type GitTagTarget = {
 export type GitStatusEntry = {
   status: string;
   path: string;
+  old_path?: string | null;
 };
 
 export type GitStashEntry = {
