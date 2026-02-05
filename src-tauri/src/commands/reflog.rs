@@ -27,3 +27,35 @@ pub(crate) fn git_cherry_pick(repo_path: String, commits: Vec<String>) -> Result
     }
     crate::run_git(&repo_path, args.as_slice())
 }
+
+#[tauri::command]
+pub(crate) fn git_cherry_pick_advanced(
+    repo_path: String,
+    commits: Vec<String>,
+    append_origin: bool,
+    no_commit: bool,
+) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let commits: Vec<String> = commits
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if commits.is_empty() {
+        return Err(String::from("No commits provided."));
+    }
+
+    let mut args: Vec<&str> = Vec::new();
+    args.push("cherry-pick");
+    if append_origin {
+        args.push("-x");
+    }
+    if no_commit {
+        args.push("--no-commit");
+    }
+    for c in &commits {
+        args.push(c.as_str());
+    }
+    crate::run_git(&repo_path, args.as_slice())
+}

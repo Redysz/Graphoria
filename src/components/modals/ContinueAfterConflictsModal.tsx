@@ -10,6 +10,7 @@ import {
   gitContinueRenameDiff,
   gitMergeContinueWithMessage,
   gitRebaseContinueWithMessage,
+  gitCherryPickContinueWithMessage,
   gitStagePaths,
   gitStatus,
   gitUnstagePaths,
@@ -25,7 +26,7 @@ import {
 type Props = {
   open: boolean;
   repoPath: string;
-  operation: "merge" | "rebase";
+  operation: "merge" | "rebase" | "cherry-pick";
   onClose: () => void;
   onSuccess: () => void | Promise<void>;
   onAbort?: () => void | Promise<void>;
@@ -91,7 +92,7 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
 
-  const effectiveOp = (info?.operation?.trim() as "merge" | "rebase" | "") || operation;
+  const effectiveOp = (info?.operation?.trim() as "merge" | "rebase" | "cherry-pick" | "") || operation;
 
   const conflictPathsSourceMessage = info?.message ?? message;
 
@@ -626,10 +627,12 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                     await gitUnstagePaths({ repoPath, paths: toUnstage });
                   }
 
-                  if (effectiveOp === "rebase") {
+                  if (effectiveOp === "merge") {
+                    await gitMergeContinueWithMessage({ repoPath, message });
+                  } else if (effectiveOp === "rebase") {
                     await gitRebaseContinueWithMessage({ repoPath, message });
                   } else {
-                    await gitMergeContinueWithMessage({ repoPath, message });
+                    await gitCherryPickContinueWithMessage({ repoPath, message });
                   }
                   await onSuccess();
                 } catch (e) {

@@ -269,16 +269,30 @@ pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, St
 
     let merge = crate::is_merge_in_progress(&repo_path);
     let rebase = crate::is_rebase_in_progress(&repo_path);
-    if !merge && !rebase {
-        return Err(String::from("No merge/rebase in progress."));
+    let cherry = crate::is_cherry_pick_in_progress(&repo_path);
+    if !merge && !rebase && !cherry {
+        return Err(String::from("No merge/rebase/cherry-pick in progress."));
     }
 
-    let operation = if rebase { "rebase" } else { "merge" };
+    let operation = if rebase {
+        "rebase"
+    } else if merge {
+        "merge"
+    } else {
+        "cherry-pick"
+    };
 
     let mut message = if operation == "merge" {
         let m = read_git_path_text(&repo_path, "MERGE_MSG")?;
         if m.trim().is_empty() {
             String::from("Merge")
+        } else {
+            m
+        }
+    } else if operation == "cherry-pick" {
+        let m = read_git_path_text(&repo_path, "CHERRY_PICK_MSG")?;
+        if m.trim().is_empty() {
+            String::from("Cherry-pick")
         } else {
             m
         }
@@ -307,7 +321,7 @@ pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, St
     s.push_str("# with '#' will be ignored, and an empty message aborts the commit.\n");
     s.push_str("#\n");
 
-    if operation == "merge" {
+    if operation == "merge" || operation == "cherry-pick" {
         let conflicts = crate::list_unmerged_files(&repo_path);
         if !conflicts.is_empty() {
             s.push_str("# Conflicts:\n");
@@ -340,6 +354,43 @@ pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, St
         message,
         files,
     })
+}
+
+#[tauri::command]
+pub(crate) fn git_cherry_pick_abort(repo_path: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    if !crate::is_cherry_pick_in_progress(&repo_path) {
+        return Err(String::from("No cherry-pick in progress."));
+    }
+    crate::run_git(&repo_path, &["cherry-pick", "--abort"])
+}
+
+#[tauri::command]
+pub(crate) fn git_cherry_pick_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    if !crate::is_cherry_pick_in_progress(&repo_path) {
+        return Err(String::from("No cherry-pick in progress."));
+    }
+
+    // Keep message in sync with what Git expects during cherry-pick.
+    // Git uses CHERRY_PICK_MSG when continuing.
+    write_git_path_text(&repo_path, "CHERRY_PICK_MSG", message.as_str())?;
+
+    // Continue without launching editor.
+    let mut cmd = crate::git_command_in_repo(&repo_path);
+    no_editor_env(&mut cmd);
+    let out = cmd
+        .args(["cherry-pick", "--continue", "--no-edit"])
+        .output()
+        .map_err(|e| format!("Failed to spawn git cherry-pick --continue: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+    if out.status.success() {
+        Ok(if !stdout.is_empty() { stdout } else { stderr })
+    } else {
+        Err(if !stderr.is_empty() { stderr } else { stdout })
+    }
 }
 
 #[tauri::command]
@@ -774,16 +825,19 @@ pub(crate) fn git_conflict_state(repo_path: String) -> Result<GitConflictState, 
     crate::with_repo_git_lock(&repo_path, || {
         let merge_in_progress = crate::is_merge_in_progress(&repo_path);
         let rebase_in_progress = crate::is_rebase_in_progress(&repo_path);
+        let cherry_in_progress = crate::is_cherry_pick_in_progress(&repo_path);
 
         let operation = if rebase_in_progress {
             String::from("rebase")
         } else if merge_in_progress {
             String::from("merge")
+        } else if cherry_in_progress {
+            String::from("cherry-pick")
         } else {
             String::new()
         };
 
-        let in_progress = merge_in_progress || rebase_in_progress;
+        let in_progress = merge_in_progress || rebase_in_progress || cherry_in_progress;
 
         let files = crate::list_unmerged_files(&repo_path);
 

@@ -159,6 +159,7 @@ function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutAct
     "cmd.createTag": platform === "macos" ? "Ctrl+Alt+T" : "Ctrl+Alt+T",
     "cmd.checkoutBranch": "Alt+Shift+B",
     "cmd.reset": "Alt+R",
+    "cmd.cherryPick": "Alt+Y",
 
     "repo.open": "Alt+O",
     "repo.refresh": "F5",

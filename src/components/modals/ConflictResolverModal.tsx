@@ -16,7 +16,7 @@ import { useAppSettings } from "../../appSettingsStore";
 type Props = {
   open: boolean;
   repoPath: string;
-  operation: "merge" | "rebase";
+  operation: "merge" | "rebase" | "cherry-pick";
   initialFiles?: string[];
   busy: boolean;
   onClose: () => void;

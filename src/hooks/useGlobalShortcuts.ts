@@ -334,6 +334,7 @@ export function useGlobalShortcuts(
       if (actionId === "cmd.createTag" && !s.activeRepoPath) return;
       if (actionId === "cmd.checkoutBranch" && !s.activeRepoPath) return;
       if (actionId === "cmd.reset" && !s.activeRepoPath) return;
+      if (actionId === "cmd.cherryPick" && !s.activeRepoPath) return;
       if (actionId === "tool.commitSearch" && !s.activeRepoPath) return;
 
       switch (actionId) {
@@ -401,6 +402,9 @@ export function useGlobalShortcuts(
           return;
         case "cmd.reset":
           s.openResetDialog();
+          return;
+        case "cmd.cherryPick":
+          s.openCherryPickDialog();
           return;
         case "repo.open":
           s.pickRepository();

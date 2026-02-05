@@ -128,3 +128,9 @@ export type GitContinueInfo = {
   message: string;
   files: GitContinueFileEntry[];
 };
+
+export type GitPatchPredictResult = {
+  ok: boolean;
+  message: string;
+  files: string[];
+};
