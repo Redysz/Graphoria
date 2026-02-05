@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type ReactNode, type SetStateAction } from "react";
 import type { GitStatusEntry } from "../../types/git";
-import { parseUnifiedDiff } from "../../DiffView";
+import { parseUnifiedDiff, renderTextForPre, renderUnifiedDiffForPre } from "../../DiffView";
 import { fileExtLower, imageMimeFromExt } from "../../utils/filePreview";
 import { statusBadge } from "../../utils/text";
 import { useAppSettings } from "../../appSettingsStore";
@@ -110,6 +110,7 @@ export function CommitModal({
 }: Props) {
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
   const selectedFilesCount = statusEntries.filter((e) => selectedPaths[e.path]).length;
@@ -670,15 +671,11 @@ export function CommitModal({
                   </div>
                 ) : previewDiff ? (
                   <pre className="diffCode" style={preStyle}>
-                    {parseUnifiedDiff(previewDiff).map((l, i) => (
-                      <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                        {l.text}
-                      </div>
-                    ))}
+                    {renderUnifiedDiffForPre(parseUnifiedDiff(previewDiff), diffShowLineNumbers)}
                   </pre>
                 ) : previewContent ? (
                   <pre className="diffCode" style={preStyle}>
-                    {previewContent.replace(/\r\n/g, "\n")}
+                    {renderTextForPre(previewContent, diffShowLineNumbers)}
                   </pre>
                 ) : (
                   <div style={{ opacity: 0.75 }}>Select a file.</div>

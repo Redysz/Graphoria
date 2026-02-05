@@ -54,6 +54,7 @@ export type GitSettings = {
   commitsHistoryOrder: GitHistoryOrder;
   showOnlineAvatars: boolean;
   workingFilesView: WorkingFilesViewMode;
+  diffShowLineNumbers: boolean;
   diffTool: DiffToolSettings;
 };
 
@@ -199,6 +200,7 @@ export const defaultGitSettings: GitSettings = {
   commitsHistoryOrder: "topo",
   showOnlineAvatars: true,
   workingFilesView: "flat",
+  diffShowLineNumbers: false,
   diffTool: {
     difftool: "Graphoria builtin diff",
     path: "",
@@ -307,7 +309,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 19,
+      version: 20,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -357,6 +359,9 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (s.git.workingFilesView !== "flat" && s.git.workingFilesView !== "tree") {
           s.git.workingFilesView = defaultGitSettings.workingFilesView;
+        }
+        if (typeof s.git.diffShowLineNumbers !== "boolean") {
+          s.git.diffShowLineNumbers = defaultGitSettings.diffShowLineNumbers;
         }
         if (!s.graph || typeof s.graph !== "object") {
           s.graph = defaultGraphSettings;

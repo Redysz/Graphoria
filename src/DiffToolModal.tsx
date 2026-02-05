@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { gitHeadFileContent, gitWorkingFileContent } from "./api/gitWorkingFiles";
 import { readTextFile } from "./api/system";
+import { useAppSettings } from "./appSettingsStore";
 
 type DiffToolMode = "repo_head" | "file_file";
 
@@ -247,6 +248,8 @@ function buildMiniMarks(rows: DiffRow[]): MiniMark[] {
 
 export default function DiffToolModal(props: Props) {
   const { open: isOpen, onClose, repos, activeRepoPath } = props;
+
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
 
   const [mode, setMode] = useState<DiffToolMode>("file_file");
   const [repoPath, setRepoPath] = useState<string>("");
@@ -593,12 +596,18 @@ export default function DiffToolModal(props: Props) {
                 {emptyHint ? (
                   <div style={{ opacity: 0.75 }}>{emptyHint}</div>
                 ) : (
-                  rows.map((r, i) => (
-                    <div key={i} className="splitDiffRow">
-                      <span className="splitDiffLineNo">{r.leftNo ?? ""}</span>
-                      <span className={`diffLine diffLine-${r.leftKind}`}>{r.leftText ? r.leftText : "\u00A0"}</span>
-                    </div>
-                  ))
+                  rows.map((r, i) =>
+                    diffShowLineNumbers ? (
+                      <div key={i} className="splitDiffRow">
+                        <span className="splitDiffLineNo">{r.leftNo ?? ""}</span>
+                        <span className={`diffLine diffLine-${r.leftKind}`}>{r.leftText ? r.leftText : "\u00A0"}</span>
+                      </div>
+                    ) : (
+                      <div key={i} className={`diffLine diffLine-${r.leftKind}`}>
+                        {r.leftText ? r.leftText : "\u00A0"}
+                      </div>
+                    ),
+                  )
                 )}
               </div>
 
@@ -607,12 +616,18 @@ export default function DiffToolModal(props: Props) {
                   {emptyHint ? (
                     <div style={{ opacity: 0.75 }}>{emptyHint}</div>
                   ) : (
-                    rows.map((r, i) => (
-                      <div key={i} className="splitDiffRow">
-                        <span className="splitDiffLineNo">{r.rightNo ?? ""}</span>
-                        <span className={`diffLine diffLine-${r.rightKind}`}>{r.rightText ? r.rightText : "\u00A0"}</span>
-                      </div>
-                    ))
+                    rows.map((r, i) =>
+                      diffShowLineNumbers ? (
+                        <div key={i} className="splitDiffRow">
+                          <span className="splitDiffLineNo">{r.rightNo ?? ""}</span>
+                          <span className={`diffLine diffLine-${r.rightKind}`}>{r.rightText ? r.rightText : "\u00A0"}</span>
+                        </div>
+                      ) : (
+                        <div key={i} className={`diffLine diffLine-${r.rightKind}`}>
+                          {r.rightText ? r.rightText : "\u00A0"}
+                        </div>
+                      ),
+                    )
                   )}
                 </div>
 

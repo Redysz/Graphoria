@@ -132,6 +132,12 @@
   border: 1px solid rgba(120, 185, 255, 0.28);
  }
 
+ .diffUnifiedRow {
+  display: grid;
+  grid-template-columns: 56px 56px 1fr;
+  align-items: start;
+ }
+
  .splitDiffLayout {
   min-height: 0;
   display: grid;
