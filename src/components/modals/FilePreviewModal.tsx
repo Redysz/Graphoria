@@ -1,4 +1,5 @@
-import { parseUnifiedDiff } from "../../DiffView";
+import { parseUnifiedDiff, renderTextForPre, renderUnifiedDiffForPre } from "../../DiffView";
+import { useAppSettings } from "../../appSettingsStore";
 import { fileExtLower, imageMimeFromExt } from "../../utils/filePreview";
 
 export type FilePreviewMode = "normal" | "pullPredict";
@@ -33,6 +34,8 @@ export function FilePreviewModal({
   onClose,
   parsePullPredictConflictPreview,
 }: Props) {
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
+
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true" style={{ zIndex: 320 }}>
       <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(80vh, 900px)" }}>
@@ -69,11 +72,7 @@ export function FilePreviewModal({
               </div>
             ) : diff ? (
               <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                {parseUnifiedDiff(diff).map((l, i) => (
-                  <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                    {l.text}
-                  </div>
-                ))}
+                {renderUnifiedDiffForPre(parseUnifiedDiff(diff), diffShowLineNumbers)}
               </pre>
             ) : content ? (
               mode === "pullPredict" ? (
@@ -94,7 +93,7 @@ export function FilePreviewModal({
                 </div>
               ) : (
                 <pre className="diffCode" style={{ maxHeight: "min(62vh, 720px)", border: "1px solid var(--border)", borderRadius: 12 }}>
-                  {content.replace(/\r\n/g, "\n")}
+                  {renderTextForPre(content, diffShowLineNumbers)}
                 </pre>
               )
             ) : (

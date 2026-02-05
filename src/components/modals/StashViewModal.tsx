@@ -1,4 +1,5 @@
-import { parseUnifiedDiff } from "../../DiffView";
+import { parseUnifiedDiff, renderUnifiedDiffForPre } from "../../DiffView";
+import { useAppSettings } from "../../appSettingsStore";
 
 type Props = {
   reference: string;
@@ -27,6 +28,8 @@ export function StashViewModal({
   deleteDisabled,
   applyDisabled,
 }: Props) {
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
+
   return (
     <div className="modalOverlay" role="dialog" aria-modal="true">
       <div className="modal" style={{ width: "min(1100px, 96vw)", maxHeight: "min(84vh, 900px)" }}>
@@ -47,11 +50,7 @@ export function StashViewModal({
             {!loading ? (
               patch ? (
                 <pre className="diffCode" style={{ maxHeight: 520, border: "1px solid var(--border)", borderRadius: 12 }}>
-                  {parseUnifiedDiff(patch).map((l, i) => (
-                    <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                      {l.text}
-                    </div>
-                  ))}
+                  {renderUnifiedDiffForPre(parseUnifiedDiff(patch), diffShowLineNumbers)}
                 </pre>
               ) : (
                 <div style={{ opacity: 0.75 }}>No patch output.</div>

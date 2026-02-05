@@ -10,9 +10,42 @@ type GitChangeEntry = {
   old_path?: string | null;
 };
 
-type SourceMode =
-  | { kind: "commit"; commit: string }
-  | { kind: "working" };
+type SourceMode = { kind: "commit"; commit: string } | { kind: "working" };
+
+function splitLines(s: string) {
+  return s.replace(/\r\n/g, "\n").split("\n");
+}
+
+export function renderUnifiedDiffForPre(lines: ParsedDiffLine[], showLineNumbers: boolean) {
+  if (!showLineNumbers) {
+    return lines.map((l, i) => (
+      <div key={i} className={`diffLine diffLine-${l.kind}`}>
+        {l.text ? l.text : "\u00A0"}
+      </div>
+    ));
+  }
+
+  return lines.map((l, i) => (
+    <div key={i} className="diffUnifiedRow">
+      <span className="splitDiffLineNo">{l.oldNo ?? ""}</span>
+      <span className="splitDiffLineNo">{l.newNo ?? ""}</span>
+      <span className={`diffLine diffLine-${l.kind}`}>{l.text ? l.text : "\u00A0"}</span>
+    </div>
+  ));
+}
+
+export function renderTextForPre(text: string, showLineNumbers: boolean) {
+  const normalized = text.replace(/\r\n/g, "\n");
+  if (!showLineNumbers) return normalized;
+
+  const lines = splitLines(normalized);
+  return lines.map((line, idx) => (
+    <div key={idx} className="splitDiffRow">
+      <span className="splitDiffLineNo">{idx + 1}</span>
+      <span className="diffLine diffLine-ctx">{line ? line : "\u00A0"}</span>
+    </div>
+  ));
+}
 
 type Props = {
   repoPath: string;
@@ -26,6 +59,8 @@ export type DiffLineKind = "meta" | "hunk" | "add" | "del" | "ctx" | "moved_add"
 export type ParsedDiffLine = {
   kind: DiffLineKind;
   text: string;
+  oldNo: number | null;
+  newNo: number | null;
 };
 
 function normalizeMovedKey(s: string) {
@@ -36,31 +71,57 @@ export function parseUnifiedDiff(raw: string): ParsedDiffLine[] {
   const lines = raw.replace(/\r\n/g, "\n").split("\n");
   const parsed: ParsedDiffLine[] = [];
 
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
+
+  const hunkRe = /^@@\s*-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s*@@/;
+
   const adds: Array<{ idx: number; key: string }> = [];
   const dels: Array<{ idx: number; key: string }> = [];
 
   for (const line of lines) {
     if (line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) {
-      parsed.push({ kind: "meta", text: line });
+      parsed.push({ kind: "meta", text: line, oldNo: null, newNo: null });
       continue;
     }
     if (line.startsWith("@@")) {
-      parsed.push({ kind: "hunk", text: line });
+      const m = line.match(hunkRe);
+      if (m) {
+        oldLine = Number(m[1]);
+        newLine = Number(m[3]);
+      } else {
+        oldLine = null;
+        newLine = null;
+      }
+      parsed.push({ kind: "hunk", text: line, oldNo: null, newNo: null });
+      continue;
+    }
+    if (line.startsWith("\\ No newline at end of file")) {
+      parsed.push({ kind: "meta", text: line, oldNo: null, newNo: null });
       continue;
     }
     if (line.startsWith("+")) {
       const idx = parsed.length;
-      parsed.push({ kind: "add", text: line });
+      const curNew = newLine;
+      parsed.push({ kind: "add", text: line, oldNo: null, newNo: curNew });
+      if (typeof newLine === "number") newLine += 1;
       adds.push({ idx, key: normalizeMovedKey(line.slice(1)) });
       continue;
     }
     if (line.startsWith("-")) {
       const idx = parsed.length;
-      parsed.push({ kind: "del", text: line });
+      const curOld = oldLine;
+      parsed.push({ kind: "del", text: line, oldNo: curOld, newNo: null });
+      if (typeof oldLine === "number") oldLine += 1;
       dels.push({ idx, key: normalizeMovedKey(line.slice(1)) });
       continue;
     }
-    parsed.push({ kind: "ctx", text: line });
+
+    const curOld = oldLine;
+    const curNew = newLine;
+    parsed.push({ kind: "ctx", text: line, oldNo: curOld, newNo: curNew });
+    if (typeof oldLine === "number") oldLine += 1;
+    if (typeof newLine === "number") newLine += 1;
   }
 
   const addMap = new Map<string, number[]>();
@@ -100,6 +161,7 @@ export default function DiffView(props: Props) {
 
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -320,15 +382,11 @@ export default function DiffView(props: Props) {
         {!rightLoading && !rightError ? (
           diffText ? (
             <pre className="diffCode">
-              {parsed.map((l, i) => (
-                <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                  {l.text}
-                </div>
-              ))}
+              {renderUnifiedDiffForPre(parsed, diffShowLineNumbers)}
             </pre>
           ) : contentText ? (
             <pre className="diffCode">
-              {contentText.replace(/\r\n/g, "\n")}
+              {renderTextForPre(contentText, diffShowLineNumbers)}
             </pre>
           ) : (
             <div className="diffEmpty">Select a file.</div>

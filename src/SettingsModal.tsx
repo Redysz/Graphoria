@@ -447,6 +447,15 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
+                    "Diff line numbers",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input type="checkbox" checked={git.diffShowLineNumbers} onChange={(e) => setGit({ diffShowLineNumbers: e.target.checked })} />
+                      Show line numbers in diffs
+                    </label>,
+                    "Applies to Graphoria builtin diff in views like Diff tool, Commit preview and Stash preview.",
+                  )}
+
+                  {field(
                     "History scope",
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
                       <input

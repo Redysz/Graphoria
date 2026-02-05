@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { GitContinueInfo, GitStatusEntry } from "../../types/git";
-import { parseUnifiedDiff } from "../../DiffView";
+import { parseUnifiedDiff, renderTextForPre, renderUnifiedDiffForPre } from "../../DiffView";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "../../utils/filePreview";
 import { statusBadge } from "../../utils/text";
 import { useAppSettings } from "../../appSettingsStore";
@@ -69,6 +69,7 @@ function extractConflictPathsFromMessage(message: string) {
 export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose, onSuccess, onAbort, onResolveConflicts }: Props) {
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
+  const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
   const [busy, setBusy] = useState(false);
@@ -561,15 +562,11 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                     </div>
                   ) : previewDiff ? (
                     <pre className="diffCode" style={preStyle}>
-                      {parsed.map((l, i) => (
-                        <div key={i} className={`diffLine diffLine-${l.kind}`}>
-                          {l.text}
-                        </div>
-                      ))}
+                      {renderUnifiedDiffForPre(parsed, diffShowLineNumbers)}
                     </pre>
                   ) : previewContent ? (
                     <pre className="diffCode" style={preStyle}>
-                      {previewContent.replace(/\r\n/g, "\n")}
+                      {renderTextForPre(previewContent, diffShowLineNumbers)}
                     </pre>
                   ) : previewPath ? (
                     <div style={{ opacity: 0.75 }}>No preview available for this file.</div>
