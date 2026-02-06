@@ -5261,6 +5261,9 @@ function App() {
           onDelete={(path) => {
             void deleteWorkingFile("stash", path);
           }}
+          onRefresh={async () => {
+            await refreshStashStatusEntries();
+          }}
           onClose={() => setStashModalOpen(false)}
           onStash={() => void runStash()}
         />
@@ -5362,6 +5365,9 @@ function App() {
           }}
           onDelete={(path) => {
             void deleteWorkingFile("commit", path);
+          }}
+          onRefresh={async () => {
+            await refreshCommitStatusEntries();
           }}
           onClose={() => setCommitModalOpen(false)}
           onCommit={() => void runCommit()}

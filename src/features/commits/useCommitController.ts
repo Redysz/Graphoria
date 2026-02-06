@@ -61,18 +61,23 @@ export function useCommitController(opts: {
 
   async function refreshCommitStatusEntries() {
     if (!activeRepoPath) return;
-    const entries = await gitStatus(activeRepoPath);
-    setStatusEntries(entries);
-    setSelectedPaths((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const e of entries) next[e.path] = prev[e.path] ?? true;
-      return next;
-    });
-    const keep = commitPreviewPath && entries.some((e) => e.path === commitPreviewPath) ? commitPreviewPath : (entries[0]?.path ?? "");
-    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
-    setCommitPreviewPath(keep);
-    setCommitPreviewStatus(keepStatus);
-    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    setCommitError("");
+    try {
+      const entries = await gitStatus(activeRepoPath);
+      setStatusEntries(entries);
+      setSelectedPaths((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const e of entries) next[e.path] = prev[e.path] ?? true;
+        return next;
+      });
+      const keep = commitPreviewPath && entries.some((e) => e.path === commitPreviewPath) ? commitPreviewPath : (entries[0]?.path ?? "");
+      const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
+      setCommitPreviewPath(keep);
+      setCommitPreviewStatus(keepStatus);
+      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    } catch (e) {
+      setCommitError(errorToString(e));
+    }
   }
 
   async function openCommitDialog() {

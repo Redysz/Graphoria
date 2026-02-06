@@ -120,18 +120,23 @@ export function useStashController(opts: {
 
   async function refreshStashStatusEntries() {
     if (!activeRepoPath) return;
-    const entries = await gitStatus(activeRepoPath);
-    setStashStatusEntries(entries);
-    setStashSelectedPaths((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const e of entries) next[e.path] = prev[e.path] ?? true;
-      return next;
-    });
-    const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
-    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
-    setStashPreviewPath(keep);
-    setStashPreviewStatus(keepStatus);
-    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    setStashError("");
+    try {
+      const entries = await gitStatus(activeRepoPath);
+      setStashStatusEntries(entries);
+      setStashSelectedPaths((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const e of entries) next[e.path] = prev[e.path] ?? true;
+        return next;
+      });
+      const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
+      const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
+      setStashPreviewPath(keep);
+      setStashPreviewStatus(keepStatus);
+      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    } catch (e) {
+      setStashError(typeof e === "string" ? e : JSON.stringify(e));
+    }
   }
 
   async function openStashDialog() {
