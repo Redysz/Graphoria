@@ -11,7 +11,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import SettingsModal from "./SettingsModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
 import { installTestBackdoor } from "./testing/backdoor";
@@ -53,6 +53,12 @@ import {
   gitCheckoutBranch,
   gitCheckoutCommit,
   gitCherryPick,
+  gitCherryPickAdvanced,
+  gitCherryPickAbort,
+  gitAmAbort,
+  gitFormatPatchToFile,
+  gitPredictPatchGraph,
+  gitApplyPatchFile,
   gitCloneRepo,
   gitCommitAll,
   gitCommitChanges,
@@ -122,6 +128,9 @@ import { CherryStepsModal } from "./components/modals/CherryStepsModal";
 import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
 import { CreateTagModal } from "./components/modals/CreateTagModal";
+import { CherryPickModal } from "./components/modals/CherryPickModal";
+import { PatchModal } from "./components/modals/PatchModal";
+import { PatchPredictModal } from "./components/modals/PatchPredictModal";
 import { FilePreviewModal } from "./components/modals/FilePreviewModal";
 import { ChangesModal } from "./components/modals/ChangesModal";
 import { RemoteModal } from "./components/modals/RemoteModal";
@@ -137,11 +146,12 @@ import TooltipLayer from "./TooltipLayer";
 import type {
   GitAheadBehind,
   GitBranchInfo,
-  GitCloneProgressEvent,
   GitCommit,
+  GitCloneProgressEvent,
   GitCommitSummary,
-  GitStatusSummary,
+  GitPatchPredictGraphResult,
   GitStashEntry,
+  GitStatusSummary,
   PullPredictGraphResult,
   RepoOverview,
 } from "./types/git";
@@ -226,6 +236,77 @@ function App() {
     if (!activeRepoPath) return;
     setViewMode("commits");
     setCommitSearchOpen(true);
+  }
+
+  function extractPatchFailurePaths(message: string) {
+    const lines = (message ?? "").replace(/\r\n/g, "\n").split("\n");
+    const out: string[] = [];
+    const seen = new Set<string>();
+
+    const takePathBeforeColon = (s: string) => {
+      const r = (s ?? "").trim();
+      if (!r) return "";
+      if (r.length >= 3 && r[1] === ":" && (r[2] === "\\" || r[2] === "/")) {
+        const pos = r.slice(2).indexOf(":");
+        if (pos < 0) return "";
+        return r.slice(0, pos + 2).trim();
+      }
+      const pos = r.indexOf(":");
+      if (pos < 0) return "";
+      return r.slice(0, pos).trim();
+    };
+
+    const isCandidatePath = (p: string) => {
+      const t = (p ?? "").trim();
+      if (!t) return false;
+      if (t.toLowerCase() === "patch") return false;
+      if (/\s/.test(t)) return false;
+      return t.includes(".") || t.includes("/") || t.includes("\\");
+    };
+
+    for (const line of lines) {
+      let l = (line ?? "").trim();
+      if (!l) continue;
+      if (l.toLowerCase().startsWith("git command failed:")) {
+        l = l.slice("git command failed:".length).trim();
+      }
+
+      const patchFailedPrefix = "error: patch failed:";
+      if (l.toLowerCase().startsWith(patchFailedPrefix)) {
+        const rest = l.slice(patchFailedPrefix.length).trim();
+        const p = takePathBeforeColon(rest);
+        if (isCandidatePath(p) && !seen.has(p)) {
+          seen.add(p);
+          out.push(p);
+        }
+        continue;
+      }
+
+      if (l.toLowerCase().startsWith("error:")) {
+        const rest = l.slice("error:".length).trim();
+        const p = takePathBeforeColon(rest);
+        if (isCandidatePath(p) && !seen.has(p)) {
+          seen.add(p);
+          out.push(p);
+        }
+      }
+    }
+
+    return out;
+  }
+
+  function humanizePatchApplyError(raw: string) {
+    const msg = (raw ?? "").trim();
+    const lower = msg.toLowerCase();
+    const paths = extractPatchFailurePaths(msg);
+    const hasDoesNotApply = lower.includes("patch does not apply") || lower.includes("patch failed:") || lower.includes("does not apply");
+    if (!hasDoesNotApply) return msg;
+
+    const filesLine = paths.length ? `\nPotential conflict files:\n${paths.map((p) => `- ${p}`).join("\n")}` : "";
+    if (patchMethod === "apply") {
+      return `Conflict detected: this patch cannot be applied cleanly.${filesLine}\n\nDetails:\n${msg}`;
+    }
+    return `Conflict detected: git am could not apply this patch cleanly.${filesLine}\n\nDetails:\n${msg}`;
   }
 
   const [graphButtonsVisible, setGraphButtonsVisible] = useState(true);
@@ -400,7 +481,7 @@ function App() {
   useGlobalShortcuts(shortcutRuntimeRef, fullscreenRestoreRef);
 
   const [pullConflictOpen, setPullConflictOpen] = useState(false);
-  const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase">("merge");
+  const [pullConflictOperation, setPullConflictOperation] = useState<"merge" | "rebase" | "cherry-pick" | "am">("merge");
   const [pullConflictFiles, setPullConflictFiles] = useState<string[]>([]);
   const [pullConflictMessage, setPullConflictMessage] = useState("");
 
@@ -409,6 +490,31 @@ function App() {
 
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [conflictResolverKey, setConflictResolverKey] = useState(0);
+
+  const [cherryPickOpen, setCherryPickOpen] = useState(false);
+  const [cherryPickBusy, setCherryPickBusy] = useState(false);
+  const [cherryPickError, setCherryPickError] = useState("");
+  const [cherryPickTargetBranch, setCherryPickTargetBranch] = useState("");
+  const [cherryPickCommitHash, setCherryPickCommitHash] = useState("");
+  const [cherryPickAppendOrigin, setCherryPickAppendOrigin] = useState(false);
+  const [cherryPickNoCommit, setCherryPickNoCommit] = useState(false);
+
+  const [cherryPickCommitLoading, setCherryPickCommitLoading] = useState(false);
+  const [cherryPickCommitError, setCherryPickCommitError] = useState("");
+  const [cherryPickCommitSummary, setCherryPickCommitSummary] = useState<GitCommitSummary | null>(null);
+
+  const [patchOpen, setPatchOpen] = useState(false);
+  const [patchMode, setPatchMode] = useState<"export" | "apply">("apply");
+  const [patchBusy, setPatchBusy] = useState(false);
+  const [patchError, setPatchError] = useState("");
+  const [patchStatus, setPatchStatus] = useState("");
+  const [patchPath, setPatchPath] = useState("");
+  const [patchMethod, setPatchMethod] = useState<"apply" | "am">("am");
+
+  const [patchPredictOpen, setPatchPredictOpen] = useState(false);
+  const [patchPredictBusy, setPatchPredictBusy] = useState(false);
+  const [patchPredictError, setPatchPredictError] = useState("");
+  const [patchPredictResult, setPatchPredictResult] = useState<GitPatchPredictGraphResult | null>(null);
 
   const [pullPredictOpen, setPullPredictOpen] = useState(false);
   const [pullPredictBusy, setPullPredictBusy] = useState(false);
@@ -1381,6 +1487,7 @@ function App() {
       openCreateBranchDialog,
       openCreateTagDialog,
       openResetDialog,
+      openCherryPickDialog,
       pickRepository,
       initializeProject,
       loadRepo,
@@ -1388,7 +1495,92 @@ function App() {
       openTerminalProfile,
       openCommitSearch,
     };
-  });
+  }, [
+    shortcutBindings,
+    activeRepoPath,
+    remoteUrl,
+    loading,
+    pullBusy,
+    viewMode,
+    selectedHash,
+    headHash,
+    layout,
+    graphSettings,
+    showOnlineAvatars,
+    commitsOnlyHead,
+    tooltipSettings,
+    terminalSettings,
+    terminalMenuOpen,
+    terminalMenuIndex,
+    repositoryMenuOpen,
+    navigateMenuOpen,
+    viewMenuOpen,
+    commandsMenuOpen,
+    toolsMenuOpen,
+    pullMenuOpen,
+    gitTrustOpen,
+    diffToolModalOpen,
+    cleanOldBranchesOpen,
+    settingsOpen,
+    goToOpen,
+    confirmOpen,
+    cloneModalOpen,
+    commitModalOpen,
+    stashModalOpen,
+    stashViewOpen,
+    remoteModalOpen,
+    pushModalOpen,
+    resetModalOpen,
+    createBranchOpen,
+    createTagOpen,
+    renameBranchOpen,
+    renameTagOpen,
+    switchBranchOpen,
+    pullConflictOpen,
+    pullPredictOpen,
+    filePreviewOpen,
+    detachedHelpOpen,
+    cherryStepsOpen,
+    previewZoomSrc,
+    commitContextMenu,
+    stashContextMenu,
+    branchContextMenu,
+    tagContextMenu,
+    refBadgeContextMenu,
+    workingFileContextMenu,
+    moveActiveRepoBy,
+    setSidebarVisible,
+    setDetailsVisible,
+    setViewMode,
+    setTerminalMenuOpen,
+    setTerminalMenuIndex,
+    setPullMenuOpen,
+    setTerminal,
+    setDiffToolModalOpen,
+    setGraph,
+    setGit,
+    setGeneral,
+    setGraphButtonsVisible,
+    setGoToOpen,
+    setGoToKind,
+    setGoToText,
+    setGoToTargetView,
+    setGoToError,
+    openCommitDialog,
+    openPushDialog,
+    openStashDialog,
+    openSwitchBranchDialog,
+    openCreateBranchDialog,
+    openCreateTagDialog,
+    openResetDialog,
+    openCherryPickDialog,
+    pickRepository,
+    initializeProject,
+    loadRepo,
+    runFetch,
+    openTerminalProfile,
+    openCommitSearch,
+  ]);
 
   const findTopModalOverlayForFocus = () => {
     const dialogs = Array.from(
@@ -1467,6 +1659,10 @@ function App() {
 
   const isDetached = overview?.head_name === "(detached)";
   const activeBranchName = !isDetached ? (overview?.head_name ?? "") : "";
+
+  const cherryPickBranchOptions = useMemo(() => {
+    return normalizeBranchList(overview?.branches ?? []);
+  }, [overview?.branches]);
 
   const cleanOldBranchesCandidates = useMemo(() => {
     const days = Number.isFinite(cleanOldBranchesDays) ? Math.max(0, Math.floor(cleanOldBranchesDays)) : 0;
@@ -1973,6 +2169,265 @@ function App() {
     setResetMode("mixed");
     setResetTarget("HEAD~1");
     setResetModalOpen(true);
+  }
+
+  async function openCherryPickDialog() {
+    if (!activeRepoPath) return;
+    setCherryPickError("");
+    setCherryPickBusy(false);
+    setCherryPickAppendOrigin(false);
+    setCherryPickNoCommit(false);
+
+    setCherryPickTargetBranch(activeBranchName?.trim() ? activeBranchName.trim() : "");
+    setCherryPickCommitHash(selectedHash?.trim() ? selectedHash.trim() : "");
+
+    setCherryPickCommitLoading(false);
+    setCherryPickCommitError("");
+    setCherryPickCommitSummary(null);
+    setCherryPickOpen(true);
+  }
+
+  async function openExportPatchDialog() {
+    if (!activeRepoPath) return;
+    const at = (selectedHash.trim() ? selectedHash.trim() : headHash.trim()).trim();
+    if (!at) return;
+
+    setPatchMode("export");
+    setPatchError("");
+    setPatchStatus("");
+    setPatchBusy(false);
+    setPatchPredictBusy(false);
+    setPatchPredictError("");
+    setPatchPredictResult(null);
+    setPatchMethod("apply");
+    setPatchPath("");
+    setPatchOpen(true);
+  }
+
+  async function openApplyPatchDialog() {
+    if (!activeRepoPath) return;
+    setPatchMode("apply");
+    setPatchError("");
+    setPatchStatus("");
+    setPatchBusy(false);
+    setPatchPredictBusy(false);
+    setPatchPredictError("");
+    setPatchPredictResult(null);
+    setPatchMethod("am");
+    setPatchPath("");
+    setPatchOpen(true);
+  }
+
+  async function pickPatchFile() {
+    const selected = await open({ directory: false, multiple: false, title: "Select patch file" });
+    if (!selected || Array.isArray(selected)) return;
+    setPatchError("");
+    setPatchStatus("");
+    setPatchPredictError("");
+    setPatchPredictResult(null);
+    setPatchPath(selected);
+  }
+
+  async function pickSavePatchFile() {
+    const selected = await save({
+      title: "Save patch",
+      filters: [{ name: "Patch", extensions: ["patch", "mbox", "txt"] }],
+    });
+    if (!selected) return;
+    setPatchError("");
+    setPatchStatus("");
+    setPatchPath(selected);
+  }
+
+  async function predictPatch() {
+    if (!activeRepoPath) return;
+    if (patchMode !== "apply") return;
+    const p = patchPath.trim();
+    if (!p) {
+      setPatchPredictError("Select a patch file.");
+      return;
+    }
+    if (patchPredictBusy) return;
+
+    setPatchPredictOpen(true);
+    setPatchOpen(false);
+    setPatchPredictBusy(true);
+    setPatchPredictError("");
+    setPatchPredictResult(null);
+    try {
+      const res = await gitPredictPatchGraph({ repoPath: activeRepoPath, patchPath: p, method: patchMethod, maxCommits: 60 });
+      setPatchPredictResult(res);
+    } catch (e) {
+      setPatchPredictError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setPatchPredictBusy(false);
+    }
+  }
+
+  async function runPatch() {
+    if (!activeRepoPath) return;
+    if (patchBusy) return;
+
+    const p = patchPath.trim();
+    if (!p) {
+      setPatchError(patchMode === "export" ? "Select output file path." : "Select a patch file.");
+      return;
+    }
+
+    setPatchBusy(true);
+    setPatchError("");
+    setPatchStatus("");
+    setPatchPredictError("");
+    setError("");
+
+    try {
+      if (patchMode === "export") {
+        const at = (selectedHash.trim() ? selectedHash.trim() : headHash.trim()).trim();
+        if (!at) {
+          setPatchError("No commit selected.");
+          return;
+        }
+        await gitFormatPatchToFile({ repoPath: activeRepoPath, commit: at, outPath: p });
+        setPatchStatus("Patch exported.");
+        setPatchOpen(false);
+      } else {
+        await gitApplyPatchFile({ repoPath: activeRepoPath, patchPath: p, method: patchMethod });
+        setPatchStatus("Patch applied.");
+        setPatchOpen(false);
+        setPatchPredictOpen(false);
+        await loadRepo(activeRepoPath);
+        await refreshIndicators(activeRepoPath);
+      }
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+
+      if (patchMode === "apply" && patchMethod === "am") {
+        try {
+          const st = await gitConflictState(activeRepoPath);
+          const op = (st.operation ?? "").trim();
+          if (op === "am") {
+            setPullConflictOperation("am");
+            const stFiles = (st.files ?? []).map((f: any) => f.path).filter(Boolean);
+            const parsedFiles = extractPatchFailurePaths(msg);
+            const files = Array.from(new Set([...stFiles, ...parsedFiles].map((s) => (s ?? "").trim()).filter(Boolean)));
+            setPullConflictFiles(files);
+            setPullConflictMessage(humanizePatchApplyError(msg));
+            setPullConflictOpen(true);
+            setPatchPredictOpen(false);
+            setPatchOpen(false);
+            return;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const friendly = humanizePatchApplyError(msg);
+      if (patchPredictOpen && patchMode === "apply") {
+        setPatchPredictError(friendly);
+      } else {
+        setPatchError(friendly);
+      }
+    } finally {
+      setPatchBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!cherryPickOpen || !activeRepoPath) {
+      setCherryPickCommitSummary(null);
+      setCherryPickCommitError("");
+      setCherryPickCommitLoading(false);
+      return;
+    }
+
+    const h = cherryPickCommitHash.trim();
+    if (!h) {
+      setCherryPickCommitSummary(null);
+      setCherryPickCommitError("No commit selected.");
+      setCherryPickCommitLoading(false);
+      return;
+    }
+
+    let alive = true;
+    setCherryPickCommitSummary(null);
+    setCherryPickCommitError("");
+    setCherryPickCommitLoading(true);
+
+    const timer = window.setTimeout(() => {
+      void gitCommitSummary({ repoPath: activeRepoPath, commit: h })
+        .then((s) => {
+          if (!alive) return;
+          setCherryPickCommitSummary(s);
+          setCherryPickCommitLoading(false);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setCherryPickCommitSummary(null);
+          setCherryPickCommitError(typeof e === "string" ? e : JSON.stringify(e));
+          setCherryPickCommitLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [activeRepoPath, cherryPickCommitHash, cherryPickOpen]);
+
+  async function runCherryPick() {
+    if (!activeRepoPath) return;
+    if (cherryPickBusy) return;
+
+    const b = cherryPickTargetBranch.trim();
+    const h = cherryPickCommitHash.trim();
+    if (!b) {
+      setCherryPickError("Target branch is empty.");
+      return;
+    }
+    if (!h) {
+      setCherryPickError("Commit hash is empty.");
+      return;
+    }
+
+    setCherryPickBusy(true);
+    setCherryPickError("");
+    setError("");
+
+    try {
+      await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
+
+      if (!cherryPickAppendOrigin && !cherryPickNoCommit) {
+        await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
+      } else {
+        await gitCherryPickAdvanced({ repoPath: activeRepoPath, commits: [h], appendOrigin: cherryPickAppendOrigin, noCommit: cherryPickNoCommit });
+      }
+
+      setCherryPickOpen(false);
+      await loadRepo(activeRepoPath);
+      await refreshIndicators(activeRepoPath);
+    } catch (e) {
+      const raw = typeof e === "string" ? e : JSON.stringify(e);
+
+      // If cherry-pick entered conflict state, reuse the existing conflict UI.
+      try {
+        const st = await gitConflictState(activeRepoPath);
+        const op = (st.operation ?? "").trim();
+        if (op === "cherry-pick") {
+          setPullConflictOperation("cherry-pick");
+          setPullConflictFiles((st.files ?? []).map((f: any) => f.path).filter(Boolean));
+          setPullConflictMessage(raw);
+          setPullConflictOpen(true);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      setCherryPickError(raw);
+    } finally {
+      setCherryPickBusy(false);
+    }
   }
 
   function openCreateBranchDialog(at: string) {
@@ -2875,7 +3330,15 @@ function App() {
     try {
       await gitResetHard(activeRepoPath);
       await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
-      await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
+      const args: string[] = [];
+      if (cherryPickAppendOrigin) args.push("-x");
+      if (cherryPickNoCommit) args.push("--no-commit");
+
+      if (args.length === 0) {
+        await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
+      } else {
+        await gitCherryPickAdvanced({ repoPath: activeRepoPath, commits: [h], appendOrigin: cherryPickAppendOrigin, noCommit: cherryPickNoCommit });
+      }
 
       setCherryStepsOpen(false);
       await loadRepo(activeRepoPath);
@@ -3105,11 +3568,15 @@ function App() {
     setPullError("");
     try {
       const st = await gitConflictState(activeRepoPath);
-      const op = (st.operation ?? "").trim() as "merge" | "rebase" | "";
+      const op = (st.operation ?? "").trim() as "merge" | "rebase" | "cherry-pick" | "am" | "";
       if (op === "rebase") {
         await gitRebaseAbort(activeRepoPath);
       } else if (op === "merge") {
         await gitMergeAbort(activeRepoPath);
+      } else if (op === "cherry-pick") {
+        await gitCherryPickAbort(activeRepoPath);
+      } else if (op === "am") {
+        await gitAmAbort(activeRepoPath);
       } else {
         await gitMergeAbort(activeRepoPath).catch(() => void 0);
         await gitRebaseAbort(activeRepoPath).catch(() => void 0);
@@ -3772,6 +4239,9 @@ function App() {
               openSwitchBranchDialog={openSwitchBranchDialog}
               openMergeBranchesDialog={openMergeBranchesDialog}
               openResetDialog={openResetDialog}
+              openCherryPickDialog={openCherryPickDialog}
+              openExportPatchDialog={openExportPatchDialog}
+              openApplyPatchDialog={openApplyPatchDialog}
               menuItem={menuItem}
               shortcutLabel={shortcutLabel}
             />
@@ -4208,6 +4678,7 @@ function App() {
       <CommitContextMenu
         menu={commitContextMenu}
         menuRef={commitContextMenuRef}
+        headHash={headHash}
         activeRepoPath={activeRepoPath}
         loading={loading}
         isDetached={isDetached}
@@ -4237,6 +4708,20 @@ function App() {
         onCreateTag={(hash) => {
           setCommitContextMenu(null);
           openCreateTagDialog(hash);
+        }}
+        onCherryPick={(hash) => {
+          setCommitContextMenu(null);
+          setSelectedHash(hash);
+          void openCherryPickDialog();
+        }}
+        onExportPatch={(hash) => {
+          setCommitContextMenu(null);
+          setSelectedHash(hash);
+          void openExportPatchDialog();
+        }}
+        onApplyPatch={() => {
+          setCommitContextMenu(null);
+          void openApplyPatchDialog();
         }}
         onReset={(mode, hash) => {
           setCommitContextMenu(null);
@@ -4289,6 +4774,66 @@ function App() {
           activeRepoPath={activeRepoPath}
           onClose={() => setGoToOpen(false)}
           onGo={goToReference}
+        />
+      ) : null}
+
+      {cherryPickOpen ? (
+        <CherryPickModal
+          targetBranch={cherryPickTargetBranch}
+          setTargetBranch={setCherryPickTargetBranch}
+          branchOptions={cherryPickBranchOptions}
+          commitHash={cherryPickCommitHash}
+          setCommitHash={setCherryPickCommitHash}
+          appendOrigin={cherryPickAppendOrigin}
+          setAppendOrigin={setCherryPickAppendOrigin}
+          noCommit={cherryPickNoCommit}
+          setNoCommit={setCherryPickNoCommit}
+          busy={cherryPickBusy}
+          error={cherryPickError}
+          commitLoading={cherryPickCommitLoading}
+          commitError={cherryPickCommitError}
+          commitSummary={cherryPickCommitSummary}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setCherryPickOpen(false)}
+          onRun={() => void runCherryPick()}
+        />
+      ) : null}
+
+      {patchOpen ? (
+        <PatchModal
+          mode={patchMode}
+          open={patchOpen}
+          activeRepoPath={activeRepoPath}
+          defaultCommit={(selectedHash.trim() ? selectedHash.trim() : headHash.trim()).trim()}
+          busy={patchBusy}
+          error={patchError}
+          status={patchStatus}
+          patchPath={patchPath}
+          setPatchPath={setPatchPath}
+          method={patchMethod}
+          setMethod={setPatchMethod}
+          predictBusy={patchPredictBusy}
+          onPickPatchFile={() => void pickPatchFile()}
+          onPickSaveFile={() => void pickSavePatchFile()}
+          onPredict={() => void predictPatch()}
+          onRun={() => void runPatch()}
+          onClose={() => setPatchOpen(false)}
+        />
+      ) : null}
+
+      {patchPredictOpen ? (
+        <PatchPredictModal
+          busy={patchPredictBusy}
+          error={patchPredictError}
+          result={patchPredictResult}
+          patchPath={patchPath}
+          method={patchMethod}
+          applyBusy={patchBusy}
+          onClose={() => setPatchPredictOpen(false)}
+          onApply={() => {
+            setPatchPredictError("");
+            void runPatch();
+          }}
         />
       ) : null}
 
@@ -4599,6 +5144,26 @@ function App() {
           onClose={() => setPullConflictOpen(false)}
           onFixConflicts={() => {
             if (!activeRepoPath) return;
+            if (pullConflictOperation === "am") {
+              void (async () => {
+                try {
+                  const st = await gitConflictState(activeRepoPath);
+                  const real = (st.files ?? []).map((f: any) => (f?.path ?? "").trim()).filter(Boolean);
+                  if (real.length > 0) {
+                    setPullConflictFiles((prev) => Array.from(new Set([...real, ...(prev ?? [])].map((s) => (s ?? "").trim()).filter(Boolean))));
+                    setPullConflictOpen(false);
+                    setConflictResolverOpen(true);
+                    setConflictResolverKey((v) => v + 1);
+                  } else {
+                    await continueAfterConflicts();
+                  }
+                } catch {
+                  await continueAfterConflicts();
+                }
+              })();
+              return;
+            }
+
             setPullConflictOpen(false);
             setConflictResolverOpen(true);
             setConflictResolverKey((v) => v + 1);
@@ -4615,6 +5180,7 @@ function App() {
           open={continueAfterConflictsOpen}
           repoPath={activeRepoPath}
           operation={pullConflictOperation}
+          initialFiles={pullConflictFiles}
           onClose={() => setContinueAfterConflictsOpen(false)}
           onAbort={async () => {
             setContinueAfterConflictsOpen(false);
@@ -4629,6 +5195,9 @@ function App() {
             setContinueAfterConflictsOpen(false);
             setPullConflictOpen(false);
             setConflictResolverOpen(false);
+            if (pullConflictOperation === "cherry-pick") {
+              setCherryPickOpen(false);
+            }
             await loadRepo(activeRepoPath);
           }}
         />

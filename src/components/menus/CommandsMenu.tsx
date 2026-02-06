@@ -27,6 +27,10 @@ export function CommandsMenu(props: {
   openSwitchBranchDialog: () => void | Promise<void>;
   openMergeBranchesDialog: () => void | Promise<void>;
   openResetDialog: () => void;
+  openCherryPickDialog: () => void | Promise<void>;
+
+  openExportPatchDialog: () => void | Promise<void>;
+  openApplyPatchDialog: () => void | Promise<void>;
 
   menuItem: (left: ReactNode, shortcutText?: string) => ReactNode;
   shortcutLabel: (id: ShortcutActionId) => string;
@@ -53,6 +57,9 @@ export function CommandsMenu(props: {
     openSwitchBranchDialog,
     openMergeBranchesDialog,
     openResetDialog,
+    openCherryPickDialog,
+    openExportPatchDialog,
+    openApplyPatchDialog,
     menuItem,
     shortcutLabel,
   } = props;
@@ -201,6 +208,44 @@ export function CommandsMenu(props: {
             title={!activeRepoPath ? "No repository" : "Reset (soft/hard)"}
           >
             {menuItem("Reset (soft/hard)…", shortcutLabel("cmd.reset"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              void openCherryPickDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Cherry-pick a commit onto a target branch"}
+          >
+            {menuItem("Cherry-pick…", shortcutLabel("cmd.cherryPick"))}
+          </button>
+
+          <div style={{ height: 1, background: "var(--border)", margin: "8px 0" }} />
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              void openExportPatchDialog();
+            }}
+            disabled={!activeRepoPath || loading || (!selectedHash.trim() && !headHash.trim())}
+            title={!activeRepoPath ? "No repository" : "Export a patch for a single commit (git format-patch)"}
+          >
+            {menuItem("Export patch…")}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              void openApplyPatchDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Apply a patch file (git am / git apply)"}
+          >
+            {menuItem("Apply patch…")}
           </button>
         </div>
       ) : null}

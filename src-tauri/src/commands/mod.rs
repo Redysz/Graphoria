@@ -19,3 +19,5 @@ pub(crate) mod reflog;
 pub(crate) mod tags;
 
 pub(crate) mod conflicts;
+
+pub(crate) mod patches;

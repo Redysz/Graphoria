@@ -8,6 +8,8 @@ import {
   gitContinueInfo,
   gitContinueFileDiff,
   gitContinueRenameDiff,
+  gitAmContinueWithMessage,
+  gitCherryPickContinueWithMessage,
   gitMergeContinueWithMessage,
   gitRebaseContinueWithMessage,
   gitStagePaths,
@@ -25,7 +27,8 @@ import {
 type Props = {
   open: boolean;
   repoPath: string;
-  operation: "merge" | "rebase";
+  operation: "merge" | "rebase" | "cherry-pick" | "am";
+  initialFiles?: string[];
   onClose: () => void;
   onSuccess: () => void | Promise<void>;
   onAbort?: () => void | Promise<void>;
@@ -66,7 +69,16 @@ function extractConflictPathsFromMessage(message: string) {
   return out;
 }
 
-export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose, onSuccess, onAbort, onResolveConflicts }: Props) {
+export function ContinueAfterConflictsModal({
+  open,
+  repoPath,
+  operation,
+  initialFiles,
+  onClose,
+  onSuccess,
+  onAbort,
+  onResolveConflicts,
+}: Props) {
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
   const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
@@ -91,7 +103,7 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
 
-  const effectiveOp = (info?.operation?.trim() as "merge" | "rebase" | "") || operation;
+  const effectiveOp = (operation ?? "").trim() as "merge" | "rebase" | "cherry-pick" | "am";
 
   const conflictPathsSourceMessage = info?.message ?? message;
 
@@ -103,10 +115,11 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
       if (oldp && oldp.trim()) realSet.add(oldp);
     }
     const paths = extractConflictPathsFromMessage(conflictPathsSourceMessage);
-    const uniq = Array.from(new Set(paths)).filter((p) => p.trim().length > 0);
+    const initial = (initialFiles ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+    const uniq = Array.from(new Set([...paths, ...initial])).filter((p) => p.trim().length > 0);
     const virtual = uniq.filter((p) => !realSet.has(p)).map((p) => ({ status: "NC", path: p } as GitStatusEntry));
     return [...real, ...virtual];
-  }, [conflictPathsSourceMessage, statusEntries]);
+  }, [conflictPathsSourceMessage, initialFiles, statusEntries]);
 
   const hasVirtualEntries = useMemo(() => {
     return derivedEntries.some((e) => (e.status ?? "") === "NC");
@@ -626,7 +639,11 @@ export function ContinueAfterConflictsModal({ open, repoPath, operation, onClose
                     await gitUnstagePaths({ repoPath, paths: toUnstage });
                   }
 
-                  if (effectiveOp === "rebase") {
+                  if (effectiveOp === "cherry-pick") {
+                    await gitCherryPickContinueWithMessage({ repoPath, message });
+                  } else if (effectiveOp === "am") {
+                    await gitAmContinueWithMessage({ repoPath, message });
+                  } else if (effectiveOp === "rebase") {
                     await gitRebaseContinueWithMessage({ repoPath, message });
                   } else {
                     await gitMergeContinueWithMessage({ repoPath, message });

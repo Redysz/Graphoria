@@ -28,6 +28,7 @@ export type ShortcutActionId =
   | "cmd.createTag"
   | "cmd.checkoutBranch"
   | "cmd.reset"
+  | "cmd.cherryPick"
   | "repo.open"
   | "repo.refresh"
   | "repo.initialize"
@@ -67,6 +68,7 @@ export const shortcutActions: Array<{ id: ShortcutActionId; label: string }> = [
   { id: "cmd.createTag", label: "Create tag" },
   { id: "cmd.checkoutBranch", label: "Checkout branch" },
   { id: "cmd.reset", label: "Reset (soft/hard)" },
+  { id: "cmd.cherryPick", label: "Cherry-pick" },
   { id: "repo.open", label: "Open repository" },
   { id: "repo.refresh", label: "Refresh" },
   { id: "repo.initialize", label: "Initialize project" },

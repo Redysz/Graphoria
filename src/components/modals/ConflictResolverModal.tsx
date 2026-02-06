@@ -16,7 +16,7 @@ import { useAppSettings } from "../../appSettingsStore";
 type Props = {
   open: boolean;
   repoPath: string;
-  operation: "merge" | "rebase";
+  operation: "merge" | "rebase" | "cherry-pick" | "am";
   initialFiles?: string[];
   busy: boolean;
   onClose: () => void;
@@ -619,8 +619,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
         setVersions(next);
         setResultDraft(next.working);
         lastAppliedResultRef.current = next.working;
-        setDiffOurs(buildVariantFromWorking(next.working, "ours"));
-        setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+        if (next.conflictKind === "text") {
+          setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+          setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+        } else {
+          setDiffOurs(next.oursDeleted ? "" : next.ours);
+          setDiffTheirs(next.theirsDeleted ? "" : next.theirs);
+        }
 
         if (next.conflictKind === "rename") {
           setRenameKeepName(null);
@@ -689,8 +694,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     setVersions(next);
     setResultDraft(next.working);
     lastAppliedResultRef.current = next.working;
-    setDiffOurs(buildVariantFromWorking(next.working, "ours"));
-    setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+    if (next.conflictKind === "text") {
+      setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+      setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+    } else {
+      setDiffOurs(next.oursDeleted ? "" : next.ours);
+      setDiffTheirs(next.theirsDeleted ? "" : next.theirs);
+    }
 
     if (next.conflictKind === "rename") {
       setRenameKeepName(null);
@@ -719,8 +729,13 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
     setVersions(next);
     setResultDraft(next.working);
-    setDiffOurs(buildVariantFromWorking(next.working, "ours"));
-    setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+    if (next.conflictKind === "text") {
+      setDiffOurs(buildVariantFromWorking(next.working, "ours"));
+      setDiffTheirs(buildVariantFromWorking(next.working, "theirs"));
+    } else {
+      setDiffOurs(next.oursDeleted ? "" : next.ours);
+      setDiffTheirs(next.theirsDeleted ? "" : next.theirs);
+    }
 
     if (next.conflictKind === "rename") {
       setRenameKeepName(null);
@@ -1212,15 +1227,19 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
               </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {!selectedIsUnmerged && hasOtherUnmerged ? (
-                  <button
-                    type="button"
-                    onClick={goToNextUnmerged}
-                    disabled={disabled}
-                    title="Jump to the next file that still has conflicts"
-                  >
-                    Go to next file with conflicts
-                  </button>
+                {!selectedIsUnmerged ? (
+                  hasOtherUnmerged ? (
+                    <button
+                      type="button"
+                      onClick={goToNextUnmerged}
+                      disabled={disabled}
+                      title="Jump to the next file that still has conflicts"
+                    >
+                      Go to next file with conflicts
+                    </button>
+                  ) : (
+                    <div style={{ fontWeight: 800, opacity: 0.8, padding: "6px 2px" }}>All conflicts resolved!</div>
+                  )
                 ) : (
                   <>
                     <button

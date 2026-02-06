@@ -7,6 +7,8 @@ import type {
   GitContinueInfo,
   GitConflictFileVersions,
   GitConflictState,
+  GitPatchPredictResult,
+  GitPatchPredictGraphResult,
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
@@ -218,6 +220,42 @@ export function gitMergeBranchAdvanced(params: {
 
 export function gitCherryPick(params: { repoPath: string; commits: string[] }) {
   return invoke<string>("git_cherry_pick", params);
+}
+
+export function gitCherryPickAdvanced(params: { repoPath: string; commits: string[]; appendOrigin: boolean; noCommit: boolean }) {
+  return invoke<string>("git_cherry_pick_advanced", params);
+}
+
+export function gitFormatPatchToFile(params: { repoPath: string; commit: string; outPath: string }) {
+  return invoke<string>("git_format_patch_to_file", params);
+}
+
+export function gitPredictPatchFile(params: { repoPath: string; patchPath: string; method: string }) {
+  return invoke<GitPatchPredictResult>("git_predict_patch_file", params);
+}
+
+export function gitPredictPatchGraph(params: { repoPath: string; patchPath: string; method: string; maxCommits?: number }) {
+  return invoke<GitPatchPredictGraphResult>("git_predict_patch_graph", params);
+}
+
+export function gitApplyPatchFile(params: { repoPath: string; patchPath: string; method: string }) {
+  return invoke<string>("git_apply_patch_file", params);
+}
+
+export function gitCherryPickAbort(repoPath: string) {
+  return invoke<string>("git_cherry_pick_abort", { repoPath });
+}
+
+export function gitCherryPickContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_cherry_pick_continue_with_message", params);
+}
+
+export function gitAmAbort(repoPath: string) {
+  return invoke<string>("git_am_abort", { repoPath });
+}
+
+export function gitAmContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_am_continue_with_message", params);
 }
 
 export function gitResolveRef(params: { repoPath: string; reference: string }) {
