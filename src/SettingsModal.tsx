@@ -456,6 +456,51 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
+                    "Fetch after opening a repository",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.fetchAfterOpenRepo}
+                        onChange={(e) => setGit({ fetchAfterOpenRepo: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "Runs git fetch origin right after a repository is opened.",
+                  )}
+
+                  {field(
+                    "Auto fetch interval (minutes)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={git.autoFetchMinutes}
+                      onChange={(e) => {
+                        const n = Math.trunc(Number(e.target.value || 0));
+                        setGit({ autoFetchMinutes: Math.max(0, Number.isFinite(n) ? n : 0) });
+                      }}
+                    />,
+                    "0 = disabled. Runs git fetch origin every N minutes.",
+                  )}
+
+                  {field(
+                    "Auto refresh interval (minutes)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={git.autoRefreshMinutes}
+                      onChange={(e) => {
+                        const n = Math.trunc(Number(e.target.value || 0));
+                        setGit({ autoRefreshMinutes: Math.max(0, Number.isFinite(n) ? n : 0) });
+                      }}
+                    />,
+                    "0 = disabled. Reloads repository state every N minutes (without fetching).",
+                  )}
+
+                  {field(
                     "History scope",
                     <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
                       <input

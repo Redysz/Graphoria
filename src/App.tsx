@@ -565,6 +565,9 @@ function App() {
   const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
   const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
   const diffTool = useAppSettings((s) => s.git.diffTool);
+  const fetchAfterOpenRepo = useAppSettings((s) => s.git.fetchAfterOpenRepo);
+  const autoFetchMinutes = useAppSettings((s) => s.git.autoFetchMinutes);
+  const autoRefreshMinutes = useAppSettings((s) => s.git.autoRefreshMinutes);
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
   const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
   const shortcutBindings = useAppSettings((s) => s.shortcuts.bindings);
@@ -725,6 +728,33 @@ function App() {
 
     loadRepo,
   });
+
+  const autoFetchInFlightRef = useRef(false);
+  const autoRefreshInFlightRef = useRef(false);
+
+  async function runFetchBackground(repoPath: string) {
+    if (!repoPath) return;
+    if (autoFetchInFlightRef.current) return;
+    autoFetchInFlightRef.current = true;
+    try {
+      const remote = await gitGetRemoteUrl(repoPath, "origin").catch(() => null);
+      if (!remote) return;
+      await gitFetch(repoPath, "origin");
+      await loadRepo(repoPath, undefined, false);
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      if (repoPath === activeRepoPath) setError(msg);
+    } finally {
+      autoFetchInFlightRef.current = false;
+    }
+  }
+
+  async function openRepositoryWithAutoFetch(path: string) {
+    await openRepository(path);
+    if (fetchAfterOpenRepo) {
+      void runFetchBackground(path);
+    }
+  }
 
   const closeAllRepositories = useCallback(async () => {
     const list = [...repos];
@@ -3802,7 +3832,7 @@ function App() {
     });
 
     if (!selected || Array.isArray(selected)) return;
-    void openRepository(selected);
+    void openRepositoryWithAutoFetch(selected);
   }
 
   async function initializeProject() {
@@ -3818,7 +3848,7 @@ function App() {
     setLoading(true);
     try {
       await initRepo(selected);
-      await openRepository(selected);
+      await openRepositoryWithAutoFetch(selected);
     } catch (e) {
       setGlobalError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -3895,6 +3925,7 @@ function App() {
     cloneProgressDestRef.current = cloneTargetPath;
     setCloneProgressMessage("");
     setCloneProgressPercent(null);
+
     setCloneBusy(true);
     setCloneError("");
     setError("");
@@ -3910,7 +3941,7 @@ function App() {
         singleBranch: cloneSingleBranch,
       });
       setCloneModalOpen(false);
-      await openRepository(cloneTargetPath);
+      await openRepositoryWithAutoFetch(cloneTargetPath);
     } catch (e) {
       setCloneError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -3959,6 +3990,64 @@ function App() {
     void refreshIndicators(activeRepoPath);
     setPushModalOpen(true);
   }
+
+  const autoFetchGuardsRef = useRef({
+    activeRepoPath: "",
+    loading: false,
+    pullBusy: false,
+    commitBusy: false,
+    stashBusy: false,
+  });
+
+  useEffect(() => {
+    autoFetchGuardsRef.current = {
+      activeRepoPath,
+      loading,
+      pullBusy,
+      commitBusy,
+      stashBusy,
+    };
+  }, [activeRepoPath, commitBusy, loading, pullBusy, stashBusy]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    const minutes = Math.max(0, Math.trunc(Number(autoFetchMinutes) || 0));
+    if (minutes <= 0) return;
+
+    const id = window.setInterval(() => {
+      const g = autoFetchGuardsRef.current;
+      if (!g.activeRepoPath) return;
+      if (g.loading || g.pullBusy || g.commitBusy || g.stashBusy) return;
+      void runFetchBackground(g.activeRepoPath);
+    }, minutes * 60_000);
+
+    return () => window.clearInterval(id);
+  }, [activeRepoPath, autoFetchMinutes]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    const minutes = Math.max(0, Math.trunc(Number(autoRefreshMinutes) || 0));
+    if (minutes <= 0) return;
+
+    const id = window.setInterval(() => {
+      const g = autoFetchGuardsRef.current;
+      if (!g.activeRepoPath) return;
+      if (g.loading || g.pullBusy || g.commitBusy || g.stashBusy) return;
+      if (autoRefreshInFlightRef.current) return;
+
+      autoRefreshInFlightRef.current = true;
+      void loadRepo(g.activeRepoPath, undefined, false)
+        .catch((e) => {
+          const msg = typeof e === "string" ? e : JSON.stringify(e);
+          if (g.activeRepoPath === activeRepoPath) setError(msg);
+        })
+        .finally(() => {
+          autoRefreshInFlightRef.current = false;
+        });
+    }, minutes * 60_000);
+
+    return () => window.clearInterval(id);
+  }, [activeRepoPath, autoRefreshMinutes, loadRepo]);
 
   async function runPush() {
     if (!activeRepoPath) return;

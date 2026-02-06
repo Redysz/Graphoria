@@ -56,6 +56,10 @@ export type GitSettings = {
   workingFilesView: WorkingFilesViewMode;
   diffShowLineNumbers: boolean;
   diffTool: DiffToolSettings;
+
+  fetchAfterOpenRepo: boolean;
+  autoFetchMinutes: number;
+  autoRefreshMinutes: number;
 };
 
 export type DiffToolSettings = {
@@ -207,6 +211,10 @@ export const defaultGitSettings: GitSettings = {
     path: "",
     command: "",
   },
+
+  fetchAfterOpenRepo: true,
+  autoFetchMinutes: 0,
+  autoRefreshMinutes: 0,
 };
 
 export const defaultGraphSettings: GraphSettings = {
@@ -310,7 +318,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 20,
+      version: 21,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -348,6 +356,15 @@ export const useAppSettings = create<AppSettingsState>()(
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        if (typeof s.git.fetchAfterOpenRepo !== "boolean") {
+          s.git.fetchAfterOpenRepo = defaultGitSettings.fetchAfterOpenRepo;
+        }
+        if (!Number.isFinite(s.git.autoFetchMinutes) || s.git.autoFetchMinutes < 0) {
+          s.git.autoFetchMinutes = defaultGitSettings.autoFetchMinutes;
+        }
+        if (!Number.isFinite(s.git.autoRefreshMinutes) || s.git.autoRefreshMinutes < 0) {
+          s.git.autoRefreshMinutes = defaultGitSettings.autoRefreshMinutes;
         }
         if (typeof s.git.commitsOnlyHead !== "boolean") {
           s.git.commitsOnlyHead = defaultGitSettings.commitsOnlyHead;
