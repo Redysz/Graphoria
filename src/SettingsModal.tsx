@@ -18,6 +18,7 @@ import {
   type ShortcutActionId,
 } from "./shortcuts";
 import { gitSetUserIdentity } from "./api/git";
+import { getOpenOnStartup, setOpenOnStartup } from "./api/system";
 
 type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal" | "shortcuts";
 
@@ -53,6 +54,9 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const [applyError, setApplyError] = useState<string>("");
   const [applyOk, setApplyOk] = useState(false);
 
+  const [startupBusy, setStartupBusy] = useState(false);
+  const [startupError, setStartupError] = useState<string>("");
+
   const platform = useMemo(() => detectAppPlatform(), []);
   const [capturingId, setCapturingId] = useState<ShortcutActionId | null>(null);
 
@@ -82,7 +86,34 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
     setApplyError("");
     setApplyOk(false);
     setApplyScope(activeRepoPath.trim() ? "repo" : "global");
+
+    setStartupBusy(false);
+    setStartupError("");
+    void getOpenOnStartup()
+      .then((enabled) => {
+        setGeneral({ openOnStartup: enabled });
+      })
+      .catch((e) => {
+        setStartupError(typeof e === "string" ? e : JSON.stringify(e));
+      });
   }, [activeRepoPath, open]);
+
+  async function toggleStartup(nextEnabled: boolean) {
+    const prev = general.openOnStartup;
+
+    setStartupBusy(true);
+    setStartupError("");
+    setGeneral({ openOnStartup: nextEnabled });
+
+    try {
+      await setOpenOnStartup(nextEnabled);
+    } catch (e) {
+      setGeneral({ openOnStartup: prev });
+      setStartupError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStartupBusy(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -171,6 +202,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
 
               {section === "general" ? (
                 <div className="settingsContentBody">
+                  {startupError ? <div className="error">{startupError}</div> : null}
                   {field(
                     "Default view",
                     <select value={viewMode} onChange={(e) => setViewMode(e.target.value as ViewMode)}>
@@ -185,7 +217,8 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       <input
                         type="checkbox"
                         checked={general.openOnStartup}
-                        onChange={(e) => setGeneral({ openOnStartup: e.target.checked })}
+                        disabled={startupBusy}
+                        onChange={(e) => void toggleStartup(e.target.checked)}
                       />
                       Enable
                     </label>,

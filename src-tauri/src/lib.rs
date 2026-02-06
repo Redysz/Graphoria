@@ -124,6 +124,8 @@ use commands::patches::{
     git_predict_patch_file,
 };
 
+use commands::startup::{get_open_on_startup, set_open_on_startup};
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -2444,6 +2446,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_devtools_main,
             greet,
+            get_open_on_startup,
+            set_open_on_startup,
             repo_overview,
             list_commits,
             list_commits_full,

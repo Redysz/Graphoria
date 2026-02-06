@@ -21,3 +21,5 @@ pub(crate) mod tags;
 pub(crate) mod conflicts;
 
 pub(crate) mod patches;
+
+pub(crate) mod startup;
