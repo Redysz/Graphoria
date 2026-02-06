@@ -3686,19 +3686,27 @@ function App() {
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
+    const timeStep = graphSettings.rankDir === "LR" ? Math.max(340, rowStep) : rowStep;
 
-    const rowForCommitIndex = (idx: number) => {
+    const timeForCommitIndex = (idx: number) => {
+      if (graphSettings.rankDir === "LR") {
+        return Math.max(0, commits.length - 1 - idx);
+      }
       return idx;
     };
 
-    const posFor = (lane: number, row: number) => {
-      return { x: lane * laneStep, y: row * rowStep };
+    const posFor = (lane: number, time: number) => {
+      if (graphSettings.rankDir === "LR") {
+        const zigzag = (time % 2 === 0 ? -1 : 1) * 40;
+        return { x: time * timeStep, y: lane * laneStep + zigzag };
+      }
+      return { x: lane * laneStep, y: time * rowStep };
     };
 
     for (let idx = 0; idx < commits.length; idx++) {
       const c = commits[idx];
       const lane = laneByHash.get(c.hash) ?? 0;
-      const row = rowForCommitIndex(idx);
+      const time = timeForCommitIndex(idx);
       const label = `${shortHash(c.hash)}\n${truncate(c.subject, 100)}`;
       nodes.set(c.hash, {
         data: {
@@ -3706,7 +3714,7 @@ function App() {
           label,
           refs: c.refs,
         },
-        position: posFor(lane, row),
+        position: posFor(lane, time),
         classes: c.is_head ? "head" : undefined,
       });
     }
@@ -3734,7 +3742,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
 
   const { graphRef, zoomPct, requestAutoCenter, focusOnHash, focusOnHead, zoomBy } = useCyGraph({
     viewMode,

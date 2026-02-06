@@ -355,11 +355,12 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
-                    "Layout direction",
+                    "Graph orientation",
                     <select value={graph.rankDir} onChange={(e) => setGraph({ rankDir: e.target.value as RankDir })}>
-                      <option value="TB">Top {"→"} Bottom</option>
-                      <option value="LR">Left {"→"} Right</option>
+                      <option value="TB">Vertical (newest at top)</option>
+                      <option value="LR">Horizontal (newest at right)</option>
                     </select>,
+                    "Vertical: newest commits at the top, oldest at the bottom. Horizontal: newest commits at the right, oldest at the left.",
                   )}
 
                   {field(

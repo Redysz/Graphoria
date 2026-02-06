@@ -228,7 +228,11 @@ export function useCyGraph({
         if (!bboxIntersectsAnyEdge(bb)) break;
         const pos = n.position();
         n.unlock();
-        n.position({ x: pos.x + side * step, y: pos.y });
+        if (graphSettings.rankDir === "LR") {
+          n.position({ x: pos.x, y: pos.y + side * step });
+        } else {
+          n.position({ x: pos.x + side * step, y: pos.y });
+        }
         n.lock();
       }
     };
@@ -252,13 +256,45 @@ export function useCyGraph({
 
       const pos = n.position();
 
-      const left = filtered.filter((_, i) => i % 2 === 0);
-      const right = filtered.filter((_, i) => i % 2 === 1);
+      const a = filtered.filter((_, i) => i % 2 === 0);
+      const b = filtered.filter((_, i) => i % 2 === 1);
 
       const placeSide = (items: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }>, side: -1 | 1) => {
         const visibleCount = Math.min(items.length, maxPerCol);
-        const baseY = pos.y - ((visibleCount - 1) * gapY) / 2;
 
+        if (graphSettings.rankDir === "LR") {
+          const baseX = pos.x - ((visibleCount - 1) * gapY) / 2;
+          for (let i = 0; i < items.length; i++) {
+            const r = items[i];
+            const col = Math.floor(i / maxPerCol);
+            const row = i % maxPerCol;
+            const id = `ref:${n.id()}:${r.kind}:${r.label}`;
+            if (cy.$id(id).length > 0) continue;
+
+            cy.add({
+              group: "nodes",
+              data: { id, label: r.label, kind: r.kind },
+              position: {
+                x: baseX + row * gapY,
+                y: pos.y + side * (sideOffsetX + col * colGapX),
+              },
+              classes: `refBadge ref-${r.kind}${r.kind === "tag" && unsyncedTagSet.has(r.label) ? " ref-tag-unsynced" : ""}`,
+              locked: true,
+              grabbable: false,
+              selectable: false,
+            } as any);
+
+            cy.add({
+              group: "edges",
+              data: { id: `refedge:${id}`, source: id, target: n.id() },
+              classes: "refEdge",
+              selectable: false,
+            } as any);
+          }
+          return;
+        }
+
+        const baseY = pos.y - ((visibleCount - 1) * gapY) / 2;
         for (let i = 0; i < items.length; i++) {
           const r = items[i];
           const col = Math.floor(i / maxPerCol);
@@ -288,8 +324,8 @@ export function useCyGraph({
         }
       };
 
-      if (left.length > 0) placeSide(left, -1);
-      if (right.length > 0) placeSide(right, 1);
+      if (a.length > 0) placeSide(a, -1);
+      if (b.length > 0) placeSide(b, 1);
     }
 
     for (const b of cy.$("node.refBadge").toArray()) {
@@ -300,7 +336,14 @@ export function useCyGraph({
       const targetId = parts[1];
       const target = cy.$id(targetId);
       if (target.length === 0) continue;
-      const side: -1 | 1 = badge.position().x < (target as any).position().x ? -1 : 1;
+      const side: -1 | 1 =
+        graphSettings.rankDir === "LR"
+          ? badge.position().y < (target as any).position().y
+            ? -1
+            : 1
+          : badge.position().x < (target as any).position().x
+            ? -1
+            : 1;
       pushNodeAwayFromEdges(id, side);
     }
 
