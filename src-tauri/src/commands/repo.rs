@@ -1,7 +1,6 @@
 use serde::Serialize;
 
 use std::path::Path;
-use std::process::Command;
 
 #[tauri::command]
 pub(crate) fn git_check_worktree(repo_path: String) -> Result<(), String> {
@@ -17,7 +16,7 @@ pub(crate) fn git_trust_repo_global(repo_path: String) -> Result<(), String> {
 
     let normalized = repo_path.replace('\\', "/").trim_end_matches('/').to_string();
 
-    let out = Command::new("git")
+    let out = crate::new_command("git")
         .args([
             "config",
             "--global",
@@ -30,8 +29,10 @@ pub(crate) fn git_trust_repo_global(repo_path: String) -> Result<(), String> {
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-        if !stderr.is_empty() {
-            return Err(format!("git config failed: {stderr}"));
+        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+        let msg = if !stderr.is_empty() { stderr } else { stdout };
+        if !msg.is_empty() {
+            return Err(format!("git config failed: {msg}"));
         }
         return Err(String::from("git config failed."));
     }
@@ -74,7 +75,7 @@ pub(crate) fn change_repo_ownership_to_current_user(repo_path: String) -> Result
             return Err(String::from("Could not determine current username."));
         }
 
-        let takeown = Command::new("cmd")
+        let takeown = crate::new_command("cmd")
             .args(["/C", "takeown", "/F", repo_path.as_str(), "/R", "/D", "Y"])
             .output()
             .map_err(|e| format!("Failed to run takeown: {e}"))?;
@@ -89,7 +90,7 @@ pub(crate) fn change_repo_ownership_to_current_user(repo_path: String) -> Result
             return Err(String::from("Failed to change ownership (takeown)."));
         }
 
-        let icacls = Command::new("cmd")
+        let icacls = crate::new_command("cmd")
             .args([
                 "/C",
                 "icacls",
@@ -216,7 +217,7 @@ pub(crate) fn git_ls_remote_heads(repo_url: String) -> Result<Vec<String>, Strin
         return Err(String::from("repo_url is empty"));
     }
 
-    let out = Command::new("git")
+    let out = crate::new_command("git")
         .args(["ls-remote", "--heads", repo_url.as_str()])
         .output()
         .map_err(|e| format!("Failed to spawn git ls-remote: {e}"))?;

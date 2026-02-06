@@ -2,12 +2,10 @@
 pub(crate) fn get_open_on_startup() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-
         const RUN_KEY: &str = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
         const VALUE_NAME: &str = "Graphoria";
 
-        let out = Command::new("reg")
+        let out = crate::new_command("reg")
             .args(["query", RUN_KEY, "/v", VALUE_NAME])
             .output()
             .map_err(|e| format!("Failed to run reg query: {e}"))?;
@@ -35,8 +33,6 @@ pub(crate) fn get_open_on_startup() -> Result<bool, String> {
 pub(crate) fn set_open_on_startup(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-
         const RUN_KEY: &str = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
         const VALUE_NAME: &str = "Graphoria";
 
@@ -47,7 +43,7 @@ pub(crate) fn set_open_on_startup(enabled: bool) -> Result<(), String> {
                 .ok_or_else(|| String::from("Failed to convert exe path to string"))?;
             let value = format!("\"{}\"", exe_str);
 
-            let out = Command::new("reg")
+            let out = crate::new_command("reg")
                 .args(["add", RUN_KEY, "/v", VALUE_NAME, "/t", "REG_SZ", "/d", value.as_str(), "/f"])
                 .output()
                 .map_err(|e| format!("Failed to run reg add: {e}"))?;
@@ -65,7 +61,7 @@ pub(crate) fn set_open_on_startup(enabled: bool) -> Result<(), String> {
             return Ok(());
         }
 
-        let out = Command::new("reg")
+        let out = crate::new_command("reg")
             .args(["delete", RUN_KEY, "/v", VALUE_NAME, "/f"])
             .output()
             .map_err(|e| format!("Failed to run reg delete: {e}"))?;

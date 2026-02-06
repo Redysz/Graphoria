@@ -2,7 +2,6 @@ use base64::Engine;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitChangeEntry {
@@ -342,7 +341,7 @@ pub(crate) fn git_head_vs_working_text_diff(repo_path: String, path: String, uni
 
     let u = unified.min(50);
     let unified_arg = format!("--unified={u}");
-    let out = Command::new("git")
+    let out = crate::new_command("git")
         .args([
             "diff",
             "--no-index",
@@ -441,7 +440,7 @@ pub(crate) fn git_head_vs_working_diff(repo_path: String, path: String, unified:
 
     let u = unified.min(50);
     let unified_arg = format!("--unified={u}");
-    let out = Command::new("git")
+    let out = crate::new_command("git")
         .args([
             "diff",
             "--no-index",
@@ -497,7 +496,7 @@ pub(crate) fn git_diff_no_index(left_path: String, right_path: String, unified: 
 
     let u = unified.min(50);
     let unified_arg = format!("--unified={u}");
-    let out = Command::new("git")
+    let out = crate::new_command("git")
         .args([
             "diff",
             "--no-index",
