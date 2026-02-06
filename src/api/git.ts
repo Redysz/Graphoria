@@ -8,6 +8,7 @@ import type {
   GitConflictFileVersions,
   GitConflictState,
   GitPatchPredictResult,
+  GitPatchPredictGraphResult,
   GitStatusEntry,
   GitStatusSummary,
   GitStashEntry,
@@ -233,6 +234,10 @@ export function gitPredictPatchFile(params: { repoPath: string; patchPath: strin
   return invoke<GitPatchPredictResult>("git_predict_patch_file", params);
 }
 
+export function gitPredictPatchGraph(params: { repoPath: string; patchPath: string; method: string; maxCommits?: number }) {
+  return invoke<GitPatchPredictGraphResult>("git_predict_patch_graph", params);
+}
+
 export function gitApplyPatchFile(params: { repoPath: string; patchPath: string; method: string }) {
   return invoke<string>("git_apply_patch_file", params);
 }
@@ -243,6 +248,14 @@ export function gitCherryPickAbort(repoPath: string) {
 
 export function gitCherryPickContinueWithMessage(params: { repoPath: string; message: string }) {
   return invoke<string>("git_cherry_pick_continue_with_message", params);
+}
+
+export function gitAmAbort(repoPath: string) {
+  return invoke<string>("git_am_abort", { repoPath });
+}
+
+export function gitAmContinueWithMessage(params: { repoPath: string; message: string }) {
+  return invoke<string>("git_am_continue_with_message", params);
 }
 
 export function gitResolveRef(params: { repoPath: string; reference: string }) {

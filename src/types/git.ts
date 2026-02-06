@@ -101,7 +101,7 @@ export type GitConflictFileEntry = {
 
 export type GitConflictState = {
   in_progress: boolean;
-  operation: string;
+  operation: "merge" | "rebase" | "cherry-pick" | "am" | "";
   files: GitConflictFileEntry[];
 };
 
@@ -133,4 +133,14 @@ export type GitPatchPredictResult = {
   ok: boolean;
   message: string;
   files: string[];
+};
+
+export type GitPatchPredictGraphResult = {
+  ok: boolean;
+  message: string;
+  conflict_files: string[];
+  touched_files: string[];
+  graph_commits: GitCommit[];
+  created_node_ids: string[];
+  head_name: string;
 };

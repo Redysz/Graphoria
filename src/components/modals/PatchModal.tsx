@@ -1,6 +1,3 @@
-import { useEffect, useState } from "react";
-import type { GitPatchPredictResult } from "../../types/git";
-
 type PatchMode = "export" | "apply";
 type PatchMethod = "apply" | "am";
 
@@ -22,8 +19,6 @@ type Props = {
   setMethod: (v: PatchMethod) => void;
 
   predictBusy: boolean;
-  predictError: string;
-  predictResult: GitPatchPredictResult | null;
 
   onPickPatchFile: () => void;
   onPickSaveFile: () => void;
@@ -46,22 +41,12 @@ export function PatchModal({
   method,
   setMethod,
   predictBusy,
-  predictError,
-  predictResult,
   onPickPatchFile,
   onPickSaveFile,
   onPredict,
   onRun,
   onClose,
 }: Props) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setAdvancedOpen(false);
-    }
-  }, [open]);
-
   if (!open) return null;
 
   const isExport = mode === "export";
@@ -120,59 +105,8 @@ export function PatchModal({
             ) : null}
 
             {!isExport ? (
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((v) => !v)}
-                disabled={busy || predictBusy}
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, alignSelf: "flex-start" }}
-                title="Show prediction output"
-              >
-                {advancedOpen ? "Predict ▲" : "Predict ▼"}
-              </button>
-            ) : null}
-
-            {!isExport && advancedOpen ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {predictError ? <div className="error">{predictError}</div> : null}
-                {predictBusy ? <div style={{ opacity: 0.7 }}>Predicting…</div> : null}
-                {predictResult ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ opacity: 0.85 }}>
-                      Result: <span className="mono">{predictResult.ok ? "ok" : "conflicts"}</span>
-                    </div>
-                    {predictResult.message ? (
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", opacity: 0.8 }}>{predictResult.message}</pre>
-                    ) : null}
-                    <div>
-                      <div style={{ fontWeight: 800, opacity: 0.8, marginBottom: 6 }}>Touched files</div>
-                      {predictResult.files?.length ? (
-                        <div className="statusList">
-                          {predictResult.files.map((p) => (
-                            <div key={p} className="statusRow statusRowSingleCol" title={p}>
-                              <span className="statusPath">{p}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ opacity: 0.75 }}>No files detected.</div>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {!isExport && !advancedOpen ? (
               <div style={{ opacity: 0.7, fontSize: 12 }}>
-                Predict uses <span className="mono">git apply --check</span>. For <span className="mono">git am</span>, it checks the diff section of the patch.
-              </div>
-            ) : null}
-
-            {!isExport ? (
-              <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" onClick={onPredict} disabled={busy || predictBusy || !activeRepoPath || !patchPath.trim()}>
-                  {predictBusy ? "Predicting…" : "Predict"}
-                </button>
+                Predict shows a mini graph preview and a list of potential conflicts.
               </div>
             ) : null}
           </div>
@@ -181,13 +115,20 @@ export function PatchModal({
           <button type="button" onClick={onClose} disabled={busy || predictBusy}>
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={onRun}
-            disabled={busy || predictBusy || !activeRepoPath || !patchPath.trim() || (isExport && !defaultCommit.trim())}
-          >
-            {busy ? (isExport ? "Exporting…" : "Applying…") : isExport ? "Export" : "Apply"}
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            {!isExport ? (
+              <button type="button" onClick={onPredict} disabled={busy || predictBusy || !activeRepoPath || !patchPath.trim()}>
+                {predictBusy ? "Predicting…" : "Predict"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={busy || predictBusy || !activeRepoPath || !patchPath.trim() || (isExport && !defaultCommit.trim())}
+            >
+              {busy ? (isExport ? "Exporting…" : "Applying…") : isExport ? "Export" : "Apply"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

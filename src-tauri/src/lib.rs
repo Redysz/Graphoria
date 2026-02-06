@@ -91,7 +91,11 @@ use commands::diff::{
     git_working_file_text_preview,
     read_text_file,
 };
-use commands::reflog::{git_cherry_pick, git_cherry_pick_advanced, git_reflog};
+use commands::reflog::{
+    git_cherry_pick,
+    git_cherry_pick_advanced,
+    git_reflog,
+};
 use commands::conflicts::{
     git_conflict_apply,
     git_conflict_apply_and_stage,
@@ -104,6 +108,8 @@ use commands::conflicts::{
     git_continue_file_diff,
     git_continue_info,
     git_continue_rename_diff,
+    git_am_abort,
+    git_am_continue_with_message,
     git_cherry_pick_abort,
     git_cherry_pick_continue_with_message,
     git_merge_continue_with_message,
@@ -114,6 +120,7 @@ use commands::conflicts::{
 use commands::patches::{
     git_apply_patch_file,
     git_format_patch_to_file,
+    git_predict_patch_graph,
     git_predict_patch_file,
 };
 
@@ -2509,6 +2516,8 @@ pub fn run() {
             git_reflog,
             git_cherry_pick,
             git_cherry_pick_advanced,
+            git_am_abort,
+            git_am_continue_with_message,
             git_branches_points_at,
             open_terminal,
             open_terminal_profile,
@@ -2539,6 +2548,7 @@ pub fn run() {
             git_pull_predict_conflict_preview,
             git_format_patch_to_file,
             git_predict_patch_file,
+            git_predict_patch_graph,
             git_apply_patch_file,
             git_create_tag,
             git_delete_tag,

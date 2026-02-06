@@ -10,6 +10,8 @@ export function CommitContextMenu(props: {
   menu: CommitContextMenuState | null;
   menuRef: RefObject<HTMLDivElement | null>;
 
+  headHash: string;
+
   activeRepoPath: string;
   loading: boolean;
 
@@ -25,6 +27,9 @@ export function CommitContextMenu(props: {
   onCheckoutCommit: (hash: string) => void;
   onCreateBranch: (hash: string) => void;
   onCreateTag: (hash: string) => void;
+  onCherryPick: (hash: string) => void;
+  onExportPatch: (hash: string) => void;
+  onApplyPatch: () => void;
   onReset: (mode: "soft" | "mixed" | "hard", hash: string) => void;
 
   onCheckoutBranch: (branch: string) => void;
@@ -33,6 +38,8 @@ export function CommitContextMenu(props: {
   const {
     menu,
     menuRef,
+
+    headHash,
     activeRepoPath,
     loading,
     isDetached,
@@ -45,12 +52,17 @@ export function CommitContextMenu(props: {
     onCheckoutCommit,
     onCreateBranch,
     onCreateTag,
+    onCherryPick,
+    onExportPatch,
+    onApplyPatch,
     onReset,
     onCheckoutBranch,
     onResetHardAndCheckoutBranch,
   } = props;
 
   if (!menu) return null;
+
+  const isHead = Boolean((menu.hash ?? "").trim() && (headHash ?? "").trim() && menu.hash.trim() === headHash.trim());
 
   return (
     <div
@@ -80,6 +92,18 @@ export function CommitContextMenu(props: {
 
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onCreateTag(menu.hash)}>
         Create tag…
+      </button>
+
+      <button type="button" disabled={!activeRepoPath || loading || isHead} onClick={() => onCherryPick(menu.hash)}>
+        Cherry-pick…
+      </button>
+
+      <button type="button" disabled={!activeRepoPath || loading} onClick={() => onExportPatch(menu.hash)}>
+        Export patch…
+      </button>
+
+      <button type="button" disabled={!activeRepoPath || loading} onClick={() => onApplyPatch()}>
+        Apply patch…
       </button>
 
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onReset("soft", menu.hash)}>
