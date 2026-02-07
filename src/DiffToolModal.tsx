@@ -4,7 +4,9 @@ import { gitHeadFileContent, gitWorkingFileContent } from "./api/gitWorkingFiles
 import { readTextFile } from "./api/system";
 import { useAppSettings } from "./appSettingsStore";
 
-type DiffToolMode = "repo_head" | "file_file";
+type DiffToolMode = "repo_head" | "file_file" | "clipboard";
+
+type DiffSideSource = "clipboard" | "file" | "repo_head" | "repo_working";
 
 type DiffRow = {
   leftText: string;
@@ -22,6 +24,13 @@ type MiniMark = {
 };
 
 type DiffOp = { kind: "equal" | "insert" | "delete"; text: string };
+
+type DiffResult = {
+  leftLabel: string;
+  rightLabel: string;
+  leftContent: string;
+  rightContent: string;
+};
 
 type Props = {
   open: boolean;
@@ -50,6 +59,106 @@ function splitLines(s: string) {
   return s.replace(/\r\n/g, "\n").split("\n");
 }
 
+function levenshteinDiffOps(a: string[], b: string[]): DiffOp[] {
+  const n = a.length;
+  const m = b.length;
+  const w = m + 1;
+
+  const cost = new Uint16Array((n + 1) * (m + 1));
+  const dir = new Uint8Array((n + 1) * (m + 1));
+
+  for (let i = 1; i <= n; i++) {
+    cost[i * w] = i;
+    dir[i * w] = 2;
+  }
+  for (let j = 1; j <= m; j++) {
+    cost[j] = j;
+    dir[j] = 3;
+  }
+
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const idx = i * w + j;
+      const ai = a[i - 1] ?? "";
+      const bj = b[j - 1] ?? "";
+
+      if (ai === bj) {
+        cost[idx] = cost[(i - 1) * w + (j - 1)] ?? 0;
+        dir[idx] = 1;
+        continue;
+      }
+
+      const del = (cost[(i - 1) * w + j] ?? 0) + 1;
+      const ins = (cost[i * w + (j - 1)] ?? 0) + 1;
+      const sub = (cost[(i - 1) * w + (j - 1)] ?? 0) + 1;
+
+      let best = sub;
+      let bestDir: 1 | 2 | 3 = 1;
+      if (del < best) {
+        best = del;
+        bestDir = 2;
+      }
+      if (ins < best) {
+        best = ins;
+        bestDir = 3;
+      }
+
+      cost[idx] = best;
+      dir[idx] = bestDir;
+    }
+  }
+
+  const opsRev: DiffOp[] = [];
+  let i = n;
+  let j = m;
+  while (i > 0 || j > 0) {
+    const d = dir[i * w + j] ?? 0;
+    if (d === 1) {
+      const ai = a[i - 1] ?? "";
+      const bj = b[j - 1] ?? "";
+      if (ai === bj) {
+        opsRev.push({ kind: "equal", text: ai });
+      } else {
+        opsRev.push({ kind: "insert", text: bj });
+        opsRev.push({ kind: "delete", text: ai });
+      }
+      i--;
+      j--;
+      continue;
+    }
+    if (d === 2) {
+      opsRev.push({ kind: "delete", text: a[i - 1] ?? "" });
+      i--;
+      continue;
+    }
+    if (d === 3) {
+      opsRev.push({ kind: "insert", text: b[j - 1] ?? "" });
+      j--;
+      continue;
+    }
+
+    if (i > 0) {
+      opsRev.push({ kind: "delete", text: a[i - 1] ?? "" });
+      i--;
+      continue;
+    }
+    opsRev.push({ kind: "insert", text: b[j - 1] ?? "" });
+    j--;
+  }
+
+  opsRev.reverse();
+  return opsRev;
+}
+
+function diffOps(a: string[], b: string[]): DiffOp[] {
+  const n = a.length;
+  const m = b.length;
+  if (n * m <= 20000) {
+    return levenshteinDiffOps(a, b);
+  }
+  return myersDiff(a, b);
+}
+
 function myersDiff(a: string[], b: string[]): DiffOp[] {
   const n = a.length;
   const m = b.length;
@@ -59,21 +168,15 @@ function myersDiff(a: string[], b: string[]): DiffOp[] {
   v.set(1, 0);
   const trace: Array<Map<number, number>> = [];
 
-  for (let d = 0; d <= max; d++) {
-    const vSnapshot = new Map<number, number>();
-    for (const [k, x] of v.entries()) vSnapshot.set(k, x);
-    trace.push(vSnapshot);
+  let foundD: number | null = null;
 
+  for (let d = 0; d <= max; d++) {
     for (let k = -d; k <= d; k += 2) {
       let x: number;
-      if (k === -d) {
+      if (k === -d || (k !== d && (v.get(k - 1) ?? 0) < (v.get(k + 1) ?? 0))) {
         x = v.get(k + 1) ?? 0;
-      } else if (k === d) {
-        x = (v.get(k - 1) ?? 0) + 1;
       } else {
-        const xDown = v.get(k + 1) ?? 0;
-        const xRight = (v.get(k - 1) ?? 0) + 1;
-        x = xDown > xRight ? xDown : xRight;
+        x = (v.get(k - 1) ?? 0) + 1;
       }
 
       let y = x - k;
@@ -85,70 +188,75 @@ function myersDiff(a: string[], b: string[]): DiffOp[] {
       v.set(k, x);
 
       if (x >= n && y >= m) {
-        const ops: DiffOp[] = [];
-        let curX = n;
-        let curY = m;
-
-        for (let curD = trace.length - 1; curD > 0; curD--) {
-          const vPrev = trace[curD - 1];
-          const k2 = curX - curY;
-
-          let prevK: number;
-          if (k2 === -curD || (k2 !== curD && (vPrev.get(k2 - 1) ?? 0) < (vPrev.get(k2 + 1) ?? 0))) {
-            prevK = k2 + 1;
-          } else {
-            prevK = k2 - 1;
-          }
-
-          const prevX = vPrev.get(prevK) ?? 0;
-          const prevY = prevX - prevK;
-
-          while (curX > prevX && curY > prevY) {
-            ops.push({ kind: "equal", text: a[curX - 1] ?? "" });
-            curX--;
-            curY--;
-          }
-
-          if (curX === prevX) {
-            if (curY > 0) {
-              ops.push({ kind: "insert", text: b[curY - 1] ?? "" });
-              curY--;
-            }
-          } else {
-            if (curX > 0) {
-              ops.push({ kind: "delete", text: a[curX - 1] ?? "" });
-              curX--;
-            }
-          }
-        }
-
-        while (curX > 0 && curY > 0) {
-          ops.push({ kind: "equal", text: a[curX - 1] ?? "" });
-          curX--;
-          curY--;
-        }
-        while (curX > 0) {
-          ops.push({ kind: "delete", text: a[curX - 1] ?? "" });
-          curX--;
-        }
-        while (curY > 0) {
-          ops.push({ kind: "insert", text: b[curY - 1] ?? "" });
-          curY--;
-        }
-
-        ops.reverse();
-        return ops;
+        foundD = d;
+        break;
       }
+    }
+
+    const vSnapshot = new Map<number, number>();
+    for (const [k, x] of v.entries()) vSnapshot.set(k, x);
+    trace.push(vSnapshot);
+
+    if (foundD !== null) break;
+  }
+
+  if (foundD === null) return [];
+
+  const ops: DiffOp[] = [];
+  let x = n;
+  let y = m;
+
+  for (let d = foundD; d > 0; d--) {
+    const vPrev = trace[d - 1];
+    const k = x - y;
+
+    let prevK: number;
+    if (k === -d || (k !== d && (vPrev.get(k - 1) ?? 0) < (vPrev.get(k + 1) ?? 0))) {
+      prevK = k + 1;
+    } else {
+      prevK = k - 1;
+    }
+
+    const prevX = vPrev.get(prevK) ?? 0;
+    const prevY = prevX - prevK;
+
+    while (x > prevX && y > prevY) {
+      ops.push({ kind: "equal", text: a[x - 1] ?? "" });
+      x--;
+      y--;
+    }
+
+    if (x === prevX) {
+      ops.push({ kind: "insert", text: b[y - 1] ?? "" });
+      y--;
+    } else {
+      ops.push({ kind: "delete", text: a[x - 1] ?? "" });
+      x--;
     }
   }
 
-  return [];
+  while (x > 0 && y > 0) {
+    ops.push({ kind: "equal", text: a[x - 1] ?? "" });
+    x--;
+    y--;
+  }
+  while (x > 0) {
+    ops.push({ kind: "delete", text: a[x - 1] ?? "" });
+    x--;
+  }
+  while (y > 0) {
+    ops.push({ kind: "insert", text: b[y - 1] ?? "" });
+    y--;
+  }
+
+  ops.reverse();
+  return ops;
 }
 
 function buildSplitRows(left: string, right: string): DiffRow[] {
   const a = splitLines(left);
   const b = splitLines(right);
-  const ops = myersDiff(a, b);
+  const ops = diffOps(a, b);
 
   const rows: DiffRow[] = [];
   let aNo = 1;
@@ -255,16 +363,27 @@ export default function DiffToolModal(props: Props) {
   const [repoPath, setRepoPath] = useState<string>("");
   const [repoRelPath, setRepoRelPath] = useState<string>("");
 
+  const [leftSource, setLeftSource] = useState<DiffSideSource>("clipboard");
+  const [rightSource, setRightSource] = useState<DiffSideSource>("clipboard");
+  const [leftRepoRelPath, setLeftRepoRelPath] = useState<string>("");
+  const [rightRepoRelPath, setRightRepoRelPath] = useState<string>("");
+  const [leftClipboard, setLeftClipboard] = useState<string>("");
+  const [rightClipboard, setRightClipboard] = useState<string>("");
+
   const [leftPath, setLeftPath] = useState<string>("");
   const [rightPath, setRightPath] = useState<string>("");
 
   const [syncScroll, setSyncScroll] = useState(true);
 
-  const [leftLabel, setLeftLabel] = useState<string>("");
-  const [rightLabel, setRightLabel] = useState<string>("");
-
-  const [leftContent, setLeftContent] = useState<string>("");
-  const [rightContent, setRightContent] = useState<string>("");
+  const emptyResult: DiffResult = useMemo(
+    () => ({ leftLabel: "", rightLabel: "", leftContent: "", rightContent: "" }),
+    [],
+  );
+  const [resultByMode, setResultByMode] = useState<Record<DiffToolMode, DiffResult>>({
+    repo_head: { leftLabel: "", rightLabel: "", leftContent: "", rightContent: "" },
+    file_file: { leftLabel: "", rightLabel: "", leftContent: "", rightContent: "" },
+    clipboard: { leftLabel: "", rightLabel: "", leftContent: "", rightContent: "" },
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -277,20 +396,109 @@ export default function DiffToolModal(props: Props) {
 
     setError("");
     setLoading(false);
-    setLeftContent("");
-    setRightContent("");
+    setResultByMode({ repo_head: emptyResult, file_file: emptyResult, clipboard: emptyResult });
 
     const hasRepo = !!activeRepoPath.trim();
     setMode(hasRepo ? "repo_head" : "file_file");
     setRepoPath(activeRepoPath);
     setRepoRelPath("");
 
+    setLeftSource("clipboard");
+    setRightSource("clipboard");
+    setLeftRepoRelPath("");
+    setRightRepoRelPath("");
+    setLeftClipboard("");
+    setRightClipboard("");
+
     setLeftPath("");
     setRightPath("");
-
-    setLeftLabel("");
-    setRightLabel("");
   }, [isOpen, activeRepoPath]);
+
+  useEffect(() => {
+    setResultByMode((prev) => ({
+      ...prev,
+      repo_head: emptyResult,
+    }));
+  }, [repoPath, repoRelPath]);
+
+  useEffect(() => {
+    setResultByMode((prev) => ({
+      ...prev,
+      file_file: emptyResult,
+    }));
+  }, [leftPath, rightPath]);
+
+  useEffect(() => {
+    setResultByMode((prev) => ({
+      ...prev,
+      clipboard: emptyResult,
+    }));
+  }, [
+    leftSource,
+    rightSource,
+    leftRepoRelPath,
+    rightRepoRelPath,
+    leftClipboard,
+    rightClipboard,
+    leftPath,
+    rightPath,
+    repoPath,
+  ]);
+
+  async function pasteInto(side: "left" | "right") {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (side === "left") setLeftClipboard(t);
+      else setRightClipboard(t);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
+  async function loadSideFromFile(side: "left" | "right", path: string) {
+    const p = path.trim();
+    if (!p) {
+      setError(side === "left" ? "Select left file." : "Select right file.");
+      return;
+    }
+
+    setError("");
+    try {
+      const t = await readTextFile(p);
+      if (side === "left") setLeftClipboard(t);
+      else setRightClipboard(t);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    }
+  }
+
+  async function loadSideFromRepo(side: "left" | "right", kind: "repo_head" | "repo_working") {
+    const rp = repoPath.trim();
+    const rel = (side === "left" ? leftRepoRelPath : rightRepoRelPath).trim();
+    if (!rp) {
+      setError("Select a repository.");
+      return;
+    }
+    if (!rel) {
+      setError(side === "left" ? "Select left repo file." : "Select right repo file.");
+      return;
+    }
+
+    setError("");
+    try {
+      const t =
+        kind === "repo_head"
+          ? await gitHeadFileContent({ repoPath: rp, path: rel })
+          : await gitWorkingFileContent({ repoPath: rp, path: rel });
+
+      if (side === "left") setLeftClipboard(t);
+      else setRightClipboard(t);
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      const binaryMsg = "Binary file preview is not supported.";
+      setError(msg.includes(binaryMsg) ? binaryMsg : msg);
+    }
+  }
 
   async function pickRepoFolder() {
     const selected = await open({
@@ -355,15 +563,19 @@ export default function DiffToolModal(props: Props) {
     };
   }, [isOpen, syncScroll, leftRef.current, rightRef.current]);
 
-  const rows = useMemo(() => buildSplitRows(leftContent, rightContent), [leftContent, rightContent]);
+  const activeResult = resultByMode[mode];
+  const rows = useMemo(
+    () => buildSplitRows(activeResult.leftContent, activeResult.rightContent),
+    [activeResult.leftContent, activeResult.rightContent],
+  );
   const miniMarks = useMemo(() => buildMiniMarks(rows), [rows]);
   const emptyHint = useMemo(() => {
     if (loading) return "Comparing…";
     if (error) return "";
-    if (!leftContent && !rightContent) return "Select inputs and click Compare.";
+    if (!activeResult.leftContent && !activeResult.rightContent) return "Select inputs and click Compare.";
     if (rows.length === 0) return "No content.";
     return "";
-  }, [error, leftContent, loading, rightContent, rows.length]);
+  }, [activeResult.leftContent, activeResult.rightContent, error, loading, rows.length]);
 
   function scrollRightToPct(pct: number) {
     const rightEl = rightRef.current;
@@ -405,6 +617,32 @@ export default function DiffToolModal(props: Props) {
     setRepoRelPath(rel);
   }
 
+  async function pickRepoFileForSide(side: "left" | "right") {
+    if (!repoPath.trim()) {
+      setError("Select a repository.");
+      return;
+    }
+
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      title: side === "left" ? "Select left repo file" : "Select right repo file",
+      defaultPath: repoPath,
+    });
+
+    if (!selected || Array.isArray(selected)) return;
+
+    const rel = relPathFromRepo(repoPath, selected);
+    if (!rel) {
+      setError("Selected file is not inside the selected repository.");
+      return;
+    }
+
+    setError("");
+    if (side === "left") setLeftRepoRelPath(rel);
+    else setRightRepoRelPath(rel);
+  }
+
   async function pickLeftFile() {
     const selected = await open({ directory: false, multiple: false, title: "Select left file" });
     if (!selected || Array.isArray(selected)) return;
@@ -422,8 +660,6 @@ export default function DiffToolModal(props: Props) {
   async function runCompare() {
     setError("");
     setLoading(true);
-    setLeftContent("");
-    setRightContent("");
 
     try {
       if (mode === "repo_head") {
@@ -438,8 +674,8 @@ export default function DiffToolModal(props: Props) {
           return;
         }
 
-        setLeftLabel(`HEAD:${rel}`);
-        setRightLabel(rel);
+        const leftLabel = `HEAD:${rel}`;
+        const rightLabel = rel;
 
         const [headRes, workingRes] = await Promise.allSettled([
           gitHeadFileContent({ repoPath: rp, path: rel }),
@@ -465,8 +701,41 @@ export default function DiffToolModal(props: Props) {
           return;
         }
 
-        setLeftContent(head);
-        setRightContent(working);
+        setResultByMode((prev) => ({
+          ...prev,
+          repo_head: {
+            leftLabel,
+            rightLabel,
+            leftContent: head,
+            rightContent: working,
+          },
+        }));
+        return;
+      }
+
+      if (mode === "clipboard") {
+        const leftLabelForSource = () => {
+          if (leftSource === "file") return leftPath.trim() || "(file)";
+          if (leftSource === "repo_head") return `HEAD:${leftRepoRelPath.trim() || "(file)"}`;
+          if (leftSource === "repo_working") return leftRepoRelPath.trim() || "(file)";
+          return "Clipboard";
+        };
+        const rightLabelForSource = () => {
+          if (rightSource === "file") return rightPath.trim() || "(file)";
+          if (rightSource === "repo_head") return `HEAD:${rightRepoRelPath.trim() || "(file)"}`;
+          if (rightSource === "repo_working") return rightRepoRelPath.trim() || "(file)";
+          return "Clipboard";
+        };
+
+        setResultByMode((prev) => ({
+          ...prev,
+          clipboard: {
+            leftLabel: leftLabelForSource(),
+            rightLabel: rightLabelForSource(),
+            leftContent: leftClipboard,
+            rightContent: rightClipboard,
+          },
+        }));
         return;
       }
 
@@ -481,21 +750,52 @@ export default function DiffToolModal(props: Props) {
         return;
       }
 
-      setLeftLabel(l);
-      setRightLabel(r);
+      const leftLabel = l;
+      const rightLabel = r;
 
       const [left, right] = await Promise.all([
         readTextFile(l),
         readTextFile(r),
       ]);
 
-      setLeftContent(left);
-      setRightContent(right);
+      setResultByMode((prev) => ({
+        ...prev,
+        file_file: {
+          leftLabel,
+          rightLabel,
+          leftContent: left,
+          rightContent: right,
+        },
+      }));
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoading(false);
     }
+  }
+
+  function swapClipboardSides() {
+    setLeftSource(rightSource);
+    setRightSource(leftSource);
+
+    setLeftPath(rightPath);
+    setRightPath(leftPath);
+
+    setLeftRepoRelPath(rightRepoRelPath);
+    setRightRepoRelPath(leftRepoRelPath);
+
+    setLeftClipboard(rightClipboard);
+    setRightClipboard(leftClipboard);
+
+    setResultByMode((prev) => ({
+      ...prev,
+      clipboard: {
+        leftLabel: prev.clipboard.rightLabel,
+        rightLabel: prev.clipboard.leftLabel,
+        leftContent: prev.clipboard.rightContent,
+        rightContent: prev.clipboard.leftContent,
+      },
+    }));
   }
 
   if (!isOpen) return null;
@@ -521,6 +821,9 @@ export default function DiffToolModal(props: Props) {
               <button type="button" className={mode === "file_file" ? "active" : ""} onClick={() => setMode("file_file")}>
                 File vs file
               </button>
+              <button type="button" className={mode === "clipboard" ? "active" : ""} onClick={() => setMode("clipboard")}>
+                Clipboard
+              </button>
             </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.85 }}>
@@ -528,10 +831,23 @@ export default function DiffToolModal(props: Props) {
               Sync scroll
             </label>
 
+            {mode === "clipboard" ? (
+              <button type="button" onClick={() => swapClipboardSides()} disabled={loading}>
+                Swap sides
+              </button>
+            ) : null}
+
             <button
               type="button"
               onClick={() => void runCompare()}
-              disabled={loading || (mode === "repo_head" ? !repoPath.trim() || !repoRelPath.trim() : !leftPath.trim() || !rightPath.trim())}
+              disabled={
+                loading ||
+                (mode === "repo_head"
+                  ? !repoPath.trim() || !repoRelPath.trim()
+                  : mode === "file_file"
+                    ? !leftPath.trim() || !rightPath.trim()
+                    : false)
+              }
             >
               {loading ? "Comparing…" : "Compare"}
             </button>
@@ -562,7 +878,7 @@ export default function DiffToolModal(props: Props) {
                 </button>
               </div>
             </div>
-          ) : (
+          ) : mode === "file_file" ? (
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto", gap: 10, alignItems: "center" }}>
                 <div style={{ fontWeight: 900, opacity: 0.75 }}>Left file</div>
@@ -580,15 +896,196 @@ export default function DiffToolModal(props: Props) {
                 </button>
               </div>
             </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {(leftSource === "repo_head" || leftSource === "repo_working" || rightSource === "repo_head" || rightSource === "repo_working") ? (
+                <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontWeight: 900, opacity: 0.75 }}>Repository</div>
+                  <select value={repoPath} onChange={(e) => setRepoPath(e.target.value)} disabled={loading}>
+                    <option value="">(select)</option>
+                    {repos.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => void pickRepoFolder()} disabled={loading}>
+                    Browse…
+                  </button>
+                </div>
+              ) : null}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                    <div style={{ fontWeight: 900, opacity: 0.75 }}>Left</div>
+                    <select value={leftSource} onChange={(e) => setLeftSource(e.target.value as DiffSideSource)} disabled={loading}>
+                      <option value="clipboard">Clipboard</option>
+                      <option value="file">File</option>
+                      <option value="repo_head">HEAD file</option>
+                      <option value="repo_working">Working file</option>
+                    </select>
+                    <button type="button" onClick={() => void pasteInto("left")} disabled={loading || leftSource !== "clipboard"}>
+                      Paste
+                    </button>
+                    <button type="button" onClick={() => setLeftClipboard("")} disabled={loading || leftSource !== "clipboard"}>
+                      Clear
+                    </button>
+                  </div>
+
+                  {leftSource === "file" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.75 }}>Left file</div>
+                      <input className="modalInput" value={leftPath} onChange={(e) => setLeftPath(e.target.value)} disabled={loading} />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void (async () => {
+                            const selected = await open({ directory: false, multiple: false, title: "Select left file" });
+                            if (!selected || Array.isArray(selected)) return;
+                            setError("");
+                            setLeftPath(selected);
+                            await loadSideFromFile("left", selected);
+                          })()
+                        }
+                        disabled={loading}
+                      >
+                        Browse…
+                      </button>
+                      <button type="button" onClick={() => void loadSideFromFile("left", leftPath)} disabled={loading || !leftPath.trim()}>
+                        Load
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {leftSource === "repo_head" || leftSource === "repo_working" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.75 }}>Left repo file</div>
+                      <input
+                        className="modalInput"
+                        value={leftRepoRelPath}
+                        onChange={(e) => setLeftRepoRelPath(e.target.value)}
+                        disabled={loading}
+                      />
+                      <button type="button" onClick={() => void pickRepoFileForSide("left")} disabled={loading || !repoPath.trim()}>
+                        Browse…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void loadSideFromRepo("left", leftSource)}
+                        disabled={loading || !repoPath.trim() || !leftRepoRelPath.trim()}
+                      >
+                        Load
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <textarea
+                    className="modalInput"
+                    value={leftClipboard}
+                    onChange={(e) => setLeftClipboard(e.target.value)}
+                    disabled={loading}
+                    style={{
+                      minHeight: 120,
+                      resize: "vertical",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace",
+                      whiteSpace: "pre",
+                    }}
+                    placeholder="Paste or type left content here…"
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                    <div style={{ fontWeight: 900, opacity: 0.75 }}>Right</div>
+                    <select value={rightSource} onChange={(e) => setRightSource(e.target.value as DiffSideSource)} disabled={loading}>
+                      <option value="clipboard">Clipboard</option>
+                      <option value="file">File</option>
+                      <option value="repo_head">HEAD file</option>
+                      <option value="repo_working">Working file</option>
+                    </select>
+                    <button type="button" onClick={() => void pasteInto("right")} disabled={loading || rightSource !== "clipboard"}>
+                      Paste
+                    </button>
+                    <button type="button" onClick={() => setRightClipboard("")} disabled={loading || rightSource !== "clipboard"}>
+                      Clear
+                    </button>
+                  </div>
+
+                  {rightSource === "file" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.75 }}>Right file</div>
+                      <input className="modalInput" value={rightPath} onChange={(e) => setRightPath(e.target.value)} disabled={loading} />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void (async () => {
+                            const selected = await open({ directory: false, multiple: false, title: "Select right file" });
+                            if (!selected || Array.isArray(selected)) return;
+                            setError("");
+                            setRightPath(selected);
+                            await loadSideFromFile("right", selected);
+                          })()
+                        }
+                        disabled={loading}
+                      >
+                        Browse…
+                      </button>
+                      <button type="button" onClick={() => void loadSideFromFile("right", rightPath)} disabled={loading || !rightPath.trim()}>
+                        Load
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {rightSource === "repo_head" || rightSource === "repo_working" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900, opacity: 0.75 }}>Right repo file</div>
+                      <input
+                        className="modalInput"
+                        value={rightRepoRelPath}
+                        onChange={(e) => setRightRepoRelPath(e.target.value)}
+                        disabled={loading}
+                      />
+                      <button type="button" onClick={() => void pickRepoFileForSide("right")} disabled={loading || !repoPath.trim()}>
+                        Browse…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void loadSideFromRepo("right", rightSource)}
+                        disabled={loading || !repoPath.trim() || !rightRepoRelPath.trim()}
+                      >
+                        Load
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <textarea
+                    className="modalInput"
+                    value={rightClipboard}
+                    onChange={(e) => setRightClipboard(e.target.value)}
+                    disabled={loading}
+                    style={{
+                      minHeight: 120,
+                      resize: "vertical",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace",
+                      whiteSpace: "pre",
+                    }}
+                    placeholder="Paste or type right content here…"
+                  />
+                </div>
+              </div>
+            </div>
           )}
 
           <div className="splitDiffLayout" style={{ flex: "1 1 auto", minHeight: 0 }}>
             <div className="splitDiffHeader">
-              <div className="splitDiffHeaderCell" title={leftLabel}>
-                {leftLabel}
+              <div className="splitDiffHeaderCell" title={activeResult.leftLabel}>
+                {activeResult.leftLabel}
               </div>
-              <div className="splitDiffHeaderCell" title={rightLabel}>
-                {rightLabel}
+              <div className="splitDiffHeaderCell" title={activeResult.rightLabel}>
+                {activeResult.rightLabel}
               </div>
             </div>
             <div className="splitDiffPanes">
