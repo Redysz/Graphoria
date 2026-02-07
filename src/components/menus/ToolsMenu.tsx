@@ -12,6 +12,7 @@ export function ToolsMenu(props: {
 
   setTerminalMenuOpen: (next: boolean) => void;
   setDiffToolModalOpen: (next: boolean) => void;
+  setGitignoreModifierOpen: (next: boolean) => void;
   openCommitSearch: () => void;
   openCleanOldBranchesDialog: () => void | Promise<void>;
 
@@ -29,6 +30,7 @@ export function ToolsMenu(props: {
     stashesCount,
     setTerminalMenuOpen,
     setDiffToolModalOpen,
+    setGitignoreModifierOpen,
     openCommitSearch,
     openCleanOldBranchesDialog,
     confirmClearAllStashes,
@@ -69,6 +71,17 @@ export function ToolsMenu(props: {
             }}
           >
             {menuItem("Diff tool…", shortcutLabel("tool.diffTool"))}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setToolsMenuOpen(false);
+              setGitignoreModifierOpen(true);
+            }}
+            disabled={!activeRepoPath}
+            title={!activeRepoPath ? "No repository" : "Edit .gitignore"}
+          >
+            Gitignore modifier…
           </button>
           <button
             type="button"

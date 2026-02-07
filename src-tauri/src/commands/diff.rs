@@ -250,6 +250,28 @@ pub(crate) fn git_working_file_content(repo_path: String, path: String) -> Resul
 }
 
 #[tauri::command]
+pub(crate) fn write_text_file(path: String, content: String) -> Result<(), String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err(String::from("path is empty"));
+    }
+
+    let p = Path::new(path.as_str());
+    if p.exists() && !p.is_file() {
+        return Err(String::from("Selected path is not a file."));
+    }
+
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+        }
+    }
+
+    fs::write(p, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn git_working_file_text_preview(repo_path: String, path: String) -> Result<String, String> {
     crate::ensure_is_git_worktree(&repo_path)?;
 

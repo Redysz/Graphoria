@@ -13,6 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import SettingsModal from "./SettingsModal";
+import GitIgnoreModifierModal from "./GitIgnoreModifierModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
 import { installTestBackdoor } from "./testing/backdoor";
 import {
@@ -203,6 +204,7 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
+  const [gitignoreModifierOpen, setGitignoreModifierOpen] = useState(false);
   const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [goToOpen, setGoToOpen] = useState(false);
@@ -4357,6 +4359,7 @@ function App() {
               stashesCount={stashes.length}
               setTerminalMenuOpen={setTerminalMenuOpen}
               setDiffToolModalOpen={setDiffToolModalOpen}
+              setGitignoreModifierOpen={setGitignoreModifierOpen}
               openCommitSearch={openCommitSearch}
               openCleanOldBranchesDialog={openCleanOldBranchesDialog}
               confirmClearAllStashes={async () => {
@@ -4976,6 +4979,14 @@ function App() {
 
       {diffToolModalOpen ? (
         <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
+      ) : null}
+
+      {gitignoreModifierOpen ? (
+        <GitIgnoreModifierModal
+          open={gitignoreModifierOpen}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setGitignoreModifierOpen(false)}
+        />
       ) : null}
 
       {cleanOldBranchesOpen ? (

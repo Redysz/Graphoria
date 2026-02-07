@@ -107,6 +107,7 @@ use commands::diff::{
     git_working_file_image_base64,
     git_working_file_text_preview,
     read_text_file,
+    write_text_file,
 };
 use commands::reflog::{
     git_cherry_pick,
@@ -2502,6 +2503,7 @@ pub fn run() {
             git_head_file_content,
             git_head_file_text_preview,
             read_text_file,
+            write_text_file,
             git_head_vs_working_diff,
             git_head_vs_working_text_diff,
             git_diff_no_index,
