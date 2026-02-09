@@ -212,6 +212,7 @@ export function useGlobalShortcuts(
         !!s.diffToolModalOpen ||
         !!s.cleanOldBranchesOpen ||
         !!s.settingsOpen ||
+        !!s.quickButtonsModalOpen ||
         !!s.goToOpen ||
         !!s.confirmOpen ||
         !!s.cloneModalOpen ||

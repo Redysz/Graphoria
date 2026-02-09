@@ -20,3 +20,15 @@ export function revealInFileExplorer(path: string) {
 export function readTextFile(path: string) {
   return invoke<string>("read_text_file", { path });
 }
+
+export function writeTextFile(path: string, content: string) {
+  return invoke<void>("write_text_file", { path, content });
+}
+
+export function getOpenOnStartup() {
+  return invoke<boolean>("get_open_on_startup");
+}
+
+export function setOpenOnStartup(enabled: boolean) {
+  return invoke<void>("set_open_on_startup", { enabled });
+}

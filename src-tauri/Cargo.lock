@@ -1488,6 +1488,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphoria"
+version = "1.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "calamine",
+ "pdf-extract",
+ "quick-xml 0.31.0",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tempfile",
+ "zip 0.6.6",
+]
+
+[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3959,24 +3977,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "calamine",
- "pdf-extract",
- "quick-xml 0.31.0",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tempfile",
- "zip 0.6.6",
 ]
 
 [[package]]

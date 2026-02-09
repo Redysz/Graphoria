@@ -13,7 +13,9 @@ import { listen } from "@tauri-apps/api/event";
 import type { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import SettingsModal from "./SettingsModal";
+import GitIgnoreModifierModal from "./GitIgnoreModifierModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
+import { QuickButtonsModal } from "./components/modals/QuickButtonsModal";
 import { installTestBackdoor } from "./testing/backdoor";
 import {
   detectAppPlatform,
@@ -203,8 +205,10 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
+  const [gitignoreModifierOpen, setGitignoreModifierOpen] = useState(false);
   const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [quickButtonsModalOpen, setQuickButtonsModalOpen] = useState(false);
   const [goToOpen, setGoToOpen] = useState(false);
   const [goToKind, setGoToKind] = useState<"commit" | "tag">("commit");
   const [goToText, setGoToText] = useState<string>("");
@@ -565,9 +569,19 @@ function App() {
   const commitsHistoryOrder = useAppSettings((s) => s.git.commitsHistoryOrder);
   const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
   const diffTool = useAppSettings((s) => s.git.diffTool);
+  const fetchAfterOpenRepo = useAppSettings((s) => s.git.fetchAfterOpenRepo);
+  const autoFetchMinutes = useAppSettings((s) => s.git.autoFetchMinutes);
+  const autoRefreshMinutes = useAppSettings((s) => s.git.autoRefreshMinutes);
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
   const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
   const shortcutBindings = useAppSettings((s) => s.shortcuts.bindings);
+  const quickButtons = useAppSettings((s) => s.quickButtons);
+  const setQuickButtons = useAppSettings((s) => s.setQuickButtons);
+
+  useEffect(() => {
+    if (!quickButtons.includes("pull")) setPullMenuOpen(false);
+    if (!quickButtons.includes("terminal")) setTerminalMenuOpen(false);
+  }, [quickButtons]);
 
   const shortcutPlatform = useMemo(() => detectAppPlatform(), []);
 
@@ -725,6 +739,33 @@ function App() {
 
     loadRepo,
   });
+
+  const autoFetchInFlightRef = useRef(false);
+  const autoRefreshInFlightRef = useRef(false);
+
+  async function runFetchBackground(repoPath: string) {
+    if (!repoPath) return;
+    if (autoFetchInFlightRef.current) return;
+    autoFetchInFlightRef.current = true;
+    try {
+      const remote = await gitGetRemoteUrl(repoPath, "origin").catch(() => null);
+      if (!remote) return;
+      await gitFetch(repoPath, "origin");
+      await loadRepo(repoPath, undefined, false);
+    } catch (e) {
+      const msg = typeof e === "string" ? e : JSON.stringify(e);
+      if (repoPath === activeRepoPath) setError(msg);
+    } finally {
+      autoFetchInFlightRef.current = false;
+    }
+  }
+
+  async function openRepositoryWithAutoFetch(path: string) {
+    await openRepository(path);
+    if (fetchAfterOpenRepo) {
+      void runFetchBackground(path);
+    }
+  }
 
   const closeAllRepositories = useCallback(async () => {
     const list = [...repos];
@@ -1432,6 +1473,7 @@ function App() {
       diffToolModalOpen,
       cleanOldBranchesOpen,
       settingsOpen,
+      quickButtonsModalOpen,
       goToOpen,
       confirmOpen,
       cloneModalOpen,
@@ -1602,6 +1644,7 @@ function App() {
     !!diffToolModalOpen ||
     !!cleanOldBranchesOpen ||
     !!settingsOpen ||
+    !!quickButtonsModalOpen ||
     !!goToOpen ||
     !!confirmOpen ||
     !!cloneModalOpen ||
@@ -1896,7 +1939,7 @@ function App() {
   }, [commitsAll, selectedHash]);
 
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
-  const stashChangedCount = stashStatusEntries.length;
+  const stashChangedCount = changedCount;
 
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
@@ -3656,19 +3699,27 @@ function App() {
 
     const laneStep = Math.max(300, graphSettings.nodeSep);
     const rowStep = Math.max(90, graphSettings.rankSep);
+    const timeStep = graphSettings.rankDir === "LR" ? Math.max(340, rowStep) : rowStep;
 
-    const rowForCommitIndex = (idx: number) => {
+    const timeForCommitIndex = (idx: number) => {
+      if (graphSettings.rankDir === "LR") {
+        return Math.max(0, commits.length - 1 - idx);
+      }
       return idx;
     };
 
-    const posFor = (lane: number, row: number) => {
-      return { x: lane * laneStep, y: row * rowStep };
+    const posFor = (lane: number, time: number) => {
+      if (graphSettings.rankDir === "LR") {
+        const zigzag = (time % 2 === 0 ? -1 : 1) * 40;
+        return { x: time * timeStep, y: lane * laneStep + zigzag };
+      }
+      return { x: lane * laneStep, y: time * rowStep };
     };
 
     for (let idx = 0; idx < commits.length; idx++) {
       const c = commits[idx];
       const lane = laneByHash.get(c.hash) ?? 0;
-      const row = rowForCommitIndex(idx);
+      const time = timeForCommitIndex(idx);
       const label = `${shortHash(c.hash)}\n${truncate(c.subject, 100)}`;
       nodes.set(c.hash, {
         data: {
@@ -3676,7 +3727,7 @@ function App() {
           label,
           refs: c.refs,
         },
-        position: posFor(lane, row),
+        position: posFor(lane, time),
         classes: c.is_head ? "head" : undefined,
       });
     }
@@ -3704,7 +3755,7 @@ function App() {
       nodes: Array.from(nodes.values()),
       edges,
     };
-  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankSep]);
+  }, [commitsAll, commitsHistoryOrder, graphSettings.edgeDirection, graphSettings.nodeSep, graphSettings.rankDir, graphSettings.rankSep]);
 
   const { graphRef, zoomPct, requestAutoCenter, focusOnHash, focusOnHead, zoomBy } = useCyGraph({
     viewMode,
@@ -3802,7 +3853,7 @@ function App() {
     });
 
     if (!selected || Array.isArray(selected)) return;
-    void openRepository(selected);
+    void openRepositoryWithAutoFetch(selected);
   }
 
   async function initializeProject() {
@@ -3818,7 +3869,7 @@ function App() {
     setLoading(true);
     try {
       await initRepo(selected);
-      await openRepository(selected);
+      await openRepositoryWithAutoFetch(selected);
     } catch (e) {
       setGlobalError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -3895,6 +3946,7 @@ function App() {
     cloneProgressDestRef.current = cloneTargetPath;
     setCloneProgressMessage("");
     setCloneProgressPercent(null);
+
     setCloneBusy(true);
     setCloneError("");
     setError("");
@@ -3910,7 +3962,7 @@ function App() {
         singleBranch: cloneSingleBranch,
       });
       setCloneModalOpen(false);
-      await openRepository(cloneTargetPath);
+      await openRepositoryWithAutoFetch(cloneTargetPath);
     } catch (e) {
       setCloneError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
@@ -3959,6 +4011,64 @@ function App() {
     void refreshIndicators(activeRepoPath);
     setPushModalOpen(true);
   }
+
+  const autoFetchGuardsRef = useRef({
+    activeRepoPath: "",
+    loading: false,
+    pullBusy: false,
+    commitBusy: false,
+    stashBusy: false,
+  });
+
+  useEffect(() => {
+    autoFetchGuardsRef.current = {
+      activeRepoPath,
+      loading,
+      pullBusy,
+      commitBusy,
+      stashBusy,
+    };
+  }, [activeRepoPath, commitBusy, loading, pullBusy, stashBusy]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    const minutes = Math.max(0, Math.trunc(Number(autoFetchMinutes) || 0));
+    if (minutes <= 0) return;
+
+    const id = window.setInterval(() => {
+      const g = autoFetchGuardsRef.current;
+      if (!g.activeRepoPath) return;
+      if (g.loading || g.pullBusy || g.commitBusy || g.stashBusy) return;
+      void runFetchBackground(g.activeRepoPath);
+    }, minutes * 60_000);
+
+    return () => window.clearInterval(id);
+  }, [activeRepoPath, autoFetchMinutes]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    const minutes = Math.max(0, Math.trunc(Number(autoRefreshMinutes) || 0));
+    if (minutes <= 0) return;
+
+    const id = window.setInterval(() => {
+      const g = autoFetchGuardsRef.current;
+      if (!g.activeRepoPath) return;
+      if (g.loading || g.pullBusy || g.commitBusy || g.stashBusy) return;
+      if (autoRefreshInFlightRef.current) return;
+
+      autoRefreshInFlightRef.current = true;
+      void loadRepo(g.activeRepoPath, undefined, false)
+        .catch((e) => {
+          const msg = typeof e === "string" ? e : JSON.stringify(e);
+          if (g.activeRepoPath === activeRepoPath) setError(msg);
+        })
+        .finally(() => {
+          autoRefreshInFlightRef.current = false;
+        });
+    }, minutes * 60_000);
+
+    return () => window.clearInterval(id);
+  }, [activeRepoPath, autoRefreshMinutes, loadRepo]);
 
   async function runPush() {
     if (!activeRepoPath) return;
@@ -4179,6 +4289,9 @@ function App() {
                 setToolsMenuOpen(false);
                 setNavigateMenuOpen(false);
               }}
+              openQuickButtonsModal={() => {
+                setQuickButtonsModalOpen(true);
+              }}
               menuToggle={menuToggle}
               showStashesOnGraph={graphSettings.showStashesOnGraph}
               showTags={graphSettings.showTags}
@@ -4260,6 +4373,7 @@ function App() {
               stashesCount={stashes.length}
               setTerminalMenuOpen={setTerminalMenuOpen}
               setDiffToolModalOpen={setDiffToolModalOpen}
+              setGitignoreModifierOpen={setGitignoreModifierOpen}
               openCommitSearch={openCommitSearch}
               openCleanOldBranchesDialog={openCleanOldBranchesDialog}
               confirmClearAllStashes={async () => {
@@ -4288,6 +4402,7 @@ function App() {
           loading={loading}
           cloneBusy={cloneBusy}
           remoteUrl={remoteUrl}
+          quickButtons={quickButtons}
           changedCount={changedCount}
           aheadCount={aheadCount}
           behindCount={behindCount}
@@ -4300,6 +4415,18 @@ function App() {
           pullAutoChoose={pullAutoChoose}
           openCommitDialog={openCommitDialog}
           openPushDialog={openPushDialog}
+          openStashDialog={openStashDialog}
+          openCreateTagDialog={() => {
+            const at = (selectedHash.trim() ? selectedHash.trim() : headHash.trim()).trim();
+            if (!at) return;
+            openCreateTagDialog(at);
+          }}
+          openResetDialog={openResetDialog}
+          openCherryPickDialog={openCherryPickDialog}
+          openExportPatchDialog={openExportPatchDialog}
+          openApplyPatchDialog={openApplyPatchDialog}
+          openDiffTool={() => setDiffToolModalOpen(true)}
+          openCommitSearch={openCommitSearch}
           openRepoPicker={() => {
             setRepositoryMenuOpen(false);
             setCommandsMenuOpen(false);
@@ -4317,9 +4444,8 @@ function App() {
           terminalSettings={terminalSettings}
           chooseTerminalProfile={(id) => {
             setTerminal({ defaultProfileId: id });
-            return openTerminalProfile(id);
           }}
-          openTerminalDefault={openTerminalProfile}
+          openTerminalDefault={() => void openTerminalProfile(terminalSettings.defaultProfileId)}
           openTerminalSettings={() => setSettingsOpen(true)}
           indicatorsUpdating={indicatorsUpdating}
           error={error}
@@ -4881,6 +5007,14 @@ function App() {
         <DiffToolModal open={diffToolModalOpen} onClose={() => setDiffToolModalOpen(false)} repos={repos} activeRepoPath={activeRepoPath} />
       ) : null}
 
+      {gitignoreModifierOpen ? (
+        <GitIgnoreModifierModal
+          open={gitignoreModifierOpen}
+          activeRepoPath={activeRepoPath}
+          onClose={() => setGitignoreModifierOpen(false)}
+        />
+      ) : null}
+
       {cleanOldBranchesOpen ? (
         <CleanOldBranchesModal
           days={cleanOldBranchesDays}
@@ -5261,6 +5395,9 @@ function App() {
           onDelete={(path) => {
             void deleteWorkingFile("stash", path);
           }}
+          onRefresh={async () => {
+            await refreshStashStatusEntries();
+          }}
           onClose={() => setStashModalOpen(false)}
           onStash={() => void runStash()}
         />
@@ -5362,6 +5499,9 @@ function App() {
           }}
           onDelete={(path) => {
             void deleteWorkingFile("commit", path);
+          }}
+          onRefresh={async () => {
+            await refreshCommitStatusEntries();
           }}
           onClose={() => setCommitModalOpen(false)}
           onCommit={() => void runCommit()}
@@ -5465,6 +5605,15 @@ function App() {
       ) : null}
 
       <SettingsModal open={settingsOpen} activeRepoPath={activeRepoPath} onClose={() => setSettingsOpen(false)} />
+
+      {quickButtonsModalOpen ? (
+        <QuickButtonsModal
+          open={quickButtonsModalOpen}
+          value={quickButtons}
+          onClose={() => setQuickButtonsModalOpen(false)}
+          onSave={(next) => setQuickButtons(next)}
+        />
+      ) : null}
     </div>
   );
 }

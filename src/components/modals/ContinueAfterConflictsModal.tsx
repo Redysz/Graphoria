@@ -23,6 +23,7 @@ import {
   gitWorkingFileImageBase64,
   gitWorkingFileTextPreview,
 } from "../../api/gitWorkingFiles";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "../../utils/graphoriaIgnore";
 
 type Props = {
   open: boolean;
@@ -82,6 +83,13 @@ export function ContinueAfterConflictsModal({
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
   const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
+  const ignoreRules = useMemo(() => {
+    const repoText = graphoriaIgnore.repoTextByPath?.[repoPath] ?? "";
+    const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+    return compileGraphoriaIgnore(text);
+  }, [graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath, repoPath]);
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
   const [busy, setBusy] = useState(false);
@@ -152,7 +160,8 @@ export function ContinueAfterConflictsModal({
         setInfo(st);
         setMessage(st.message ?? "");
 
-        const entries = await gitStatus(repoPath);
+        const entriesRaw = await gitStatus(repoPath);
+        const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
         if (!alive) return;
         setStatusEntries(entries);
         const nextSelected: Record<string, boolean> = {};
@@ -661,7 +670,8 @@ export function ContinueAfterConflictsModal({
                     // ignore
                   }
                   try {
-                    const entries = await gitStatus(repoPath);
+                    const entriesRaw = await gitStatus(repoPath);
+                    const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
                     refreshedEntries = entries;
                     setStatusEntries(entries);
                     const nextSelected: Record<string, boolean> = {};

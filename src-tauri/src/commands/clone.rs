@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 #[derive(Debug, Clone, Serialize)]
 struct GitCloneProgressEvent {
@@ -176,7 +176,7 @@ pub(crate) fn git_clone_repo(
     args.push(repo_url);
     args.push(destination_path.clone());
 
-    let mut child = Command::new("git")
+    let mut child = crate::new_command("git")
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

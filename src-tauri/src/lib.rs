@@ -12,6 +12,26 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, SubmenuBuilder};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn apply_no_window(cmd: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+pub(crate) fn new_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    apply_no_window(&mut cmd);
+    cmd
+}
+
 use tauri::Manager;
 
 mod commands;
@@ -90,6 +110,7 @@ use commands::diff::{
     git_working_file_image_base64,
     git_working_file_text_preview,
     read_text_file,
+    write_text_file,
 };
 use commands::reflog::{
     git_cherry_pick,
@@ -123,6 +144,8 @@ use commands::patches::{
     git_predict_patch_graph,
     git_predict_patch_file,
 };
+
+use commands::startup::{get_open_on_startup, set_open_on_startup};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -298,7 +321,7 @@ fn is_repo_session_safe(repo_path: &str) -> bool {
 }
 
 fn git_command_in_repo(repo_path: &str) -> Command {
-    let mut cmd = Command::new("git");
+    let mut cmd = new_command("git");
     if is_repo_session_safe(repo_path) {
         let safe = normalize_repo_path(repo_path);
         cmd.arg("-c").arg(format!("safe.directory={safe}"));
@@ -325,7 +348,7 @@ fn git_set_user_identity(
 
     if scope == "global" {
         if !user_name.is_empty() {
-            let out = Command::new("git")
+            let out = new_command("git")
                 .args(["config", "--global", "user.name", user_name.as_str()])
                 .output()
                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
@@ -339,7 +362,7 @@ fn git_set_user_identity(
             }
         }
         if !user_email.is_empty() {
-            let out = Command::new("git")
+            let out = new_command("git")
                 .args(["config", "--global", "user.email", user_email.as_str()])
                 .output()
                 .map_err(|e| format!("Failed to spawn git config: {e}"))?;
@@ -947,7 +970,7 @@ fn expand_external_diff_command(tool_path: &str, command: &str, local: &Path, re
 fn spawn_external_command(repo_path: &str, command: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
+        new_command("cmd")
             .current_dir(repo_path)
             .args(["/C", command])
             .spawn()
@@ -2439,11 +2462,23 @@ async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = SubmenuBuilder::new(_app, "Graphoria").quit().build()?;
+                let menu = MenuBuilder::new(_app).item(&app_menu).build()?;
+                _app.set_menu(menu)?;
+            }
+
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             open_devtools_main,
             greet,
+            get_open_on_startup,
+            set_open_on_startup,
             repo_overview,
             list_commits,
             list_commits_full,
@@ -2481,6 +2516,7 @@ pub fn run() {
             git_head_file_content,
             git_head_file_text_preview,
             read_text_file,
+            write_text_file,
             git_head_vs_working_diff,
             git_head_vs_working_text_diff,
             git_diff_no_index,

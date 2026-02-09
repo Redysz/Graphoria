@@ -56,6 +56,10 @@ export type GitSettings = {
   workingFilesView: WorkingFilesViewMode;
   diffShowLineNumbers: boolean;
   diffTool: DiffToolSettings;
+
+  fetchAfterOpenRepo: boolean;
+  autoFetchMinutes: number;
+  autoRefreshMinutes: number;
 };
 
 export type DiffToolSettings = {
@@ -91,6 +95,29 @@ export type LayoutSettings = {
   statusFilesWidthPx: number;
 };
 
+export type QuickButtonId =
+  | "open"
+  | "refresh"
+  | "fetch"
+  | "pull"
+  | "commit"
+  | "push"
+  | "terminal"
+  | "stash"
+  | "create_tag"
+  | "reset"
+  | "cherry_pick"
+  | "export_patch"
+  | "apply_patch"
+  | "diff_tool"
+  | "commit_search";
+
+export type GraphoriaIgnoreSettings = {
+  globalText: string;
+  repoTextByPath: Record<string, string>;
+  selectedRepoPath: string;
+};
+
 export type ShortcutsSettings = {
   bindings: Record<ShortcutActionId, ShortcutSpec>;
 };
@@ -104,6 +131,8 @@ export type AppSettingsState = {
   layout: LayoutSettings;
   terminal: TerminalSettings;
   shortcuts: ShortcutsSettings;
+  graphoriaIgnore: GraphoriaIgnoreSettings;
+  quickButtons: QuickButtonId[];
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -114,9 +143,12 @@ export type AppSettingsState = {
   setLayout: (patch: Partial<LayoutSettings>) => void;
   setTerminal: (patch: Partial<TerminalSettings>) => void;
   setShortcuts: (patch: Partial<ShortcutsSettings>) => void;
+  setGraphoriaIgnore: (patch: Partial<GraphoriaIgnoreSettings>) => void;
+  setQuickButtons: (next: QuickButtonId[]) => void;
   resetLayout: () => void;
   resetTerminal: () => void;
   resetShortcuts: () => void;
+  resetQuickButtons: () => void;
   resetSettings: () => void;
 };
 
@@ -207,6 +239,10 @@ export const defaultGitSettings: GitSettings = {
     path: "",
     command: "",
   },
+
+  fetchAfterOpenRepo: true,
+  autoFetchMinutes: 0,
+  autoRefreshMinutes: 0,
 };
 
 export const defaultGraphSettings: GraphSettings = {
@@ -228,6 +264,47 @@ export const defaultLayoutSettings: LayoutSettings = {
   diffFilesWidthPx: 320,
   statusFilesWidthPx: 420,
 };
+
+export const defaultGraphoriaIgnoreSettings: GraphoriaIgnoreSettings = {
+  globalText: "",
+  repoTextByPath: {},
+  selectedRepoPath: "",
+};
+
+export const defaultQuickButtons: QuickButtonId[] = ["refresh", "fetch", "pull", "commit", "push", "terminal"];
+
+const allQuickButtonIds: QuickButtonId[] = [
+  "open",
+  "refresh",
+  "fetch",
+  "pull",
+  "commit",
+  "push",
+  "terminal",
+  "stash",
+  "create_tag",
+  "reset",
+  "cherry_pick",
+  "export_patch",
+  "apply_patch",
+  "diff_tool",
+  "commit_search",
+];
+
+function normalizeQuickButtons(list: unknown): QuickButtonId[] {
+  const raw = Array.isArray(list) ? list : [];
+  const out: QuickButtonId[] = [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    if (seen.has(v)) continue;
+    if (!allQuickButtonIds.includes(v as QuickButtonId)) continue;
+    seen.add(v);
+    out.push(v as QuickButtonId);
+    if (out.length >= 10) break;
+  }
+  return out.length ? out : [...defaultQuickButtons];
+}
 
 function detectTerminalPlatform(): TerminalPlatform {
   const ua = (typeof navigator !== "undefined" ? navigator.userAgent : "").toLowerCase();
@@ -267,6 +344,8 @@ export const useAppSettings = create<AppSettingsState>()(
       layout: defaultLayoutSettings,
       terminal: defaultTerminalSettings,
       shortcuts: defaultShortcutsSettings,
+      graphoriaIgnore: defaultGraphoriaIgnoreSettings,
+      quickButtons: defaultQuickButtons,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -282,6 +361,8 @@ export const useAppSettings = create<AppSettingsState>()(
       setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
       setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
       setTerminal: (patch) => set((s) => ({ terminal: { ...s.terminal, ...patch } })),
+      setGraphoriaIgnore: (patch) => set((s) => ({ graphoriaIgnore: { ...s.graphoriaIgnore, ...patch } })),
+      setQuickButtons: (next) => set({ quickButtons: normalizeQuickButtons(next) }),
       setShortcuts: (patch) =>
         set((s) => ({
           shortcuts: {
@@ -296,6 +377,7 @@ export const useAppSettings = create<AppSettingsState>()(
       resetLayout: () => set({ layout: defaultLayoutSettings }),
       resetTerminal: () => set({ terminal: defaultTerminalSettings }),
       resetShortcuts: () => set({ shortcuts: defaultShortcutsSettings }),
+      resetQuickButtons: () => set({ quickButtons: defaultQuickButtons }),
       resetSettings: () =>
         set({
           general: defaultGeneralSettings,
@@ -306,11 +388,13 @@ export const useAppSettings = create<AppSettingsState>()(
           layout: defaultLayoutSettings,
           terminal: defaultTerminalSettings,
           shortcuts: defaultShortcutsSettings,
+          graphoriaIgnore: defaultGraphoriaIgnoreSettings,
+          quickButtons: defaultQuickButtons,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 20,
+      version: 23,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -348,6 +432,15 @@ export const useAppSettings = create<AppSettingsState>()(
         if (!s.git || typeof s.git !== "object") return s;
         if (!s.git.diffTool) {
           s.git.diffTool = defaultGitSettings.diffTool;
+        }
+        if (typeof s.git.fetchAfterOpenRepo !== "boolean") {
+          s.git.fetchAfterOpenRepo = defaultGitSettings.fetchAfterOpenRepo;
+        }
+        if (!Number.isFinite(s.git.autoFetchMinutes) || s.git.autoFetchMinutes < 0) {
+          s.git.autoFetchMinutes = defaultGitSettings.autoFetchMinutes;
+        }
+        if (!Number.isFinite(s.git.autoRefreshMinutes) || s.git.autoRefreshMinutes < 0) {
+          s.git.autoRefreshMinutes = defaultGitSettings.autoRefreshMinutes;
         }
         if (typeof s.git.commitsOnlyHead !== "boolean") {
           s.git.commitsOnlyHead = defaultGitSettings.commitsOnlyHead;
@@ -418,6 +511,16 @@ export const useAppSettings = create<AppSettingsState>()(
           s.shortcuts.bindings["panel.branches.show"] = "ArrowRight";
           s.shortcuts.bindings["panel.branches.hide"] = "ArrowLeft";
         }
+
+        if (!s.graphoriaIgnore || typeof s.graphoriaIgnore !== "object") {
+          s.graphoriaIgnore = defaultGraphoriaIgnoreSettings;
+        } else {
+          if (typeof s.graphoriaIgnore.globalText !== "string") s.graphoriaIgnore.globalText = "";
+          if (!s.graphoriaIgnore.repoTextByPath || typeof s.graphoriaIgnore.repoTextByPath !== "object") s.graphoriaIgnore.repoTextByPath = {};
+          if (typeof s.graphoriaIgnore.selectedRepoPath !== "string") s.graphoriaIgnore.selectedRepoPath = "";
+        }
+
+        s.quickButtons = normalizeQuickButtons(s.quickButtons);
         return s;
       },
     },

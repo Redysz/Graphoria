@@ -65,6 +65,7 @@ type Props = {
   onDiscard: (path: string, status: string) => void;
   onDelete: (path: string) => void;
 
+  onRefresh: () => void | Promise<void>;
   onClose: () => void;
   onStash: () => void;
 };
@@ -99,6 +100,7 @@ export function StashModal({
   onOpenWorkingFileContextMenu,
   onDiscard,
   onDelete,
+  onRefresh,
   onClose,
   onStash,
 }: Props) {
@@ -240,9 +242,14 @@ export function StashModal({
       <div className="modal" style={{ width: "min(1200px, 96vw)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>Stash</div>
-          <button type="button" onClick={onClose} disabled={busy}>
-            Close
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button type="button" onClick={() => void onRefresh()} disabled={busy}>
+              Refresh
+            </button>
+            <button type="button" onClick={onClose} disabled={busy}>
+              Close
+            </button>
+          </div>
         </div>
         <div className="modalBody">
           {error ? <div className="error">{error}</div> : null}

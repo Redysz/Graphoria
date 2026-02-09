@@ -18,8 +18,10 @@ import {
   type ShortcutActionId,
 } from "./shortcuts";
 import { gitSetUserIdentity } from "./api/git";
+import { getOpenOnStartup, readTextFile, setOpenOnStartup, writeTextFile } from "./api/system";
+import { ConfirmModal } from "./components/modals/ConfirmModal";
 
-type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal" | "shortcuts";
+type SettingsSection = "general" | "appearance" | "graph" | "git" | "terminal" | "shortcuts" | "graphoriaIgnore";
 
 export default function SettingsModal(props: { open: boolean; activeRepoPath: string; onClose: () => void }) {
   const { open, activeRepoPath, onClose } = props;
@@ -30,6 +32,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const git = useAppSettings((s) => s.git);
   const terminal = useAppSettings((s) => s.terminal);
   const shortcuts = useAppSettings((s) => s.shortcuts);
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
 
   const viewMode = useAppSettings((s) => s.viewMode);
 
@@ -41,6 +44,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const setTerminal = useAppSettings((s) => s.setTerminal);
   const setShortcuts = useAppSettings((s) => s.setShortcuts);
   const setViewMode = useAppSettings((s) => s.setViewMode);
+  const setGraphoriaIgnore = useAppSettings((s) => s.setGraphoriaIgnore);
   const resetSettings = useAppSettings((s) => s.resetSettings);
   const resetLayout = useAppSettings((s) => s.resetLayout);
   const resetTerminal = useAppSettings((s) => s.resetTerminal);
@@ -52,6 +56,13 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState<string>("");
   const [applyOk, setApplyOk] = useState(false);
+
+  const [startupBusy, setStartupBusy] = useState(false);
+  const [startupError, setStartupError] = useState<string>("");
+
+  const [applyIgnoreBusy, setApplyIgnoreBusy] = useState(false);
+  const [applyIgnoreError, setApplyIgnoreError] = useState("");
+  const [confirmOverwriteIgnoreOpen, setConfirmOverwriteIgnoreOpen] = useState(false);
 
   const platform = useMemo(() => detectAppPlatform(), []);
   const [capturingId, setCapturingId] = useState<ShortcutActionId | null>(null);
@@ -73,6 +84,8 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
         return "Terminal";
       case "shortcuts":
         return "Shortcuts";
+      case "graphoriaIgnore":
+        return "Graphoria ignore";
     }
   }, [section]);
 
@@ -82,7 +95,119 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
     setApplyError("");
     setApplyOk(false);
     setApplyScope(activeRepoPath.trim() ? "repo" : "global");
+
+    setStartupBusy(false);
+    setStartupError("");
+    setApplyIgnoreBusy(false);
+    setApplyIgnoreError("");
+    setConfirmOverwriteIgnoreOpen(false);
+    void getOpenOnStartup()
+      .then((enabled) => {
+        setGeneral({ openOnStartup: enabled });
+      })
+      .catch((e) => {
+        setStartupError(typeof e === "string" ? e : JSON.stringify(e));
+      });
   }, [activeRepoPath, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!activeRepoPath.trim()) return;
+    if (graphoriaIgnore.selectedRepoPath?.trim()) return;
+    setGraphoriaIgnore({ selectedRepoPath: activeRepoPath });
+  }, [activeRepoPath, graphoriaIgnore.selectedRepoPath, open]);
+
+  function normalizeNewlines(s: string) {
+    return (s ?? "").replace(/\r\n/g, "\n");
+  }
+
+  function isNotFoundErrorMessage(msg: string) {
+    const m = (msg ?? "").toLowerCase();
+    return (
+      m.includes("does not exist") ||
+      m.includes("no such file") ||
+      m.includes("not found") ||
+      m.includes("os error 2") ||
+      m.includes("winerror 2") ||
+      m.includes("the system cannot find the file")
+    );
+  }
+
+  function gitignorePathForRepo(repoPath: string) {
+    const base = repoPath.replace(/[\\/]+$/g, "");
+    const sep = repoPath.includes("\\") ? "\\" : "/";
+    return `${base}${sep}.gitignore`;
+  }
+
+  function effectiveGraphoriaIgnoreText(repoPath: string) {
+    const repoText = graphoriaIgnore.repoTextByPath?.[repoPath] ?? "";
+    return normalizeNewlines(`${graphoriaIgnore.globalText ?? ""}\n${repoText}`);
+  }
+
+  async function addIgnoreToProjectGitignore() {
+    if (!activeRepoPath.trim()) {
+      setApplyIgnoreError("Open a repository first.");
+      return;
+    }
+    setApplyIgnoreBusy(true);
+    setApplyIgnoreError("");
+    try {
+      const p = gitignorePathForRepo(activeRepoPath);
+      const toAdd = effectiveGraphoriaIgnoreText(activeRepoPath);
+
+      let prev = "";
+      try {
+        prev = await readTextFile(p);
+      } catch (e) {
+        const msg = typeof e === "string" ? e : JSON.stringify(e);
+        if (!isNotFoundErrorMessage(msg)) throw e;
+      }
+
+      const prevNorm = normalizeNewlines(prev);
+      const glue = prevNorm.trim() ? (prevNorm.endsWith("\n") ? "\n" : "\n\n") : "";
+      const next = `${prevNorm}${glue}${toAdd.trimEnd()}\n`;
+      await writeTextFile(p, next);
+    } catch (e) {
+      setApplyIgnoreError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyIgnoreBusy(false);
+    }
+  }
+
+  async function overwriteProjectGitignore() {
+    if (!activeRepoPath.trim()) {
+      setApplyIgnoreError("Open a repository first.");
+      return;
+    }
+    setApplyIgnoreBusy(true);
+    setApplyIgnoreError("");
+    try {
+      const p = gitignorePathForRepo(activeRepoPath);
+      const content = `${effectiveGraphoriaIgnoreText(activeRepoPath).trimEnd()}\n`;
+      await writeTextFile(p, content);
+    } catch (e) {
+      setApplyIgnoreError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setApplyIgnoreBusy(false);
+    }
+  }
+
+  async function toggleStartup(nextEnabled: boolean) {
+    const prev = general.openOnStartup;
+
+    setStartupBusy(true);
+    setStartupError("");
+    setGeneral({ openOnStartup: nextEnabled });
+
+    try {
+      await setOpenOnStartup(nextEnabled);
+    } catch (e) {
+      setGeneral({ openOnStartup: prev });
+      setStartupError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setStartupBusy(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -160,6 +285,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
               {sectionButton("appearance", "Appearance")}
               {sectionButton("graph", "Graph")}
               {sectionButton("git", "Git")}
+              {sectionButton("graphoriaIgnore", "Ignore")}
               {sectionButton("shortcuts", "Shortcuts")}
               {sectionButton("terminal", "Terminal")}
             </div>
@@ -171,6 +297,7 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
 
               {section === "general" ? (
                 <div className="settingsContentBody">
+                  {startupError ? <div className="error">{startupError}</div> : null}
                   {field(
                     "Default view",
                     <select value={viewMode} onChange={(e) => setViewMode(e.target.value as ViewMode)}>
@@ -185,7 +312,8 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       <input
                         type="checkbox"
                         checked={general.openOnStartup}
-                        onChange={(e) => setGeneral({ openOnStartup: e.target.checked })}
+                        disabled={startupBusy}
+                        onChange={(e) => void toggleStartup(e.target.checked)}
                       />
                       Enable
                     </label>,
@@ -266,6 +394,83 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                     </button>,
                     "Resets sidebar width and Details panel height.",
                   )}
+                </div>
+              ) : null}
+
+              {section === "graphoriaIgnore" ? (
+                <div className="settingsContentBody">
+                  {applyIgnoreError ? <div className="error">{applyIgnoreError}</div> : null}
+                  <div style={{ opacity: 0.8, fontSize: 12, marginBottom: 10 }}>
+                    This ignore list affects only Graphoria UI. It does NOT change Git behavior.
+                  </div>
+
+                  {field(
+                    "Selected repository",
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
+                      <input
+                        className="modalInput"
+                        value={graphoriaIgnore.selectedRepoPath ?? ""}
+                        onChange={(e) => setGraphoriaIgnore({ selectedRepoPath: e.target.value })}
+                        placeholder="Repository path"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setGraphoriaIgnore({ selectedRepoPath: activeRepoPath })}
+                        disabled={!activeRepoPath.trim()}
+                        title={!activeRepoPath.trim() ? "Open a repository first" : "Use currently open repository"}
+                      >
+                        Use current
+                      </button>
+                    </div>,
+                    "This selects which repository-specific ignore list you are editing.",
+                  )}
+
+                  {field(
+                    "Global (Graphoria-only) ignore",
+                    <textarea
+                      className="modalTextarea"
+                      rows={8}
+                      value={graphoriaIgnore.globalText ?? ""}
+                      onChange={(e) => setGraphoriaIgnore({ globalText: e.target.value })}
+                      placeholder="One pattern per line (gitignore-like)."
+                    />,
+                  )}
+
+                  {field(
+                    "Repository (Graphoria-only) ignore",
+                    <textarea
+                      className="modalTextarea"
+                      rows={8}
+                      value={graphoriaIgnore.repoTextByPath?.[graphoriaIgnore.selectedRepoPath ?? ""] ?? ""}
+                      onChange={(e) => {
+                        const key = (graphoriaIgnore.selectedRepoPath ?? "").trim();
+                        if (!key) return;
+                        setGraphoriaIgnore({ repoTextByPath: { ...(graphoriaIgnore.repoTextByPath ?? {}), [key]: e.target.value } });
+                      }}
+                      placeholder={graphoriaIgnore.selectedRepoPath?.trim() ? "One pattern per line (gitignore-like)." : "Select a repository path above."}
+                      disabled={!(graphoriaIgnore.selectedRepoPath ?? "").trim()}
+                    />,
+                    "This list is applied only when this repository is open (combined with global ignore).",
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+                    <button
+                      type="button"
+                      disabled={!activeRepoPath.trim() || applyIgnoreBusy}
+                      onClick={() => void addIgnoreToProjectGitignore()}
+                      title={!activeRepoPath.trim() ? "Open a repository first" : "Append current ignore patterns to project's .gitignore"}
+                    >
+                      Add to this project
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeRepoPath.trim() || applyIgnoreBusy}
+                      onClick={() => setConfirmOverwriteIgnoreOpen(true)}
+                      title={!activeRepoPath.trim() ? "Open a repository first" : "Overwrite project's .gitignore with current ignore patterns"}
+                    >
+                      Apply to this project
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
@@ -355,11 +560,12 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
-                    "Layout direction",
+                    "Graph orientation",
                     <select value={graph.rankDir} onChange={(e) => setGraph({ rankDir: e.target.value as RankDir })}>
-                      <option value="TB">Top {"→"} Bottom</option>
-                      <option value="LR">Left {"→"} Right</option>
+                      <option value="TB">Vertical (newest at top)</option>
+                      <option value="LR">Horizontal (newest at right)</option>
                     </select>,
+                    "Vertical: newest commits at the top, oldest at the bottom. Horizontal: newest commits at the right, oldest at the left.",
                   )}
 
                   {field(
@@ -453,6 +659,51 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                       Show line numbers in diffs
                     </label>,
                     "Applies to Graphoria builtin diff in views like Diff tool, Commit preview and Stash preview.",
+                  )}
+
+                  {field(
+                    "Fetch after opening a repository",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.fetchAfterOpenRepo}
+                        onChange={(e) => setGit({ fetchAfterOpenRepo: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "Runs git fetch origin right after a repository is opened.",
+                  )}
+
+                  {field(
+                    "Auto fetch interval (minutes)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={git.autoFetchMinutes}
+                      onChange={(e) => {
+                        const n = Math.trunc(Number(e.target.value || 0));
+                        setGit({ autoFetchMinutes: Math.max(0, Number.isFinite(n) ? n : 0) });
+                      }}
+                    />,
+                    "0 = disabled. Runs git fetch origin every N minutes.",
+                  )}
+
+                  {field(
+                    "Auto refresh interval (minutes)",
+                    <input
+                      className="modalInput"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={git.autoRefreshMinutes}
+                      onChange={(e) => {
+                        const n = Math.trunc(Number(e.target.value || 0));
+                        setGit({ autoRefreshMinutes: Math.max(0, Number.isFinite(n) ? n : 0) });
+                      }}
+                    />,
+                    "0 = disabled. Reloads repository state every N minutes (without fetching).",
                   )}
 
                   {field(
@@ -881,6 +1132,20 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
           </button>
         </div>
       </div>
+
+      {confirmOverwriteIgnoreOpen ? (
+        <ConfirmModal
+          title="Overwrite .gitignore"
+          message="This will overwrite the project's .gitignore file with the current Graphoria ignore patterns. Continue?"
+          okLabel="Overwrite"
+          cancelLabel="Cancel"
+          onCancel={() => setConfirmOverwriteIgnoreOpen(false)}
+          onOk={() => {
+            setConfirmOverwriteIgnoreOpen(false);
+            void overwriteProjectGitignore();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri (Windows)
+        if: runner.os == 'Windows'
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Build Tauri (macOS)
+        if: runner.os == 'macOS'
+        run: npm run tauri build -- --bundles dmg
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ runner.os }}
+          path: src-tauri/target/release/bundle/**
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-artifacts/**
+          generate_release_notes: true

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { DiffToolSettings } from "../../appSettingsStore";
+import { useAppSettings } from "../../appSettingsStore";
 import type { GitStatusEntry, GitStatusSummary, GitStashEntry } from "../../types/git";
 import { buildPatchFromUnselectedHunks, computeHunkRanges } from "../../utils/diffPatch";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "../../utils/filePreview";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "../../utils/graphoriaIgnore";
 import {
   gitHasStagedChanges,
   gitStashApply,
@@ -36,6 +38,14 @@ export function useStashController(opts: {
   setStatusSummaryByRepo: Dispatch<SetStateAction<Record<string, GitStatusSummary | undefined>>>;
 }) {
   const { activeRepoPath, stashes, viewMode, showStashesOnGraph, diffTool, loadRepo, setLoading, setError, setStatusSummaryByRepo } = opts;
+
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
+  const ignoreRules = useMemo(() => {
+    const repoText = graphoriaIgnore.repoTextByPath?.[activeRepoPath] ?? "";
+    const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+    return compileGraphoriaIgnore(text);
+  }, [activeRepoPath, graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath]);
 
   const [stashModalOpen, setStashModalOpen] = useState(false);
   const [stashStatusEntries, setStashStatusEntries] = useState<GitStatusEntry[]>([]);
@@ -120,18 +130,24 @@ export function useStashController(opts: {
 
   async function refreshStashStatusEntries() {
     if (!activeRepoPath) return;
-    const entries = await gitStatus(activeRepoPath);
-    setStashStatusEntries(entries);
-    setStashSelectedPaths((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const e of entries) next[e.path] = prev[e.path] ?? true;
-      return next;
-    });
-    const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
-    const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
-    setStashPreviewPath(keep);
-    setStashPreviewStatus(keepStatus);
-    setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    setStashError("");
+    try {
+      const entriesRaw = await gitStatus(activeRepoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
+      setStashStatusEntries(entries);
+      setStashSelectedPaths((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const e of entries) next[e.path] = prev[e.path] ?? true;
+        return next;
+      });
+      const keep = stashPreviewPath && entries.some((e) => e.path === stashPreviewPath) ? stashPreviewPath : (entries[0]?.path ?? "");
+      const keepStatus = entries.find((e) => e.path === keep)?.status ?? "";
+      setStashPreviewPath(keep);
+      setStashPreviewStatus(keepStatus);
+      setStatusSummaryByRepo((prev) => ({ ...prev, [activeRepoPath]: { changed: entries.length } }));
+    } catch (e) {
+      setStashError(typeof e === "string" ? e : JSON.stringify(e));
+    }
   }
 
   async function openStashDialog() {
@@ -148,7 +164,8 @@ export function useStashController(opts: {
     setStashPreviewError("");
 
     try {
-      const entries = await gitStatus(activeRepoPath);
+      const entriesRaw = await gitStatus(activeRepoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
       setStashStatusEntries(entries);
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;
