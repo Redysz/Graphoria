@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "./api/system";
+import { ConfirmModal } from "./components/modals/ConfirmModal";
 
 type Props = {
   open: boolean;
@@ -80,6 +81,7 @@ export default function GitIgnoreModifierModal(props: Props) {
   const [rawText, setRawText] = useState("");
 
   const [editModal, setEditModal] = useState<null | { title: string; initial: string; onOk: (v: string) => void }>(null);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -115,6 +117,15 @@ export default function GitIgnoreModifierModal(props: Props) {
     if (!editTextMode) return;
     setRawText(joinLines(lines));
   }, [editTextMode]);
+
+  function requestClose() {
+    if (busy) return;
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    setConfirmCloseOpen(true);
+  }
 
   async function browseFile() {
     const selected = await open({ directory: false, multiple: false, title: "Select .gitignore file", defaultPath: activeRepoPath || undefined });
@@ -274,7 +285,7 @@ export default function GitIgnoreModifierModal(props: Props) {
       <div className="modal" style={{ width: "min(980px, 96vw)", height: "min(84vh, 820px)", maxHeight: "min(84vh, 820px)" }}>
         <div className="modalHeader">
           <div style={{ fontWeight: 900 }}>Gitignore modifier</div>
-          <button type="button" onClick={onClose} disabled={busy}>
+          <button type="button" onClick={requestClose} disabled={busy}>
             Close
           </button>
         </div>
@@ -326,6 +337,7 @@ export default function GitIgnoreModifierModal(props: Props) {
                   ) : (
                     lines.map((l, idx) => {
                       const isBlank = !l;
+                      const isComment = !isBlank && l.trimStart().startsWith("#");
                       const selected = idx === selectedIndex;
                       return (
                         <div
@@ -338,7 +350,7 @@ export default function GitIgnoreModifierModal(props: Props) {
                             background: selected ? "rgba(0, 120, 212, 0.12)" : "transparent",
                             borderBottom: "1px solid rgba(0,0,0,0.06)",
                             fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace",
-                            opacity: isBlank ? 0.55 : 0.95,
+                            opacity: isBlank ? 0.55 : isComment ? 0.55 : 0.95,
                             whiteSpace: "pre",
                           }}
                         >
@@ -399,6 +411,20 @@ export default function GitIgnoreModifierModal(props: Props) {
           initial={editModal.initial}
           onCancel={() => setEditModal(null)}
           onOk={(v) => editModal.onOk(v)}
+        />
+      ) : null}
+
+      {confirmCloseOpen ? (
+        <ConfirmModal
+          title="Unsaved changes"
+          message="You have unsaved changes. Close without saving?"
+          okLabel="Close"
+          cancelLabel="Cancel"
+          onCancel={() => setConfirmCloseOpen(false)}
+          onOk={() => {
+            setConfirmCloseOpen(false);
+            onClose();
+          }}
         />
       ) : null}
     </div>
