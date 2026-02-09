@@ -5,6 +5,8 @@ export function ViewMenu(props: {
   setViewMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
+  openQuickButtonsModal: () => void;
+
   menuToggle: (opts: {
     label: string;
     checked: boolean;
@@ -50,6 +52,7 @@ export function ViewMenu(props: {
     viewMenuOpen,
     setViewMenuOpen,
     closeOtherMenus,
+    openQuickButtonsModal,
     menuToggle,
     showStashesOnGraph,
     showTags,
@@ -159,6 +162,17 @@ export function ViewMenu(props: {
             checked: tooltipsEnabled,
             onChange: onChangeTooltipsEnabled,
           })}
+
+          <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
+          <button
+            type="button"
+            onClick={() => {
+              setViewMenuOpen(false);
+              openQuickButtonsModal();
+            }}
+          >
+            Rearrange quick buttons…
+          </button>
         </div>
       ) : null}
     </div>

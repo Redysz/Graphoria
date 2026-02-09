@@ -15,6 +15,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import SettingsModal from "./SettingsModal";
 import GitIgnoreModifierModal from "./GitIgnoreModifierModal";
 import { getCyPalette, useAppSettings } from "./appSettingsStore";
+import { QuickButtonsModal } from "./components/modals/QuickButtonsModal";
 import { installTestBackdoor } from "./testing/backdoor";
 import {
   detectAppPlatform,
@@ -207,6 +208,7 @@ function App() {
   const [gitignoreModifierOpen, setGitignoreModifierOpen] = useState(false);
   const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [quickButtonsModalOpen, setQuickButtonsModalOpen] = useState(false);
   const [goToOpen, setGoToOpen] = useState(false);
   const [goToKind, setGoToKind] = useState<"commit" | "tag">("commit");
   const [goToText, setGoToText] = useState<string>("");
@@ -573,6 +575,13 @@ function App() {
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
   const showToolbarShortcutHints = useAppSettings((s) => s.general.showToolbarShortcutHints);
   const shortcutBindings = useAppSettings((s) => s.shortcuts.bindings);
+  const quickButtons = useAppSettings((s) => s.quickButtons);
+  const setQuickButtons = useAppSettings((s) => s.setQuickButtons);
+
+  useEffect(() => {
+    if (!quickButtons.includes("pull")) setPullMenuOpen(false);
+    if (!quickButtons.includes("terminal")) setTerminalMenuOpen(false);
+  }, [quickButtons]);
 
   const shortcutPlatform = useMemo(() => detectAppPlatform(), []);
 
@@ -1464,6 +1473,7 @@ function App() {
       diffToolModalOpen,
       cleanOldBranchesOpen,
       settingsOpen,
+      quickButtonsModalOpen,
       goToOpen,
       confirmOpen,
       cloneModalOpen,
@@ -1634,6 +1644,7 @@ function App() {
     !!diffToolModalOpen ||
     !!cleanOldBranchesOpen ||
     !!settingsOpen ||
+    !!quickButtonsModalOpen ||
     !!goToOpen ||
     !!confirmOpen ||
     !!cloneModalOpen ||
@@ -4278,6 +4289,9 @@ function App() {
                 setToolsMenuOpen(false);
                 setNavigateMenuOpen(false);
               }}
+              openQuickButtonsModal={() => {
+                setQuickButtonsModalOpen(true);
+              }}
               menuToggle={menuToggle}
               showStashesOnGraph={graphSettings.showStashesOnGraph}
               showTags={graphSettings.showTags}
@@ -4388,6 +4402,7 @@ function App() {
           loading={loading}
           cloneBusy={cloneBusy}
           remoteUrl={remoteUrl}
+          quickButtons={quickButtons}
           changedCount={changedCount}
           aheadCount={aheadCount}
           behindCount={behindCount}
@@ -4400,6 +4415,18 @@ function App() {
           pullAutoChoose={pullAutoChoose}
           openCommitDialog={openCommitDialog}
           openPushDialog={openPushDialog}
+          openStashDialog={openStashDialog}
+          openCreateTagDialog={() => {
+            const at = (selectedHash.trim() ? selectedHash.trim() : headHash.trim()).trim();
+            if (!at) return;
+            openCreateTagDialog(at);
+          }}
+          openResetDialog={openResetDialog}
+          openCherryPickDialog={openCherryPickDialog}
+          openExportPatchDialog={openExportPatchDialog}
+          openApplyPatchDialog={openApplyPatchDialog}
+          openDiffTool={() => setDiffToolModalOpen(true)}
+          openCommitSearch={openCommitSearch}
           openRepoPicker={() => {
             setRepositoryMenuOpen(false);
             setCommandsMenuOpen(false);
@@ -4417,9 +4444,8 @@ function App() {
           terminalSettings={terminalSettings}
           chooseTerminalProfile={(id) => {
             setTerminal({ defaultProfileId: id });
-            return openTerminalProfile(id);
           }}
-          openTerminalDefault={openTerminalProfile}
+          openTerminalDefault={() => void openTerminalProfile(terminalSettings.defaultProfileId)}
           openTerminalSettings={() => setSettingsOpen(true)}
           indicatorsUpdating={indicatorsUpdating}
           error={error}
@@ -5579,6 +5605,15 @@ function App() {
       ) : null}
 
       <SettingsModal open={settingsOpen} activeRepoPath={activeRepoPath} onClose={() => setSettingsOpen(false)} />
+
+      {quickButtonsModalOpen ? (
+        <QuickButtonsModal
+          open={quickButtonsModalOpen}
+          value={quickButtons}
+          onClose={() => setQuickButtonsModalOpen(false)}
+          onSave={(next) => setQuickButtons(next)}
+        />
+      ) : null}
     </div>
   );
 }

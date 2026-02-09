@@ -95,6 +95,23 @@ export type LayoutSettings = {
   statusFilesWidthPx: number;
 };
 
+export type QuickButtonId =
+  | "open"
+  | "refresh"
+  | "fetch"
+  | "pull"
+  | "commit"
+  | "push"
+  | "terminal"
+  | "stash"
+  | "create_tag"
+  | "reset"
+  | "cherry_pick"
+  | "export_patch"
+  | "apply_patch"
+  | "diff_tool"
+  | "commit_search";
+
 export type GraphoriaIgnoreSettings = {
   globalText: string;
   repoTextByPath: Record<string, string>;
@@ -115,6 +132,7 @@ export type AppSettingsState = {
   terminal: TerminalSettings;
   shortcuts: ShortcutsSettings;
   graphoriaIgnore: GraphoriaIgnoreSettings;
+  quickButtons: QuickButtonId[];
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -126,9 +144,11 @@ export type AppSettingsState = {
   setTerminal: (patch: Partial<TerminalSettings>) => void;
   setShortcuts: (patch: Partial<ShortcutsSettings>) => void;
   setGraphoriaIgnore: (patch: Partial<GraphoriaIgnoreSettings>) => void;
+  setQuickButtons: (next: QuickButtonId[]) => void;
   resetLayout: () => void;
   resetTerminal: () => void;
   resetShortcuts: () => void;
+  resetQuickButtons: () => void;
   resetSettings: () => void;
 };
 
@@ -251,6 +271,41 @@ export const defaultGraphoriaIgnoreSettings: GraphoriaIgnoreSettings = {
   selectedRepoPath: "",
 };
 
+export const defaultQuickButtons: QuickButtonId[] = ["refresh", "fetch", "pull", "commit", "push", "terminal"];
+
+const allQuickButtonIds: QuickButtonId[] = [
+  "open",
+  "refresh",
+  "fetch",
+  "pull",
+  "commit",
+  "push",
+  "terminal",
+  "stash",
+  "create_tag",
+  "reset",
+  "cherry_pick",
+  "export_patch",
+  "apply_patch",
+  "diff_tool",
+  "commit_search",
+];
+
+function normalizeQuickButtons(list: unknown): QuickButtonId[] {
+  const raw = Array.isArray(list) ? list : [];
+  const out: QuickButtonId[] = [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    if (seen.has(v)) continue;
+    if (!allQuickButtonIds.includes(v as QuickButtonId)) continue;
+    seen.add(v);
+    out.push(v as QuickButtonId);
+    if (out.length >= 10) break;
+  }
+  return out.length ? out : [...defaultQuickButtons];
+}
+
 function detectTerminalPlatform(): TerminalPlatform {
   const ua = (typeof navigator !== "undefined" ? navigator.userAgent : "").toLowerCase();
   if (ua.includes("windows")) return "windows";
@@ -290,6 +345,7 @@ export const useAppSettings = create<AppSettingsState>()(
       terminal: defaultTerminalSettings,
       shortcuts: defaultShortcutsSettings,
       graphoriaIgnore: defaultGraphoriaIgnoreSettings,
+      quickButtons: defaultQuickButtons,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -306,6 +362,7 @@ export const useAppSettings = create<AppSettingsState>()(
       setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
       setTerminal: (patch) => set((s) => ({ terminal: { ...s.terminal, ...patch } })),
       setGraphoriaIgnore: (patch) => set((s) => ({ graphoriaIgnore: { ...s.graphoriaIgnore, ...patch } })),
+      setQuickButtons: (next) => set({ quickButtons: normalizeQuickButtons(next) }),
       setShortcuts: (patch) =>
         set((s) => ({
           shortcuts: {
@@ -320,6 +377,7 @@ export const useAppSettings = create<AppSettingsState>()(
       resetLayout: () => set({ layout: defaultLayoutSettings }),
       resetTerminal: () => set({ terminal: defaultTerminalSettings }),
       resetShortcuts: () => set({ shortcuts: defaultShortcutsSettings }),
+      resetQuickButtons: () => set({ quickButtons: defaultQuickButtons }),
       resetSettings: () =>
         set({
           general: defaultGeneralSettings,
@@ -331,11 +389,12 @@ export const useAppSettings = create<AppSettingsState>()(
           terminal: defaultTerminalSettings,
           shortcuts: defaultShortcutsSettings,
           graphoriaIgnore: defaultGraphoriaIgnoreSettings,
+          quickButtons: defaultQuickButtons,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 22,
+      version: 23,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -460,6 +519,8 @@ export const useAppSettings = create<AppSettingsState>()(
           if (!s.graphoriaIgnore.repoTextByPath || typeof s.graphoriaIgnore.repoTextByPath !== "object") s.graphoriaIgnore.repoTextByPath = {};
           if (typeof s.graphoriaIgnore.selectedRepoPath !== "string") s.graphoriaIgnore.selectedRepoPath = "";
         }
+
+        s.quickButtons = normalizeQuickButtons(s.quickButtons);
         return s;
       },
     },
