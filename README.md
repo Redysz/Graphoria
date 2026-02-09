@@ -70,6 +70,8 @@ Built with modern web technologies, Graphoria combines the best of both worlds:
 
 \* If you are using Windows and PowerShell and see `npm File ... cannot be loaded because running scripts is disabled on this system...` error then run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` and then run `npm install` again.
 
+## 🏁 Afterword
+
 Experience the future of Git visualization today. Graphoria transforms how you interact with your code history, making complex Git operations intuitive and enjoyable.
 
 Join thousands of developers who have already discovered that understanding Git doesn't have to be complicated—it just needs to be visual.
