@@ -12,6 +12,9 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, SubmenuBuilder};
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -2459,6 +2462,16 @@ async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = SubmenuBuilder::new(_app, "Graphoria").quit().build()?;
+                let menu = MenuBuilder::new(_app).item(&app_menu).build()?;
+                _app.set_menu(menu)?;
+            }
+
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
