@@ -1928,7 +1928,7 @@ function App() {
   }, [commitsAll, selectedHash]);
 
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
-  const stashChangedCount = stashStatusEntries.length;
+  const stashChangedCount = changedCount;
 
   function openCommitContextMenu(hash: string, x: number, y: number) {
     const menuW = 260;
