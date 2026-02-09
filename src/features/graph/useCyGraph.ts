@@ -67,6 +67,7 @@ export function useCyGraph({
   const cyRef = useRef<Core | null>(null);
   const viewportByRepoRef = useRef<Record<string, ViewportState | undefined>>({});
   const pendingAutoCenterByRepoRef = useRef<Record<string, boolean | undefined>>({});
+  const initializingByRepoRef = useRef<Record<string, boolean | undefined>>({});
   const viewportRafRef = useRef<number | null>(null);
 
   const [zoomPct, setZoomPct] = useState<number>(100);
@@ -679,6 +680,21 @@ export function useCyGraph({
     const cy = cyRef.current;
     if (!cy) return;
 
+    const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
+    if (activeRepoPath) {
+      initializingByRepoRef.current[activeRepoPath] = true;
+      if (saved) {
+        cy.zoom(saved.zoom);
+        cy.pan(saved.pan);
+        setZoomPct(Math.round(cy.zoom() * 100));
+      } else {
+        cy.zoom(1);
+        setZoomPct(100);
+        pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
+        setAutoCenterToken((t) => t + 1);
+      }
+    }
+
     cy.on("tap", "node", (evt) => {
       if ((evt.target as any).hasClass?.("refBadge")) return;
       if ((evt.target as any).hasClass?.("stashBadge")) return;
@@ -745,7 +761,8 @@ export function useCyGraph({
       if (viewportRafRef.current) return;
       viewportRafRef.current = requestAnimationFrame(() => {
         viewportRafRef.current = null;
-        if (!pendingAutoCenterByRepoRef.current[activeRepoPath]) {
+        const initializing = !!initializingByRepoRef.current[activeRepoPath];
+        if (!initializing && !pendingAutoCenterByRepoRef.current[activeRepoPath]) {
           viewportByRepoRef.current[activeRepoPath] = {
             zoom: cy.zoom(),
             pan: cy.pan(),
@@ -760,21 +777,18 @@ export function useCyGraph({
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         cy.resize();
-        const saved = activeRepoPath ? viewportByRepoRef.current[activeRepoPath] : undefined;
         if (saved) {
-          cy.zoom(saved.zoom);
-          cy.pan(saved.pan);
-          setZoomPct(Math.round(cy.zoom() * 100));
           applyRefBadges(cy);
-        } else {
-          focusOnHead();
-          scheduleViewportUpdate();
-          applyRefBadges(cy);
-          if (activeRepoPath) {
-            pendingAutoCenterByRepoRef.current[activeRepoPath] = true;
-            setAutoCenterToken((t) => t + 1);
-          }
+          if (activeRepoPath) initializingByRepoRef.current[activeRepoPath] = false;
+          return;
         }
+
+        focusOnHead();
+        applyRefBadges(cy);
+        if (activeRepoPath) {
+          initializingByRepoRef.current[activeRepoPath] = false;
+        }
+        scheduleViewportUpdate();
       });
     });
 
