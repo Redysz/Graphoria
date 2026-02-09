@@ -63,10 +63,11 @@ Built with modern web technologies, Graphoria combines the best of both worlds:
 1. Install Node.js (npm) and rust.
 2. Clone/Download this repository.
 3. Go to the project directory.
-4. Install dependencies:
+4. Install dependencies*:
    - `npm install`
 5. Start the app in Tauri dev mode:
    - `npm run tauri dev`
+* If you are using Windows and PowerShell and see `npm File ... cannot be loaded because running scripts is disabled on this system...` error then run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` and then run `npm install` again.
 
 Experience the future of Git visualization today. Graphoria transforms how you interact with your code history, making complex Git operations intuitive and enjoyable.
 
