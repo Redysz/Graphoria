@@ -2,7 +2,9 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { parseGitDubiousOwnershipError } from "../../utils/gitTrust";
 import type { GitCommit, GitStatusSummary, GitStashEntry, RepoOverview } from "../../types/git";
 import type { GitHistoryOrder } from "../../appSettingsStore";
-import { gitStashList, gitStatusSummary, listCommits, listCommitsFull, repoOverview } from "../../api/git";
+import { useAppSettings } from "../../appSettingsStore";
+import { gitStashList, gitStatus, gitStatusSummary, listCommits, listCommitsFull, repoOverview } from "../../api/git";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "../../utils/graphoriaIgnore";
 
 export function useRepoLoader(opts: {
   activeRepoPath: string;
@@ -28,6 +30,8 @@ export function useRepoLoader(opts: {
   setGitTrustActionError: Dispatch<SetStateAction<string>>;
   setGitTrustOpen: Dispatch<SetStateAction<boolean>>;
 }) {
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
   const {
     activeRepoPath,
     commitsFullByRepo,
@@ -49,6 +53,19 @@ export function useRepoLoader(opts: {
     setGitTrustActionError,
     setGitTrustOpen,
   } = opts;
+
+  const computeStatusSummary = useCallback(
+    async (repoPath: string): Promise<GitStatusSummary> => {
+      const repoText = graphoriaIgnore.repoTextByPath?.[repoPath] ?? "";
+      const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+      const rules = compileGraphoriaIgnore(text);
+      if (rules.length === 0) return await gitStatusSummary(repoPath);
+      const entriesRaw = await gitStatus(repoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, rules);
+      return { changed: entries.length };
+    },
+    [graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath],
+  );
 
   const loadRepo = useCallback(
     async (nextRepoPath?: string, forceFullHistory?: boolean, updateSelection?: boolean): Promise<boolean> => {
@@ -86,7 +103,7 @@ export function useRepoLoader(opts: {
           setLoading(false);
         }
 
-        void Promise.allSettled([repoOverview(path), gitStatusSummary(path)]).then(([ovRes, statusSummaryRes]) => {
+        void Promise.allSettled([repoOverview(path), computeStatusSummary(path)]).then(([ovRes, statusSummaryRes]) => {
           if (ovRes.status === "fulfilled") {
             setOverviewByRepo((prev) => ({ ...prev, [path]: ovRes.value }));
           }
@@ -141,6 +158,7 @@ export function useRepoLoader(opts: {
       commitsFullByRepo,
       commitsHistoryOrder,
       commitsOnlyHead,
+      computeStatusSummary,
       setAheadBehindByRepo,
       setCommitsByRepo,
       setCommitsHasMoreByRepo,

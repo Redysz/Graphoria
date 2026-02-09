@@ -3,6 +3,7 @@ import type { DiffToolSettings } from "./appSettingsStore";
 import { useAppSettings } from "./appSettingsStore";
 import { gitLaunchExternalDiffWorking, gitWorkingFileContent, gitWorkingFileDiff } from "./api/gitWorkingFiles";
 import { gitCommitChanges, gitCommitFileContent, gitCommitFileDiff, gitLaunchExternalDiffCommit, gitStatus } from "./api/git";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "./utils/graphoriaIgnore";
 
 type GitChangeEntry = {
   status: string;
@@ -162,6 +163,13 @@ export default function DiffView(props: Props) {
   const layout = useAppSettings((s) => s.layout);
   const setLayout = useAppSettings((s) => s.setLayout);
   const diffShowLineNumbers = useAppSettings((s) => s.git.diffShowLineNumbers);
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
+  const ignoreRules = useMemo(() => {
+    const repoText = graphoriaIgnore.repoTextByPath?.[repoPath] ?? "";
+    const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+    return compileGraphoriaIgnore(text);
+  }, [graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath, repoPath]);
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -228,7 +236,8 @@ export default function DiffView(props: Props) {
         } else {
           const res = await gitStatus(repoPath);
           if (!alive) return;
-          const mapped: GitChangeEntry[] = res.map((r) => ({ status: r.status, path: r.path }));
+          const filtered = filterGraphoriaIgnoredEntries(res, ignoreRules);
+          const mapped: GitChangeEntry[] = filtered.map((r) => ({ status: r.status, path: r.path }));
           setFiles(mapped);
           if (mapped.length > 0) setSelectedPath(mapped[0].path);
         }

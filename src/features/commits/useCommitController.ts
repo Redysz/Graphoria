@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { DiffToolSettings } from "../../appSettingsStore";
+import { useAppSettings } from "../../appSettingsStore";
 import { gitCommit, gitCommitPatch, gitGetRemoteUrl, gitPush, gitStatus } from "../../api/git";
 import {
   gitHeadVsWorkingTextDiff,
@@ -13,6 +14,7 @@ import {
 import type { GitStatusEntry, GitStatusSummary } from "../../types/git";
 import { buildPatchFromSelectedHunks, computeHunkRanges } from "../../utils/diffPatch";
 import { fileExtLower, isDocTextPreviewExt, isImageExt } from "../../utils/filePreview";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "../../utils/graphoriaIgnore";
 
 export function useCommitController(opts: {
   activeRepoPath: string;
@@ -22,6 +24,14 @@ export function useCommitController(opts: {
   setStatusSummaryByRepo: Dispatch<SetStateAction<Record<string, GitStatusSummary | undefined>>>;
 }) {
   const { activeRepoPath, headName, diffTool, loadRepo, setStatusSummaryByRepo } = opts;
+
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
+  const ignoreRules = useMemo(() => {
+    const repoText = graphoriaIgnore.repoTextByPath?.[activeRepoPath] ?? "";
+    const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+    return compileGraphoriaIgnore(text);
+  }, [activeRepoPath, graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath]);
 
   function errorToString(e: unknown) {
     if (typeof e === "string") return e;
@@ -63,7 +73,8 @@ export function useCommitController(opts: {
     if (!activeRepoPath) return;
     setCommitError("");
     try {
-      const entries = await gitStatus(activeRepoPath);
+      const entriesRaw = await gitStatus(activeRepoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
       setStatusEntries(entries);
       setSelectedPaths((prev) => {
         const next: Record<string, boolean> = {};
@@ -95,7 +106,8 @@ export function useCommitController(opts: {
     setCommitPreviewError("");
 
     try {
-      const entries = await gitStatus(activeRepoPath);
+      const entriesRaw = await gitStatus(activeRepoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, ignoreRules);
       setStatusEntries(entries);
       const nextSelected: Record<string, boolean> = {};
       for (const e of entries) nextSelected[e.path] = true;

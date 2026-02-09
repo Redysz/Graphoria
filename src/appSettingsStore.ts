@@ -95,6 +95,12 @@ export type LayoutSettings = {
   statusFilesWidthPx: number;
 };
 
+export type GraphoriaIgnoreSettings = {
+  globalText: string;
+  repoTextByPath: Record<string, string>;
+  selectedRepoPath: string;
+};
+
 export type ShortcutsSettings = {
   bindings: Record<ShortcutActionId, ShortcutSpec>;
 };
@@ -108,6 +114,7 @@ export type AppSettingsState = {
   layout: LayoutSettings;
   terminal: TerminalSettings;
   shortcuts: ShortcutsSettings;
+  graphoriaIgnore: GraphoriaIgnoreSettings;
 
   setGeneral: (patch: Partial<GeneralSettings>) => void;
   setTheme: (theme: ThemeName) => void;
@@ -118,6 +125,7 @@ export type AppSettingsState = {
   setLayout: (patch: Partial<LayoutSettings>) => void;
   setTerminal: (patch: Partial<TerminalSettings>) => void;
   setShortcuts: (patch: Partial<ShortcutsSettings>) => void;
+  setGraphoriaIgnore: (patch: Partial<GraphoriaIgnoreSettings>) => void;
   resetLayout: () => void;
   resetTerminal: () => void;
   resetShortcuts: () => void;
@@ -237,6 +245,12 @@ export const defaultLayoutSettings: LayoutSettings = {
   statusFilesWidthPx: 420,
 };
 
+export const defaultGraphoriaIgnoreSettings: GraphoriaIgnoreSettings = {
+  globalText: "",
+  repoTextByPath: {},
+  selectedRepoPath: "",
+};
+
 function detectTerminalPlatform(): TerminalPlatform {
   const ua = (typeof navigator !== "undefined" ? navigator.userAgent : "").toLowerCase();
   if (ua.includes("windows")) return "windows";
@@ -275,6 +289,7 @@ export const useAppSettings = create<AppSettingsState>()(
       layout: defaultLayoutSettings,
       terminal: defaultTerminalSettings,
       shortcuts: defaultShortcutsSettings,
+      graphoriaIgnore: defaultGraphoriaIgnoreSettings,
 
       setGeneral: (patch) => set((s) => ({ general: { ...s.general, ...patch } })),
       setTheme: (theme) =>
@@ -290,6 +305,7 @@ export const useAppSettings = create<AppSettingsState>()(
       setGraph: (patch) => set((s) => ({ graph: { ...s.graph, ...patch } })),
       setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } })),
       setTerminal: (patch) => set((s) => ({ terminal: { ...s.terminal, ...patch } })),
+      setGraphoriaIgnore: (patch) => set((s) => ({ graphoriaIgnore: { ...s.graphoriaIgnore, ...patch } })),
       setShortcuts: (patch) =>
         set((s) => ({
           shortcuts: {
@@ -314,11 +330,12 @@ export const useAppSettings = create<AppSettingsState>()(
           layout: defaultLayoutSettings,
           terminal: defaultTerminalSettings,
           shortcuts: defaultShortcutsSettings,
+          graphoriaIgnore: defaultGraphoriaIgnoreSettings,
         }),
     }),
     {
       name: "graphoria.settings.v1",
-      version: 21,
+      version: 22,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -434,6 +451,14 @@ export const useAppSettings = create<AppSettingsState>()(
         if (s.shortcuts?.bindings?.["panel.branches.show"] === "ArrowLeft" && s.shortcuts?.bindings?.["panel.branches.hide"] === "ArrowRight") {
           s.shortcuts.bindings["panel.branches.show"] = "ArrowRight";
           s.shortcuts.bindings["panel.branches.hide"] = "ArrowLeft";
+        }
+
+        if (!s.graphoriaIgnore || typeof s.graphoriaIgnore !== "object") {
+          s.graphoriaIgnore = defaultGraphoriaIgnoreSettings;
+        } else {
+          if (typeof s.graphoriaIgnore.globalText !== "string") s.graphoriaIgnore.globalText = "";
+          if (!s.graphoriaIgnore.repoTextByPath || typeof s.graphoriaIgnore.repoTextByPath !== "object") s.graphoriaIgnore.repoTextByPath = {};
+          if (typeof s.graphoriaIgnore.selectedRepoPath !== "string") s.graphoriaIgnore.selectedRepoPath = "";
         }
         return s;
       },

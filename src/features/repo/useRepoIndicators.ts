@@ -1,6 +1,8 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { GitAheadBehind, GitStatusSummary } from "../../types/git";
-import { gitAheadBehind, gitFetch, gitGetRemoteUrl, gitListRemoteTagTargets, gitListTagTargets, gitStatusSummary } from "../../api/git";
+import { useAppSettings } from "../../appSettingsStore";
+import { gitAheadBehind, gitFetch, gitGetRemoteUrl, gitListRemoteTagTargets, gitListTagTargets, gitStatus, gitStatusSummary } from "../../api/git";
+import { compileGraphoriaIgnore, filterGraphoriaIgnoredEntries } from "../../utils/graphoriaIgnore";
 
 export function useRepoIndicators(opts: {
   setIndicatorsUpdatingByRepo: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -11,12 +13,27 @@ export function useRepoIndicators(opts: {
 }) {
   const { setIndicatorsUpdatingByRepo, setStatusSummaryByRepo, setRemoteUrlByRepo, setAheadBehindByRepo, setTagsToPushByRepo } = opts;
 
+  const graphoriaIgnore = useAppSettings((s) => s.graphoriaIgnore);
+
+  const computeStatusSummary = useCallback(
+    async (repoPath: string): Promise<GitStatusSummary> => {
+      const repoText = graphoriaIgnore.repoTextByPath?.[repoPath] ?? "";
+      const text = `${graphoriaIgnore.globalText ?? ""}\n${repoText}`;
+      const rules = compileGraphoriaIgnore(text);
+      if (rules.length === 0) return await gitStatusSummary(repoPath);
+      const entriesRaw = await gitStatus(repoPath);
+      const entries = filterGraphoriaIgnoredEntries(entriesRaw, rules);
+      return { changed: entries.length };
+    },
+    [graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath],
+  );
+
   const refreshIndicators = useCallback(
     async (path: string) => {
       if (!path) return;
       setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: true }));
       try {
-        const statusSummaryPromise = gitStatusSummary(path)
+        const statusSummaryPromise = computeStatusSummary(path)
           .then((statusSummary) => {
             setStatusSummaryByRepo((prev) => ({ ...prev, [path]: statusSummary }));
           })
@@ -74,7 +91,7 @@ export function useRepoIndicators(opts: {
         setIndicatorsUpdatingByRepo((prev) => ({ ...prev, [path]: false }));
       }
     },
-    [setAheadBehindByRepo, setIndicatorsUpdatingByRepo, setRemoteUrlByRepo, setStatusSummaryByRepo, setTagsToPushByRepo],
+    [computeStatusSummary, setAheadBehindByRepo, setIndicatorsUpdatingByRepo, setRemoteUrlByRepo, setStatusSummaryByRepo, setTagsToPushByRepo],
   );
 
   return { refreshIndicators };
