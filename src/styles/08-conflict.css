@@ -1,4 +1,211 @@
- .conflictLegend {
+ /* ── Quick Input / Command Palette – global unscoped fallback ── */
+
+.quick-input-widget .monaco-inputbox {
+ border: 1px solid var(--accent, rgba(47, 111, 237, 0.55)) !important;
+ outline: none !important;
+ box-shadow: none !important;
+ background: var(--panel, #ffffff) !important;
+}
+
+.quick-input-widget .monaco-inputbox.synthetic-focus,
+.quick-input-widget .monaco-inputbox:focus-within,
+.quick-input-widget .monaco-inputbox.info,
+.quick-input-widget .monaco-inputbox.warning,
+.quick-input-widget .monaco-inputbox.error {
+ border: 1px solid var(--accent, rgba(47, 111, 237, 0.55)) !important;
+ outline: none !important;
+ box-shadow: none !important;
+}
+
+.quick-input-widget .monaco-inputbox .input,
+.quick-input-widget .monaco-inputbox input {
+ outline: none !important;
+ border: none !important;
+ box-shadow: none !important;
+}
+
+/* ── Quick Input / Command Palette overrides ── */
+
+body.conflictResolverMenu .quick-input-widget,
+html.conflictResolverMenu .quick-input-widget {
+ background: var(--panel) !important;
+ border: 1px solid var(--border) !important;
+ border-radius: 12px !important;
+ box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18) !important;
+ color: var(--text) !important;
+}
+
+:root[data-theme="dark"] body.conflictResolverMenu .quick-input-widget,
+:root[data-theme="dark"] html.conflictResolverMenu .quick-input-widget {
+ box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-header,
+html.conflictResolverMenu .quick-input-widget .quick-input-header {
+ background: transparent !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-header .input,
+body.conflictResolverMenu .quick-input-widget .quick-input-header input,
+html.conflictResolverMenu .quick-input-widget .quick-input-header .input,
+html.conflictResolverMenu .quick-input-widget .quick-input-header input {
+ background: var(--panel) !important;
+ color: var(--text) !important;
+ border-color: var(--border) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list,
+html.conflictResolverMenu .quick-input-widget .quick-input-list {
+ background: var(--panel) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list {
+ background: var(--panel) !important;
+ color: var(--text) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row {
+ color: var(--text) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover {
+ background: rgba(47, 111, 237, 0.14) !important;
+ color: var(--text) !important;
+}
+
+:root[data-theme="dark"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="dark"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover,
+:root[data-theme="dark"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="dark"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover {
+ background: rgba(75, 139, 255, 0.20) !important;
+}
+
+:root[data-theme="blue"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="blue"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover,
+:root[data-theme="blue"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="blue"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover {
+ background: rgba(31, 111, 235, 0.14) !important;
+}
+
+:root[data-theme="sepia"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="sepia"] body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover,
+:root[data-theme="sepia"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row.focused,
+:root[data-theme="sepia"] html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row:hover {
+ background: rgba(163, 91, 29, 0.14) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .label-name,
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .label-description,
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .monaco-highlighted-label,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .label-name,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .label-description,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .monaco-highlighted-label {
+ color: var(--text) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .highlight,
+html.conflictResolverMenu .quick-input-widget .quick-input-list .monaco-list-row .highlight {
+ color: var(--accent) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox {
+ background: var(--panel) !important;
+ border-color: var(--border) !important;
+ border-radius: 8px !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox.synthetic-focus,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox.focused,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox:focus-within,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox.info,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox.warning,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox.error,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox.synthetic-focus,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox.focused,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox:focus-within,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox.info,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox.warning,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox.error {
+ border-color: var(--accent) !important;
+ outline: none !important;
+ box-shadow: none !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .quick-input-box,
+body.conflictResolverMenu .quick-input-widget .quick-input-filter,
+body.conflictResolverMenu .quick-input-widget .quick-input-and-message,
+body.conflictResolverMenu .quick-input-widget .quick-input-header,
+html.conflictResolverMenu .quick-input-widget .quick-input-box,
+html.conflictResolverMenu .quick-input-widget .quick-input-filter,
+html.conflictResolverMenu .quick-input-widget .quick-input-and-message,
+html.conflictResolverMenu .quick-input-widget .quick-input-header {
+ border-color: transparent !important;
+ outline: none !important;
+ box-shadow: none !important;
+}
+
+body.conflictResolverMenu .quick-input-widget,
+body.conflictResolverMenu .quick-input-widget *,
+html.conflictResolverMenu .quick-input-widget,
+html.conflictResolverMenu .quick-input-widget * {
+ --vscode-focusBorder: var(--accent) !important;
+ --vscode-inputValidation-infoBorder: var(--accent) !important;
+ --vscode-inputValidation-warningBorder: var(--accent) !important;
+ --vscode-inputValidation-errorBorder: var(--accent) !important;
+}
+
+.conflictResolverModal .quick-input-widget .monaco-inputbox[style],
+.conflictResolverModal .quick-input-widget .monaco-inputbox,
+body.conflictResolverMenu .monaco-editor .quick-input-widget .monaco-inputbox,
+html.conflictResolverMenu .monaco-editor .quick-input-widget .monaco-inputbox {
+ border: 1px solid var(--accent) !important;
+ outline: none !important;
+ box-shadow: none !important;
+}
+
+.conflictResolverModal .quick-input-widget,
+body.conflictResolverMenu .monaco-editor .quick-input-widget,
+html.conflictResolverMenu .monaco-editor .quick-input-widget {
+ border: 1px solid var(--border) !important;
+ outline: none !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox .input,
+body.conflictResolverMenu .quick-input-widget .monaco-inputbox input,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox .input,
+html.conflictResolverMenu .quick-input-widget .monaco-inputbox input {
+ color: var(--text) !important;
+ background: transparent !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .keybinding-label,
+body.conflictResolverMenu .quick-input-widget .monaco-keybinding,
+body.conflictResolverMenu .quick-input-widget .keybinding,
+html.conflictResolverMenu .quick-input-widget .keybinding-label,
+html.conflictResolverMenu .quick-input-widget .monaco-keybinding,
+html.conflictResolverMenu .quick-input-widget .keybinding {
+ color: var(--menu-shortcut) !important;
+}
+
+body.conflictResolverMenu .quick-input-widget .keybinding-label .monaco-keybinding-key,
+html.conflictResolverMenu .quick-input-widget .keybinding-label .monaco-keybinding-key,
+body.conflictResolverMenu .quick-input-widget .monaco-keybinding-key,
+html.conflictResolverMenu .quick-input-widget .monaco-keybinding-key {
+ background: rgba(128, 128, 128, 0.08) !important;
+ border-color: var(--border) !important;
+ box-shadow: none !important;
+ color: var(--menu-shortcut) !important;
+}
+
+/* ── Conflict legend ── */
+
+.conflictLegend {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -72,6 +279,30 @@
   --vscode-list-focusForeground: var(--text) !important;
   --vscode-list-focusOutline: rgba(47, 111, 237, 0.55) !important;
   --vscode-list-hoverOutline: rgba(47, 111, 237, 0.35) !important;
+
+  --vscode-quickInput-background: var(--panel) !important;
+  --vscode-quickInput-foreground: var(--text) !important;
+  --vscode-quickInputTitle-background: var(--panel-2) !important;
+  --vscode-quickInputList-focusBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-quickInputList-focusForeground: var(--text) !important;
+  --vscode-quickInputList-focusIconForeground: var(--text) !important;
+  --vscode-input-background: var(--panel) !important;
+  --vscode-input-foreground: var(--text) !important;
+  --vscode-input-border: var(--border) !important;
+  --vscode-input-placeholderForeground: var(--muted) !important;
+  --vscode-inputOption-activeBorder: rgba(47, 111, 237, 0.55) !important;
+  --vscode-inputOption-activeBackground: rgba(47, 111, 237, 0.14) !important;
+  --vscode-inputOption-activeForeground: var(--text) !important;
+  --vscode-inputOption-hoverBackground: rgba(47, 111, 237, 0.10) !important;
+  --vscode-editorWidget-background: var(--panel) !important;
+  --vscode-editorWidget-foreground: var(--text) !important;
+  --vscode-editorWidget-border: var(--border) !important;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.18) !important;
+  --vscode-widget-border: var(--border) !important;
+  --vscode-keybindingLabel-background: rgba(128, 128, 128, 0.08) !important;
+  --vscode-keybindingLabel-foreground: var(--menu-shortcut) !important;
+  --vscode-keybindingLabel-border: var(--border) !important;
+  --vscode-keybindingLabel-bottomBorder: var(--border) !important;
  }
 
  body.conflictResolverMenu .monaco-menu-container,
@@ -113,6 +344,45 @@
   --vscode-list-focusBackground: rgba(75, 139, 255, 0.20) !important;
   --vscode-list-focusOutline: rgba(75, 139, 255, 0.55) !important;
   --vscode-list-hoverOutline: rgba(75, 139, 255, 0.35) !important;
+  --vscode-quickInputList-focusBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-inputOption-activeBorder: rgba(75, 139, 255, 0.55) !important;
+  --vscode-inputOption-activeBackground: rgba(75, 139, 255, 0.20) !important;
+  --vscode-inputOption-hoverBackground: rgba(75, 139, 255, 0.16) !important;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.55) !important;
+ }
+
+ :root[data-theme="blue"] body.conflictResolverMenu,
+ :root[data-theme="blue"] html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(31, 111, 235, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(31, 111, 235, 0.14) !important;
+  --vscode-menu-selectionBorder: rgba(31, 111, 235, 0.30) !important;
+  --vscode-list-hoverBackground: rgba(31, 111, 235, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(31, 111, 235, 0.14) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(31, 111, 235, 0.10) !important;
+  --vscode-list-focusBackground: rgba(31, 111, 235, 0.14) !important;
+  --vscode-list-focusOutline: rgba(31, 111, 235, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(31, 111, 235, 0.35) !important;
+  --vscode-quickInputList-focusBackground: rgba(31, 111, 235, 0.14) !important;
+  --vscode-inputOption-activeBorder: rgba(31, 111, 235, 0.55) !important;
+  --vscode-inputOption-activeBackground: rgba(31, 111, 235, 0.14) !important;
+  --vscode-inputOption-hoverBackground: rgba(31, 111, 235, 0.10) !important;
+ }
+
+ :root[data-theme="sepia"] body.conflictResolverMenu,
+ :root[data-theme="sepia"] html.conflictResolverMenu {
+  --vscode-focusBorder: rgba(163, 91, 29, 0.55) !important;
+  --vscode-menu-selectionBackground: rgba(163, 91, 29, 0.14) !important;
+  --vscode-menu-selectionBorder: rgba(163, 91, 29, 0.30) !important;
+  --vscode-list-hoverBackground: rgba(163, 91, 29, 0.10) !important;
+  --vscode-list-activeSelectionBackground: rgba(163, 91, 29, 0.14) !important;
+  --vscode-list-inactiveSelectionBackground: rgba(163, 91, 29, 0.10) !important;
+  --vscode-list-focusBackground: rgba(163, 91, 29, 0.14) !important;
+  --vscode-list-focusOutline: rgba(163, 91, 29, 0.55) !important;
+  --vscode-list-hoverOutline: rgba(163, 91, 29, 0.35) !important;
+  --vscode-quickInputList-focusBackground: rgba(163, 91, 29, 0.14) !important;
+  --vscode-inputOption-activeBorder: rgba(163, 91, 29, 0.55) !important;
+  --vscode-inputOption-activeBackground: rgba(163, 91, 29, 0.14) !important;
+  --vscode-inputOption-hoverBackground: rgba(163, 91, 29, 0.10) !important;
  }
 
  :root[data-theme="dark"] body.conflictResolverMenu .monaco-menu-container,

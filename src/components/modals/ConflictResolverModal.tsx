@@ -50,8 +50,6 @@ type ConflictContextMenuState = {
   items: ConflictContextMenuItem[];
 };
 
-let conflictThemesDefined = false;
-
 function normalizeNewlines(s: string) {
   return s.replace(/\r\n/g, "\n");
 }
@@ -203,9 +201,6 @@ function formatConflictStatus(status: string) {
 }
 
 function ensureConflictThemes(monaco: any) {
-  if (conflictThemesDefined) return;
-  conflictThemesDefined = true;
-
   monaco.editor.defineTheme("graphoria-conflict-light", {
     base: "vs",
     inherit: true,
@@ -225,12 +220,40 @@ function ensureConflictThemes(monaco: any) {
       "list.inactiveSelectionForeground": "#0f0f0f",
       "list.focusBackground": "rgba(47, 111, 237, 0.14)",
       "list.focusForeground": "#0f0f0f",
+      "list.highlightForeground": "#2f6fed",
       "widget.shadow": "rgba(0, 0, 0, 0.18)",
       "widget.border": "rgba(15, 15, 15, 0.12)",
       "editorWidget.background": "#ffffff",
       "editorWidget.foreground": "#0f0f0f",
       "editorWidget.border": "rgba(15, 15, 15, 0.12)",
       "editorWidget.resizeBorder": "rgba(47, 111, 237, 0.55)",
+      "quickInput.background": "#ffffff",
+      "quickInput.foreground": "#0f0f0f",
+      "quickInputTitle.background": "#f5f7fb",
+      "quickInputList.focusBackground": "rgba(47, 111, 237, 0.14)",
+      "quickInputList.focusForeground": "#0f0f0f",
+      "quickInputList.focusIconForeground": "#0f0f0f",
+      "input.background": "#ffffff",
+      "input.foreground": "#0f0f0f",
+      "input.border": "rgba(15, 15, 15, 0.18)",
+      "input.placeholderForeground": "rgba(15, 15, 15, 0.50)",
+      "inputOption.activeBorder": "rgba(47, 111, 237, 0.55)",
+      "inputOption.activeBackground": "rgba(47, 111, 237, 0.14)",
+      "inputOption.activeForeground": "#0f0f0f",
+      "inputOption.hoverBackground": "rgba(47, 111, 237, 0.10)",
+      "keybindingLabel.background": "rgba(15, 15, 15, 0.06)",
+      "keybindingLabel.foreground": "#0f0f0f",
+      "keybindingLabel.border": "rgba(15, 15, 15, 0.12)",
+      "keybindingLabel.bottomBorder": "rgba(15, 15, 15, 0.18)",
+      "inputValidation.infoBorder": "rgba(47, 111, 237, 0.55)",
+      "inputValidation.infoBackground": "#ffffff",
+      "inputValidation.infoForeground": "#0f0f0f",
+      "inputValidation.warningBorder": "rgba(47, 111, 237, 0.55)",
+      "inputValidation.warningBackground": "#ffffff",
+      "inputValidation.warningForeground": "#0f0f0f",
+      "inputValidation.errorBorder": "rgba(47, 111, 237, 0.55)",
+      "inputValidation.errorBackground": "#ffffff",
+      "inputValidation.errorForeground": "#0f0f0f",
       "diffEditor.insertedLineBackground": "#fff6df",
       "diffEditor.insertedTextBackground": "#ffe7b3",
       "diffEditor.removedLineBackground": "#e6f6ea",
@@ -258,17 +281,171 @@ function ensureConflictThemes(monaco: any) {
       "list.inactiveSelectionForeground": "#f2f4f8",
       "list.focusBackground": "rgba(75, 139, 255, 0.20)",
       "list.focusForeground": "#f2f4f8",
+      "list.highlightForeground": "#80b3ff",
       "widget.shadow": "rgba(0, 0, 0, 0.55)",
       "widget.border": "rgba(255, 255, 255, 0.12)",
       "editorWidget.background": "#151922",
       "editorWidget.foreground": "#f2f4f8",
       "editorWidget.border": "rgba(255, 255, 255, 0.12)",
       "editorWidget.resizeBorder": "rgba(75, 139, 255, 0.55)",
+      "quickInput.background": "#151922",
+      "quickInput.foreground": "#f2f4f8",
+      "quickInputTitle.background": "#101624",
+      "quickInputList.focusBackground": "rgba(75, 139, 255, 0.20)",
+      "quickInputList.focusForeground": "#f2f4f8",
+      "quickInputList.focusIconForeground": "#f2f4f8",
+      "input.background": "#1a1f2e",
+      "input.foreground": "#f2f4f8",
+      "input.border": "rgba(255, 255, 255, 0.18)",
+      "input.placeholderForeground": "rgba(242, 244, 248, 0.50)",
+      "inputOption.activeBorder": "rgba(75, 139, 255, 0.55)",
+      "inputOption.activeBackground": "rgba(75, 139, 255, 0.20)",
+      "inputOption.activeForeground": "#f2f4f8",
+      "inputOption.hoverBackground": "rgba(75, 139, 255, 0.16)",
+      "keybindingLabel.background": "rgba(255, 255, 255, 0.06)",
+      "keybindingLabel.foreground": "#f2f4f8",
+      "keybindingLabel.border": "rgba(255, 255, 255, 0.12)",
+      "keybindingLabel.bottomBorder": "rgba(255, 255, 255, 0.18)",
+      "inputValidation.infoBorder": "rgba(75, 139, 255, 0.55)",
+      "inputValidation.infoBackground": "#151922",
+      "inputValidation.infoForeground": "#f2f4f8",
+      "inputValidation.warningBorder": "rgba(75, 139, 255, 0.55)",
+      "inputValidation.warningBackground": "#151922",
+      "inputValidation.warningForeground": "#f2f4f8",
+      "inputValidation.errorBorder": "rgba(75, 139, 255, 0.55)",
+      "inputValidation.errorBackground": "#151922",
+      "inputValidation.errorForeground": "#f2f4f8",
       "diffEditor.insertedLineBackground": "#3a2f18",
       "diffEditor.insertedTextBackground": "#5a4014",
       "diffEditor.removedLineBackground": "#183020",
       "diffEditor.removedTextBackground": "#245a35",
       "diffEditor.border": "#2b3446",
+    },
+  });
+
+  monaco.editor.defineTheme("graphoria-conflict-blue", {
+    base: "vs",
+    inherit: true,
+    rules: [],
+    colors: {
+      "focusBorder": "rgba(31, 111, 235, 0.55)",
+      "editor.background": "#f6faff",
+      "editor.foreground": "#0a2346",
+      "menu.foreground": "#0a2346",
+      "menu.background": "#f6faff",
+      "menu.border": "rgba(10, 35, 70, 0.16)",
+      "menu.selectionForeground": "#0a2346",
+      "menu.selectionBackground": "rgba(31, 111, 235, 0.14)",
+      "menu.separatorBackground": "rgba(10, 35, 70, 0.16)",
+      "list.hoverBackground": "rgba(31, 111, 235, 0.10)",
+      "list.activeSelectionBackground": "rgba(31, 111, 235, 0.14)",
+      "list.activeSelectionForeground": "#0a2346",
+      "list.inactiveSelectionBackground": "rgba(31, 111, 235, 0.10)",
+      "list.inactiveSelectionForeground": "#0a2346",
+      "list.focusBackground": "rgba(31, 111, 235, 0.14)",
+      "list.focusForeground": "#0a2346",
+      "list.highlightForeground": "#1f6feb",
+      "widget.shadow": "rgba(0, 0, 0, 0.18)",
+      "widget.border": "rgba(10, 35, 70, 0.16)",
+      "editorWidget.background": "#f6faff",
+      "editorWidget.foreground": "#0a2346",
+      "editorWidget.border": "rgba(10, 35, 70, 0.16)",
+      "editorWidget.resizeBorder": "rgba(31, 111, 235, 0.55)",
+      "quickInput.background": "#f6faff",
+      "quickInput.foreground": "#0a2346",
+      "quickInputTitle.background": "#eaf2ff",
+      "quickInputList.focusBackground": "rgba(31, 111, 235, 0.14)",
+      "quickInputList.focusForeground": "#0a2346",
+      "quickInputList.focusIconForeground": "#0a2346",
+      "input.background": "#f6faff",
+      "input.foreground": "#0a2346",
+      "input.border": "rgba(10, 35, 70, 0.22)",
+      "input.placeholderForeground": "rgba(10, 35, 70, 0.50)",
+      "inputOption.activeBorder": "rgba(31, 111, 235, 0.55)",
+      "inputOption.activeBackground": "rgba(31, 111, 235, 0.14)",
+      "inputOption.activeForeground": "#0a2346",
+      "inputOption.hoverBackground": "rgba(31, 111, 235, 0.10)",
+      "keybindingLabel.background": "rgba(10, 35, 70, 0.06)",
+      "keybindingLabel.foreground": "#0a2346",
+      "keybindingLabel.border": "rgba(10, 35, 70, 0.16)",
+      "keybindingLabel.bottomBorder": "rgba(10, 35, 70, 0.22)",
+      "inputValidation.infoBorder": "rgba(31, 111, 235, 0.55)",
+      "inputValidation.infoBackground": "#f6faff",
+      "inputValidation.infoForeground": "#0a2346",
+      "inputValidation.warningBorder": "rgba(31, 111, 235, 0.55)",
+      "inputValidation.warningBackground": "#f6faff",
+      "inputValidation.warningForeground": "#0a2346",
+      "inputValidation.errorBorder": "rgba(31, 111, 235, 0.55)",
+      "inputValidation.errorBackground": "#f6faff",
+      "inputValidation.errorForeground": "#0a2346",
+      "diffEditor.insertedLineBackground": "#fff6df",
+      "diffEditor.insertedTextBackground": "#ffe7b3",
+      "diffEditor.removedLineBackground": "#e6f6ea",
+      "diffEditor.removedTextBackground": "#bfe9c9",
+      "diffEditor.border": "#c8d8ef",
+    },
+  });
+
+  monaco.editor.defineTheme("graphoria-conflict-sepia", {
+    base: "vs",
+    inherit: true,
+    rules: [],
+    colors: {
+      "focusBorder": "rgba(163, 91, 29, 0.55)",
+      "editor.background": "#fffaf0",
+      "editor.foreground": "#3d2b1f",
+      "menu.foreground": "#3d2b1f",
+      "menu.background": "#fffaf0",
+      "menu.border": "rgba(61, 43, 31, 0.18)",
+      "menu.selectionForeground": "#3d2b1f",
+      "menu.selectionBackground": "rgba(163, 91, 29, 0.14)",
+      "menu.separatorBackground": "rgba(61, 43, 31, 0.18)",
+      "list.hoverBackground": "rgba(163, 91, 29, 0.10)",
+      "list.activeSelectionBackground": "rgba(163, 91, 29, 0.14)",
+      "list.activeSelectionForeground": "#3d2b1f",
+      "list.inactiveSelectionBackground": "rgba(163, 91, 29, 0.10)",
+      "list.inactiveSelectionForeground": "#3d2b1f",
+      "list.focusBackground": "rgba(163, 91, 29, 0.14)",
+      "list.focusForeground": "#3d2b1f",
+      "list.highlightForeground": "#a35b1d",
+      "widget.shadow": "rgba(0, 0, 0, 0.18)",
+      "widget.border": "rgba(61, 43, 31, 0.18)",
+      "editorWidget.background": "#fffaf0",
+      "editorWidget.foreground": "#3d2b1f",
+      "editorWidget.border": "rgba(61, 43, 31, 0.18)",
+      "editorWidget.resizeBorder": "rgba(163, 91, 29, 0.55)",
+      "quickInput.background": "#fffaf0",
+      "quickInput.foreground": "#3d2b1f",
+      "quickInputTitle.background": "#f5efe3",
+      "quickInputList.focusBackground": "rgba(163, 91, 29, 0.14)",
+      "quickInputList.focusForeground": "#3d2b1f",
+      "quickInputList.focusIconForeground": "#3d2b1f",
+      "input.background": "#fffaf0",
+      "input.foreground": "#3d2b1f",
+      "input.border": "rgba(61, 43, 31, 0.25)",
+      "input.placeholderForeground": "rgba(61, 43, 31, 0.50)",
+      "inputOption.activeBorder": "rgba(163, 91, 29, 0.55)",
+      "inputOption.activeBackground": "rgba(163, 91, 29, 0.14)",
+      "inputOption.activeForeground": "#3d2b1f",
+      "inputOption.hoverBackground": "rgba(163, 91, 29, 0.10)",
+      "keybindingLabel.background": "rgba(61, 43, 31, 0.06)",
+      "keybindingLabel.foreground": "#3d2b1f",
+      "keybindingLabel.border": "rgba(61, 43, 31, 0.18)",
+      "keybindingLabel.bottomBorder": "rgba(61, 43, 31, 0.25)",
+      "inputValidation.infoBorder": "rgba(163, 91, 29, 0.55)",
+      "inputValidation.infoBackground": "#fffaf0",
+      "inputValidation.infoForeground": "#3d2b1f",
+      "inputValidation.warningBorder": "rgba(163, 91, 29, 0.55)",
+      "inputValidation.warningBackground": "#fffaf0",
+      "inputValidation.warningForeground": "#3d2b1f",
+      "inputValidation.errorBorder": "rgba(163, 91, 29, 0.55)",
+      "inputValidation.errorBackground": "#fffaf0",
+      "inputValidation.errorForeground": "#3d2b1f",
+      "diffEditor.insertedLineBackground": "#fff6df",
+      "diffEditor.insertedTextBackground": "#ffe7b3",
+      "diffEditor.removedLineBackground": "#e6f6ea",
+      "diffEditor.removedTextBackground": "#bfe9c9",
+      "diffEditor.border": "#e0d6c8",
     },
   });
 }
@@ -649,7 +826,12 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   }, [open, repoPath, selectedPath]);
 
   const monacoTheme = useMemo(() => {
-    return theme === "dark" ? "graphoria-conflict-dark" : "graphoria-conflict-light";
+    switch (theme) {
+      case "dark": return "graphoria-conflict-dark";
+      case "blue": return "graphoria-conflict-blue";
+      case "sepia": return "graphoria-conflict-sepia";
+      default: return "graphoria-conflict-light";
+    }
   }, [theme]);
 
   const lang = useMemo(() => pickLanguageByPath(selectedPath), [selectedPath]);
@@ -767,6 +949,27 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     };
   }
 
+  function patchQuickInputBorder() {
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "rgba(47, 111, 237, 0.55)";
+    const panel = getComputedStyle(document.documentElement).getPropertyValue("--panel").trim() || "#ffffff";
+    let tries = 0;
+    const id = setInterval(() => {
+      const boxes = document.querySelectorAll<HTMLElement>(".quick-input-widget .monaco-inputbox");
+      if (boxes.length > 0) {
+        boxes.forEach((box) => {
+          box.style.setProperty("border-color", accent, "important");
+          box.style.setProperty("border-width", "1px", "important");
+          box.style.setProperty("border-style", "solid", "important");
+          box.style.setProperty("outline", "none", "important");
+          box.style.setProperty("box-shadow", "none", "important");
+          box.style.setProperty("background", panel, "important");
+        });
+        clearInterval(id);
+      }
+      if (++tries > 20) clearInterval(id);
+    }, 30);
+  }
+
   function makeCommandPaletteItem(editor: any): ConflictContextMenuItem {
     return {
       label: "Command Palette",
@@ -776,6 +979,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
         try {
           editor?.focus?.();
           editor?.trigger?.("graphoria", "editor.action.quickCommand", null);
+          patchQuickInputBorder();
         } catch {
           // ignore
         }
