@@ -34,6 +34,7 @@ export function CommitLaneSvg(props: {
 
   const parentLaneSet = new Set(row.parentLanes);
   const joinLaneSet = new Set(row.joinLanes);
+  const activeTopSet = new Set(row.activeTop);
 
   for (const lane of row.parentLanes) {
     const x0 = xForLane(row.lane);
@@ -77,7 +78,7 @@ export function CommitLaneSvg(props: {
         return <line key={`t-${lane}`} x1={x} y1={yTop} x2={x} y2={yMid} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
       })}
       {row.activeBottom.map((lane) => {
-        if (parentLaneSet.has(lane)) return null;
+        if (parentLaneSet.has(lane) && (!activeTopSet.has(lane) || joinLaneSet.has(lane))) return null;
         const x = xForLane(lane);
         const color = laneStrokeColor(lane, theme);
         return <line key={`b-${lane}`} x1={x} y1={yMid} x2={x} y2={yBottom} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />;
