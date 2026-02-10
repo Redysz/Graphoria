@@ -3688,7 +3688,7 @@ function App() {
   const elements = useMemo(() => {
     const nodes = new Map<
       string,
-      { data: { id: string; label: string; refs: string }; position?: { x: number; y: number }; classes?: string }
+      { data: { id: string; label: string; refs: string; author?: string; authorEmail?: string }; position?: { x: number; y: number }; classes?: string }
     >();
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
@@ -3726,6 +3726,8 @@ function App() {
           id: c.hash,
           label,
           refs: c.refs,
+          author: c.author,
+          authorEmail: c.author_email,
         },
         position: posFor(lane, time),
         classes: c.is_head ? "head" : undefined,
@@ -3764,6 +3766,8 @@ function App() {
     graphSettings,
     theme,
     isMacOS,
+
+    showOnlineAvatars,
 
     remoteNames: overview?.remotes ?? [],
     stashBaseByRepo,

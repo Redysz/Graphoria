@@ -7,6 +7,7 @@ import {
   type RankDir,
   type EdgeDirection,
   type GitHistoryOrder,
+  type GraphAvatarPosition,
   type TooltipMode,
   type TerminalProfileKind,
 } from "./appSettingsStore";
@@ -558,6 +559,33 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                     </label>,
                     "When disabled, remote branch badges like origin/* are hidden.",
                   )}
+
+                  {field(
+                    "Show avatars on graph",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={graph.showAvatarsOnGraph}
+                        onChange={(e) => setGraph({ showAvatarsOnGraph: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "When enabled, author avatars are shown on commit nodes in the graph view.",
+                  )}
+
+                  {graph.showAvatarsOnGraph
+                    ? field(
+                        "Avatar position",
+                        <select
+                          value={graph.graphAvatarPosition}
+                          onChange={(e) => setGraph({ graphAvatarPosition: e.target.value as GraphAvatarPosition })}
+                        >
+                          <option value="top-right">Top right</option>
+                          <option value="top-left">Top left</option>
+                        </select>,
+                        "Corner of the node where the avatar is placed.",
+                      )
+                    : null}
 
                   {field(
                     "Graph orientation",

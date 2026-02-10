@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core } from "cytoscape";
 import { getCyPalette, type GraphSettings, type ThemeName } from "../../appSettingsStore";
 import type { GitStashEntry } from "../../types/git";
+import { generateAvatarDataUrl, getGravatarCircleUrl, loadGravatarCircle } from "../../utils/avatarCanvas";
+import { md5Hex } from "../../utils/hash";
 
 type ViewportState = {
   zoom: number;
@@ -16,6 +18,8 @@ export type UseCyGraphParams = {
   graphSettings: GraphSettings;
   theme: ThemeName;
   isMacOS: boolean;
+
+  showOnlineAvatars: boolean;
 
   remoteNames: string[];
   stashBaseByRepo: Record<string, Record<string, string>>;
@@ -46,6 +50,7 @@ export function useCyGraph({
   graphSettings,
   theme,
   isMacOS,
+  showOnlineAvatars,
   remoteNames,
   stashBaseByRepo,
   stashesByRepo,
@@ -424,6 +429,57 @@ export function useCyGraph({
     }
   }
 
+  function applyAvatars(cy: Core) {
+    if (!graphSettings.showAvatarsOnGraph) {
+      for (const n of cy.nodes().toArray()) {
+        if (n.hasClass("refBadge") || n.hasClass("stashBadge")) continue;
+        n.style("background-image" as any, "none");
+      }
+      return;
+    }
+
+    const avatarSize = 26;
+    const pos = graphSettings.graphAvatarPosition;
+    const posX = pos === "top-right" ? "100%" : "0%";
+    const posY = "0%";
+
+    for (const n of cy.nodes().toArray()) {
+      if (n.hasClass("refBadge") || n.hasClass("stashBadge")) continue;
+      const author = (n.data("author") as string) || "";
+      if (!author) continue;
+
+      const email = ((n.data("authorEmail") as string) || "").trim().toLowerCase();
+      const gravatarUrl = email && showOnlineAvatars ? getGravatarCircleUrl(email, avatarSize) : null;
+      const url = gravatarUrl || generateAvatarDataUrl(author, theme, avatarSize);
+
+      n.style({
+        "background-image": url,
+        "background-width": `${avatarSize}px`,
+        "background-height": `${avatarSize}px`,
+        "background-position-x": posX,
+        "background-position-y": posY,
+        "background-fit": "none",
+        "background-clip": "none",
+        "background-image-containment": "over",
+        "background-image-opacity": 1,
+      } as any);
+
+      if (email && showOnlineAvatars && !gravatarUrl) {
+        const hash = n.id();
+        loadGravatarCircle(email, md5Hex(email), avatarSize, () => {
+          const c = cyRef.current;
+          if (!c) return;
+          const node = c.$id(hash);
+          if (node.length === 0) return;
+          const loaded = getGravatarCircleUrl(email, avatarSize);
+          if (loaded) {
+            node.style("background-image" as any, loaded);
+          }
+        });
+      }
+    }
+  }
+
   function focusOnHash(hash: string, nextZoom?: number, yRatio?: number, attempt = 0) {
     const cy = cyRef.current;
     if (!cy) return;
@@ -488,6 +544,19 @@ export function useCyGraph({
     theme,
     viewMode,
     remoteNames,
+  ]);
+
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    const cy = cyRef.current;
+    if (!cy) return;
+    applyAvatars(cy);
+  }, [
+    graphSettings.showAvatarsOnGraph,
+    graphSettings.graphAvatarPosition,
+    showOnlineAvatars,
+    theme,
+    viewMode,
   ]);
 
   useEffect(() => {
@@ -779,12 +848,14 @@ export function useCyGraph({
         cy.resize();
         if (saved) {
           applyRefBadges(cy);
+          applyAvatars(cy);
           if (activeRepoPath) initializingByRepoRef.current[activeRepoPath] = false;
           return;
         }
 
         focusOnHead();
         applyRefBadges(cy);
+        applyAvatars(cy);
         if (activeRepoPath) {
           initializingByRepoRef.current[activeRepoPath] = false;
         }
