@@ -75,6 +75,8 @@ export type AppearanceSettings = {
   modalClosePosition: "left" | "right";
 };
 
+export type GraphAvatarPosition = "top-left" | "top-right";
+
 export type GraphSettings = {
   rankDir: RankDir;
   nodeSep: number;
@@ -86,6 +88,8 @@ export type GraphSettings = {
   showStashesOnGraph: boolean;
   showRemoteBranchesOnGraph: boolean;
   showTags: boolean;
+  showAvatarsOnGraph: boolean;
+  graphAvatarPosition: GraphAvatarPosition;
 };
 
 export type LayoutSettings = {
@@ -256,6 +260,8 @@ export const defaultGraphSettings: GraphSettings = {
   showStashesOnGraph: false,
   showRemoteBranchesOnGraph: true,
   showTags: true,
+  showAvatarsOnGraph: false,
+  graphAvatarPosition: "top-right",
 };
 
 export const defaultLayoutSettings: LayoutSettings = {
@@ -394,7 +400,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 23,
+      version: 24,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -467,6 +473,12 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (s.graph && typeof s.graph.showTags !== "boolean") {
           s.graph.showTags = true;
+        }
+        if (s.graph && typeof s.graph.showAvatarsOnGraph !== "boolean") {
+          s.graph.showAvatarsOnGraph = false;
+        }
+        if (s.graph && s.graph.graphAvatarPosition !== "top-left" && s.graph.graphAvatarPosition !== "top-right") {
+          s.graph.graphAvatarPosition = "top-right";
         }
         if (!s.layout || typeof s.layout !== "object") {
           s.layout = defaultLayoutSettings;

@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type CSSProperties,
@@ -25,7 +26,8 @@ import {
 } from "./shortcuts";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { copyText } from "./utils/clipboard";
-import { fnv1a32, md5Hex } from "./utils/hash";
+import { fnv1a32 } from "./utils/hash";
+import { requestGravatar, getGravatarUrl, subscribeGravatarCache, clearGravatarCache } from "./utils/gravatarCache";
 import { authorInitials, shortHash, truncate } from "./utils/text";
 import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
 import {
@@ -908,7 +910,29 @@ function App() {
   } | null>(null);
   const tagContextMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [avatarFailedByEmail, setAvatarFailedByEmail] = useState<Record<string, true>>({});
+  const [, gravatarTick] = useReducer((x: number) => x + 1, 0);
+  const gravatarBatchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeGravatarCache(() => {
+      if (gravatarBatchRef.current !== null) return;
+      gravatarBatchRef.current = setTimeout(() => {
+        gravatarBatchRef.current = null;
+        gravatarTick();
+      }, 200);
+    });
+    return () => {
+      unsub();
+      if (gravatarBatchRef.current !== null) {
+        clearTimeout(gravatarBatchRef.current);
+        gravatarBatchRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    clearGravatarCache();
+  }, [activeRepoPath]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -3688,7 +3712,7 @@ function App() {
   const elements = useMemo(() => {
     const nodes = new Map<
       string,
-      { data: { id: string; label: string; refs: string }; position?: { x: number; y: number }; classes?: string }
+      { data: { id: string; label: string; refs: string; author?: string; authorEmail?: string }; position?: { x: number; y: number }; classes?: string }
     >();
     const edges: Array<{ data: { id: string; source: string; target: string } }> = [];
 
@@ -3726,6 +3750,8 @@ function App() {
           id: c.hash,
           label,
           refs: c.refs,
+          author: c.author,
+          authorEmail: c.author_email,
         },
         position: posFor(lane, time),
         classes: c.is_head ? "head" : undefined,
@@ -3764,6 +3790,8 @@ function App() {
     graphSettings,
     theme,
     isMacOS,
+
+    showOnlineAvatars,
 
     remoteNames: overview?.remotes ?? [],
     stashBaseByRepo,
@@ -4433,7 +4461,7 @@ function App() {
             setToolsMenuOpen(false);
             void pickRepository();
           }}
-          refreshRepo={() => void loadRepo()}
+          refreshRepo={() => { clearGravatarCache(); void loadRepo(); }}
           runFetch={runFetch}
           showToolbarShortcutHints={showToolbarShortcutHints}
           toolbarItem={toolbarItem}
@@ -4742,23 +4770,19 @@ function App() {
                             >
                               {(() => {
                                 const email = (c.author_email ?? "").trim().toLowerCase();
-                                const canUse = Boolean(showOnlineAvatars && email && !avatarFailedByEmail[email]);
-                                const url = canUse ? `https://www.gravatar.com/avatar/${md5Hex(email)}?d=404&s=64` : null;
+                                if (showOnlineAvatars && email) requestGravatar(email);
+                                const loadedUrl = showOnlineAvatars && email ? getGravatarUrl(email) : null;
                                 return (
                                   <>
                                     <span className="commitAvatarText">{authorInitials(c.author)}</span>
-                                    {url ? (
+                                    {loadedUrl ? (
                                       <img
                                         className="commitAvatarImg"
-                                        src={url}
+                                        src={loadedUrl}
                                         alt={c.author}
-                                        loading="lazy"
                                         decoding="async"
                                         referrerPolicy="no-referrer"
                                         draggable={false}
-                                        onError={() => {
-                                          setAvatarFailedByEmail((prev) => ({ ...prev, [email]: true }));
-                                        }}
                                       />
                                     ) : null}
                                   </>
