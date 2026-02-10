@@ -92,9 +92,10 @@ export function InteractiveRebaseModal({
   const [editStatusEntries, setEditStatusEntries] = useState<GitStatusEntry[]>([]);
   const [editStatusLoading, setEditStatusLoading] = useState(false);
 
-  // Drag state
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  // Drag state (pointer events, like QuickButtonsModal)
+  const [drag, setDrag] = useState<{ idx: number; pointerId: number } | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverPos, setHoverPos] = useState<"before" | "after">("before");
 
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -135,9 +136,11 @@ export function InteractiveRebaseModal({
     try {
       const base = baseRef.trim() || undefined;
       const res = await gitInteractiveRebaseCommits({ repoPath, base });
-      setCommits(res);
+      // Display newest-first (reverse backend's oldest-first order)
+      const reversed = [...res].reverse();
+      setCommits(reversed);
       setTodoRows(
-        res.map((c, i) => ({
+        reversed.map((c, i) => ({
           id: `${c.hash}_${i}`,
           commit: c,
           action: "pick" as RebaseAction,
@@ -220,39 +223,78 @@ export function InteractiveRebaseModal({
     });
   }, []);
 
-  // Drag & drop
-  const handleDragStart = useCallback((idx: number) => {
-    setDragIdx(idx);
+  // Drag & drop (pointer events)
+  const clearDrag = useCallback(() => {
+    setDrag(null);
+    setHoverIdx(null);
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent, idx: number) => {
-    e.preventDefault();
-    setDragOverIdx(idx);
-  }, []);
-
-  const handleDrop = useCallback(
-    (dropIdx: number) => {
-      if (dragIdx === null || dragIdx === dropIdx) {
-        setDragIdx(null);
-        setDragOverIdx(null);
-        return;
-      }
-      setTodoRows((prev) => {
-        const next = [...prev];
-        const [removed] = next.splice(dragIdx, 1);
-        next.splice(dropIdx, 0, removed);
-        return next;
-      });
-      setDragIdx(null);
-      setDragOverIdx(null);
+  const onPointerDownRow = useCallback(
+    (e: React.PointerEvent, idx: number) => {
+      if (e.button !== 0) return;
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (t?.closest("button") || t?.closest("select") || t?.closest("input") || t?.closest("textarea")) return;
+      const el = e.currentTarget as HTMLElement;
+      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      setDrag({ idx, pointerId: e.pointerId });
+      setHoverIdx(idx);
+      setHoverPos("before");
+      e.preventDefault();
     },
-    [dragIdx],
+    [],
   );
 
-  const handleDragEnd = useCallback(() => {
-    setDragIdx(null);
-    setDragOverIdx(null);
-  }, []);
+  const onPointerMoveRow = useCallback(
+    (e: React.PointerEvent) => {
+      if (!drag) return;
+      if (e.pointerId !== drag.pointerId) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      if (!el) { setHoverIdx(null); return; }
+      const listEl = el.closest("[data-ir-list]") as HTMLElement | null;
+      if (!listEl) { setHoverIdx(null); return; }
+      const items = Array.from(listEl.querySelectorAll("[data-ir-idx]")) as HTMLElement[];
+      for (const it of items) {
+        const raw = it.getAttribute("data-ir-idx");
+        if (raw === null) continue;
+        const i = parseInt(raw, 10);
+        if (isNaN(i)) continue;
+        const r = it.getBoundingClientRect();
+        const mid = r.top + r.height / 2;
+        if (e.clientY < mid) {
+          setHoverIdx(i);
+          setHoverPos("before");
+          e.preventDefault();
+          return;
+        }
+      }
+      // Past last item
+      setHoverIdx(items.length > 0 ? parseInt(items[items.length - 1].getAttribute("data-ir-idx") ?? "0", 10) : null);
+      setHoverPos("after");
+      e.preventDefault();
+    },
+    [drag],
+  );
+
+  const onPointerUpRow = useCallback(
+    (e: React.PointerEvent) => {
+      if (!drag) return;
+      if (e.pointerId !== drag.pointerId) return;
+      const fromIdx = drag.idx;
+      const toIdx = hoverIdx;
+      clearDrag();
+      if (toIdx === null || fromIdx === toIdx) return;
+      setTodoRows((prev) => {
+        const next = [...prev];
+        const [removed] = next.splice(fromIdx, 1);
+        let insertAt = toIdx;
+        if (hoverPos === "after") insertAt += 1;
+        if (fromIdx < insertAt) insertAt -= 1;
+        next.splice(Math.max(0, Math.min(next.length, insertAt)), 0, removed);
+        return next;
+      });
+    },
+    [drag, hoverIdx, hoverPos, clearDrag],
+  );
 
   // Move row up/down
   const moveRow = useCallback((idx: number, direction: -1 | 1) => {
@@ -280,12 +322,19 @@ export function InteractiveRebaseModal({
     setPhase("running");
 
     try {
-      const base = baseRef.trim();
+      // Determine effective base: user-specified or parent of oldest commit
+      let base = baseRef.trim();
       if (!base) {
-        setError("Please specify a base commit/ref.");
-        setPhase("planning");
-        setBusy(false);
-        return;
+        // Compute from oldest commit (last in display = newest-first)
+        const oldest = todoRows[todoRows.length - 1];
+        if (oldest) {
+          base = `${oldest.commit.hash}^`;
+        } else {
+          setError("Please specify a base commit/ref or load commits first.");
+          setPhase("planning");
+          setBusy(false);
+          return;
+        }
       }
 
       // Validate: first non-drop commit cannot be squash/fixup
@@ -297,7 +346,10 @@ export function InteractiveRebaseModal({
         return;
       }
 
-      const entries: InteractiveRebaseTodoEntry[] = todoRows.map((row) => {
+      // Reverse todoRows back to oldest-first for the backend
+      const orderedRows = [...todoRows].reverse();
+
+      const entries: InteractiveRebaseTodoEntry[] = orderedRows.map((row) => {
         const msgChanged = row.newMessage !== row.commit.subject;
         const origAuthor = `${row.commit.author_name} <${row.commit.author_email}>`;
         const newAuthor = `${row.newAuthorName} <${row.newAuthorEmail}>`;
@@ -521,8 +573,8 @@ export function InteractiveRebaseModal({
                   <button
                     type="button"
                     onClick={handleLoadCommits}
-                    disabled={busy || loadingCommits || !baseRef.trim()}
-                    title="Load commits from this base"
+                    disabled={busy || loadingCommits}
+                    title={baseRef.trim() ? "Load commits from this base" : "Load all rebaseable commits"}
                   >
                     {loadingCommits ? <span className="miniSpinner" /> : "Load"}
                   </button>
@@ -589,6 +641,7 @@ export function InteractiveRebaseModal({
                   {/* Scrollable commit list */}
                   <div
                     ref={listRef}
+                    data-ir-list="commits"
                     className="irRebaseList"
                     style={{
                       maxHeight: "min(50vh, 480px)",
@@ -597,17 +650,31 @@ export function InteractiveRebaseModal({
                       borderRadius: 10,
                     }}
                   >
-                    {todoRows.map((row, idx) => (
+                    {todoRows.map((row, idx) => {
+                      const isDragging = drag?.idx === idx;
+                      const isHoverTarget = hoverIdx === idx;
+                      const insertionShadow =
+                        isHoverTarget && drag
+                          ? hoverPos === "before"
+                            ? "0 2px 0 0 rgba(80, 160, 255, 0.95) inset"
+                            : "0 -2px 0 0 rgba(80, 160, 255, 0.95) inset"
+                          : undefined;
+                      return (
                       <div
                         key={row.id}
-                        className={`irRebaseRow ${dragIdx === idx ? "irDragging" : ""} ${dragOverIdx === idx ? "irDragOver" : ""}`}
-                        draggable
-                        onDragStart={() => handleDragStart(idx)}
-                        onDragOver={(e) => handleDragOver(e, idx)}
-                        onDrop={() => handleDrop(idx)}
-                        onDragEnd={handleDragEnd}
+                        data-ir-idx={idx}
+                        className="irRebaseRow"
+                        onPointerDown={(e) => onPointerDownRow(e, idx)}
+                        onPointerMove={onPointerMoveRow}
+                        onPointerUp={onPointerUpRow}
+                        onPointerCancel={(e) => { if (drag && e.pointerId === drag.pointerId) clearDrag(); }}
+                        onLostPointerCapture={() => { if (drag) clearDrag(); }}
                         style={{
                           borderLeft: `4px solid ${ACTION_COLORS[row.action]}`,
+                          opacity: isDragging ? 0.4 : 1,
+                          boxShadow: insertionShadow,
+                          cursor: drag ? (isDragging ? "grabbing" : "grab") : undefined,
+                          userSelect: drag ? "none" : undefined,
                         }}
                       >
                         {/* Main row */}
@@ -802,7 +869,8 @@ export function InteractiveRebaseModal({
                           </div>
                         ) : null}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Pushed commits warning */}
@@ -1072,11 +1140,13 @@ export function InteractiveRebaseModal({
               <button
                 type="button"
                 onClick={startRebase}
-                disabled={busy || todoRows.length === 0 || !baseRef.trim() || (!hasChanges && !isReordered)}
+                disabled={busy || todoRows.length === 0 || (!hasChanges && !isReordered)}
                 title={
-                  !hasChanges && !isReordered
-                    ? "No changes to apply. Modify at least one commit action, message, author, or reorder commits."
-                    : "Start interactive rebase"
+                  todoRows.length === 0
+                    ? "Load commits first"
+                    : !hasChanges && !isReordered
+                      ? "No changes to apply. Modify at least one commit action, message, author, or reorder commits."
+                      : "Start interactive rebase"
                 }
               >
                 Start rebase
