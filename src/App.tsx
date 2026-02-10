@@ -133,6 +133,7 @@ import { PullPredictModal } from "./components/modals/PullPredictModal";
 import { CreateBranchModal } from "./components/modals/CreateBranchModal";
 import { CreateTagModal } from "./components/modals/CreateTagModal";
 import { CherryPickModal } from "./components/modals/CherryPickModal";
+import { InteractiveRebaseModal } from "./components/modals/InteractiveRebaseModal";
 import { PatchModal } from "./components/modals/PatchModal";
 import { PatchPredictModal } from "./components/modals/PatchPredictModal";
 import { FilePreviewModal } from "./components/modals/FilePreviewModal";
@@ -508,6 +509,8 @@ function App() {
   const [cherryPickCommitLoading, setCherryPickCommitLoading] = useState(false);
   const [cherryPickCommitError, setCherryPickCommitError] = useState("");
   const [cherryPickCommitSummary, setCherryPickCommitSummary] = useState<GitCommitSummary | null>(null);
+
+  const [interactiveRebaseOpen, setInteractiveRebaseOpen] = useState(false);
 
   const [patchOpen, setPatchOpen] = useState(false);
   const [patchMode, setPatchMode] = useState<"export" | "apply">("apply");
@@ -2252,6 +2255,11 @@ function App() {
     setCherryPickCommitError("");
     setCherryPickCommitSummary(null);
     setCherryPickOpen(true);
+  }
+
+  function openInteractiveRebaseDialog() {
+    if (!activeRepoPath) return;
+    setInteractiveRebaseOpen(true);
   }
 
   async function openExportPatchDialog() {
@@ -4381,6 +4389,7 @@ function App() {
               openMergeBranchesDialog={openMergeBranchesDialog}
               openResetDialog={openResetDialog}
               openCherryPickDialog={openCherryPickDialog}
+              openInteractiveRebaseDialog={openInteractiveRebaseDialog}
               openExportPatchDialog={openExportPatchDialog}
               openApplyPatchDialog={openApplyPatchDialog}
               menuItem={menuItem}
@@ -4946,6 +4955,25 @@ function App() {
           activeRepoPath={activeRepoPath}
           onClose={() => setCherryPickOpen(false)}
           onRun={() => void runCherryPick()}
+        />
+      ) : null}
+
+      {interactiveRebaseOpen && activeRepoPath ? (
+        <InteractiveRebaseModal
+          open={interactiveRebaseOpen}
+          repoPath={activeRepoPath}
+          selectedHash={selectedHash}
+          onClose={() => setInteractiveRebaseOpen(false)}
+          onComplete={async () => {
+            setInteractiveRebaseOpen(false);
+            await loadRepo(activeRepoPath);
+          }}
+          onConflicts={(files, operation) => {
+            setPullConflictOperation(operation);
+            setPullConflictFiles(files);
+            setPullConflictMessage("");
+            setPullConflictOpen(true);
+          }}
         />
       ) : null}
 

@@ -22,4 +22,6 @@ pub(crate) mod conflicts;
 
 pub(crate) mod patches;
 
+pub(crate) mod interactive_rebase;
+
 pub(crate) mod startup;

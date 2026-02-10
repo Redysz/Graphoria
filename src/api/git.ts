@@ -13,6 +13,10 @@ import type {
   GitStatusSummary,
   GitStashEntry,
   GitTagTarget,
+  InteractiveRebaseCommitInfo,
+  InteractiveRebaseResult,
+  InteractiveRebaseStatusInfo,
+  InteractiveRebaseTodoEntry,
   PullPredictGraphResult,
   PullPredictResult,
   PullResult,
@@ -464,4 +468,24 @@ export function gitLaunchExternalDiffCommit(params: {
 
 export function gitSetUserIdentity(params: { scope: "repo" | "global"; userName: string; userEmail: string; repoPath?: string }) {
   return invoke<void>("git_set_user_identity", params);
+}
+
+export function gitInteractiveRebaseCommits(params: { repoPath: string; base?: string }) {
+  return invoke<InteractiveRebaseCommitInfo[]>("git_interactive_rebase_commits", params);
+}
+
+export function gitInteractiveRebaseStart(params: { repoPath: string; base: string; todoEntries: InteractiveRebaseTodoEntry[] }) {
+  return invoke<InteractiveRebaseResult>("git_interactive_rebase_start", params);
+}
+
+export function gitInteractiveRebaseAmend(params: { repoPath: string; message?: string; author?: string }) {
+  return invoke<string>("git_interactive_rebase_amend", params);
+}
+
+export function gitInteractiveRebaseContinue(repoPath: string) {
+  return invoke<InteractiveRebaseResult>("git_interactive_rebase_continue", { repoPath });
+}
+
+export function gitInteractiveRebaseStatus(repoPath: string) {
+  return invoke<InteractiveRebaseStatusInfo>("git_interactive_rebase_status", { repoPath });
 }

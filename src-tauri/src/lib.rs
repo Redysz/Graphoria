@@ -145,6 +145,14 @@ use commands::patches::{
     git_predict_patch_file,
 };
 
+use commands::interactive_rebase::{
+    git_interactive_rebase_commits,
+    git_interactive_rebase_start,
+    git_interactive_rebase_amend,
+    git_interactive_rebase_continue,
+    git_interactive_rebase_status,
+};
+
 use commands::startup::{get_open_on_startup, set_open_on_startup};
 
 #[tauri::command]
@@ -2592,7 +2600,12 @@ pub fn run() {
             git_list_tag_targets,
             git_list_remote_tag_targets,
             git_push_tags,
-            git_rename_tag
+            git_rename_tag,
+            git_interactive_rebase_commits,
+            git_interactive_rebase_start,
+            git_interactive_rebase_amend,
+            git_interactive_rebase_continue,
+            git_interactive_rebase_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
