@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import type { GitStashEntry } from "../types/git";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type StashContextMenuState = {
   x: number;
@@ -36,6 +37,8 @@ export function StashContextMenu(props: {
     onClose,
     setError,
   } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 

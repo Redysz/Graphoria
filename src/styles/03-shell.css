@@ -67,6 +67,16 @@
   white-space: nowrap;
 }
 
+.menuDropdown.menuCompact {
+  gap: 2px;
+  padding: 4px;
+}
+.menuDropdown.menuCompact button {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
 .menuShortcut {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;

@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type TagContextMenuState = {
   x: number;
@@ -21,6 +22,8 @@ export function TagContextMenu(props: {
   deleteRemoteTag: (tag: string) => void;
 }) {
   const { menu, menuRef, onClose, focusTagOnGraph, focusTagOnCommits, renameTag, pushTagToOrigin, deleteLocalTag, deleteRemoteTag } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 
