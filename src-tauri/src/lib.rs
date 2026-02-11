@@ -1037,11 +1037,35 @@ fn has_staged_changes(repo_path: &str) -> Result<bool, String> {
 }
 
 fn is_rebase_in_progress(repo_path: &str) -> bool {
-    git_command_in_repo(repo_path)
-        .args(["rev-parse", "--verify", "-q", "REBASE_HEAD"])
+    let git_dir = git_command_in_repo(repo_path)
+        .args(["rev-parse", "--git-dir"])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .to_string(),
+                )
+            } else {
+                None
+            }
+        });
+
+    if let Some(gd) = git_dir {
+        let gd = std::path::Path::new(&gd);
+        let abs = if gd.is_absolute() {
+            gd.to_path_buf()
+        } else {
+            std::path::Path::new(repo_path).join(gd)
+        };
+        if abs.join("rebase-merge").is_dir() || abs.join("rebase-apply").is_dir() {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn is_merge_in_progress(repo_path: &str) -> bool {
@@ -1910,6 +1934,178 @@ fn git_rebase_abort(repo_path: String) -> Result<String, String> {
     run_git(&repo_path, &["rebase", "--abort"])
 }
 
+/// Find the fork point of the current branch by computing merge-base with
+/// every other branch ref and picking the one closest to HEAD.
+fn find_branch_fork_point(repo_path: &str) -> Option<String> {
+    let head = run_git(repo_path, &["rev-parse", "HEAD"]).ok()?;
+    let head = head.trim();
+    if head.is_empty() {
+        return None;
+    }
+
+    let refs_raw = run_git(
+        repo_path,
+        &["for-each-ref", "--format=%(objectname)", "refs/heads/", "refs/remotes/"],
+    )
+    .unwrap_or_default();
+
+    let mut best_fork: Option<String> = None;
+    let mut best_distance: u64 = u64::MAX;
+
+    for tip in refs_raw.lines() {
+        let tip = tip.trim();
+        if tip.is_empty() || tip == head {
+            continue;
+        }
+
+        let mb = match run_git(repo_path, &["merge-base", head, tip]) {
+            Ok(s) => s.trim().to_string(),
+            Err(_) => continue,
+        };
+        if mb.is_empty() || mb == head {
+            continue;
+        }
+
+        let count_str = match run_git(repo_path, &["rev-list", "--count", &format!("{}..HEAD", mb)])
+        {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let count: u64 = count_str.trim().parse().unwrap_or(u64::MAX);
+        if count > 0 && count < best_distance {
+            best_distance = count;
+            best_fork = Some(mb);
+        }
+    }
+
+    best_fork
+}
+
+#[tauri::command]
+fn git_rebase_onto(repo_path: String, target: String) -> Result<PullResult, String> {
+    ensure_is_git_worktree(&repo_path)?;
+
+    with_repo_git_lock(&repo_path, || {
+        let head_name = run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .unwrap_or_else(|_| String::from("(detached)"));
+        if head_name == "(detached)" {
+            return Err(String::from("Cannot rebase from detached HEAD."));
+        }
+
+        if is_rebase_in_progress(&repo_path) {
+            let conflict_files = list_unmerged_files(&repo_path);
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: String::from("rebase"),
+                message: String::from("A rebase is already in progress."),
+                conflict_files,
+            });
+        }
+        if is_merge_in_progress(&repo_path) {
+            return Err(String::from("A merge is in progress. Resolve it first."));
+        }
+
+        let target = target.trim();
+        if target.is_empty() {
+            return Err(String::from("Target commit/branch is empty."));
+        }
+
+        // Resolve target to a full hash
+        let target_hash = run_git(&repo_path, &["rev-parse", target])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        // Check if target is already an ancestor of HEAD.
+        // If so, plain `git rebase <target>` would replay shared commits and
+        // effectively do nothing.  We need `--onto` with a fork-point to move
+        // only the branch-unique commits.
+        let target_is_ancestor = if !target_hash.is_empty() {
+            git_command_in_repo(&repo_path)
+                .args(["merge-base", "--is-ancestor", target_hash.as_str(), "HEAD"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let rebase_args: Vec<String> = if target_is_ancestor {
+            // Find where the current branch forks from other branches
+            if let Some(fork) = find_branch_fork_point(&repo_path) {
+                if fork == target_hash {
+                    // Already based here – nothing to do
+                    return Ok(PullResult {
+                        status: String::from("ok"),
+                        operation: String::from("rebase"),
+                        message: String::from("Current branch is already based on this commit."),
+                        conflict_files: Vec::new(),
+                    });
+                }
+                vec![
+                    String::from("rebase"),
+                    String::from("--autostash"),
+                    String::from("--onto"),
+                    target.to_string(),
+                    fork,
+                ]
+            } else {
+                // Fallback: cannot detect fork point, try plain rebase
+                vec![
+                    String::from("rebase"),
+                    String::from("--autostash"),
+                    target.to_string(),
+                ]
+            }
+        } else {
+            vec![
+                String::from("rebase"),
+                String::from("--autostash"),
+                target.to_string(),
+            ]
+        };
+
+        let args_ref: Vec<&str> = rebase_args.iter().map(|s| s.as_str()).collect();
+        let (ok, stdout, stderr) = run_git_status(&repo_path, &args_ref)?;
+        if ok {
+            // Clean up stale REBASE_HEAD that git rebase --onto can leave behind
+            let _ = run_git(&repo_path, &["update-ref", "-d", "REBASE_HEAD"]);
+            return Ok(PullResult {
+                status: String::from("ok"),
+                operation: String::from("rebase"),
+                message: if !stdout.is_empty() { stdout } else { stderr },
+                conflict_files: Vec::new(),
+            });
+        }
+
+        let message = if !stderr.is_empty() {
+            stderr.clone()
+        } else {
+            stdout.clone()
+        };
+
+        let rebase_in_progress = is_rebase_in_progress(&repo_path);
+        let mut conflict_files = list_unmerged_files(&repo_path);
+        if conflict_files.is_empty() {
+            conflict_files = parse_conflict_files(message.as_str());
+        }
+
+        if rebase_in_progress || !conflict_files.is_empty() {
+            return Ok(PullResult {
+                status: String::from("conflicts"),
+                operation: String::from("rebase"),
+                message,
+                conflict_files,
+            });
+        }
+
+        Err(if !stderr.is_empty() {
+            stderr
+        } else {
+            stdout
+        })
+    })
+}
+
 #[tauri::command]
 fn git_pull_predict(
     repo_path: String,
@@ -2577,6 +2773,7 @@ pub fn run() {
             git_merge_abort,
             git_rebase_continue,
             git_rebase_abort,
+            git_rebase_onto,
             git_rebase_skip,
             git_conflict_state,
             git_conflict_file_versions,

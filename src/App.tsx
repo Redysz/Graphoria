@@ -88,6 +88,7 @@ import {
   gitPullPredictGraph,
   gitPullRebase,
   gitRebaseAbort,
+  gitRebaseOnto,
   gitRebaseSkip,
   gitRenameBranch,
   gitReset,
@@ -3563,6 +3564,27 @@ function App() {
     focusHashOnCommits(root);
   }
 
+  async function rebaseCurrentBranchHere(target: string) {
+    if (!activeRepoPath) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await gitRebaseOnto({ repoPath: activeRepoPath, target });
+      if (res.status === "conflicts") {
+        setPullConflictOperation("rebase");
+        setPullConflictFiles(res.conflict_files || []);
+        setPullConflictMessage(res.message || "");
+        setPullConflictOpen(true);
+        return;
+      }
+      await loadRepo(activeRepoPath);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function startPull(op: "merge" | "rebase") {
     if (!activeRepoPath) return;
     setPullBusy(true);
@@ -3840,6 +3862,32 @@ function App() {
     return () => {
       window.clearTimeout(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepoPath, loading]);
+
+  useEffect(() => {
+    if (!activeRepoPath) return;
+    if (loading) return;
+    if (pullConflictOpen || conflictResolverOpen || continueAfterConflictsOpen) return;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const st = await gitConflictState(activeRepoPath);
+          if (!st.in_progress) return;
+          const op = (st.operation ?? "").trim() as "merge" | "rebase" | "cherry-pick" | "am" | "";
+          if (!op) return;
+          const validOps: Array<typeof pullConflictOperation> = ["merge", "rebase", "cherry-pick", "am"];
+          if (!validOps.includes(op as any)) return;
+          setPullConflictOperation(op as typeof pullConflictOperation);
+          setPullConflictFiles((st.files ?? []).map((f: any) => (f?.path ?? "").trim()).filter(Boolean));
+          setPullConflictMessage(`A ${op} is in progress. You can continue or abort it.`);
+          setPullConflictOpen(true);
+        } catch {
+          // ignore – not critical
+        }
+      })();
+    }, 500);
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoPath, loading]);
 
@@ -4894,6 +4942,10 @@ function App() {
           setCommitContextMenu(null);
           void resetHardAndCheckoutBranch(branch);
         }}
+        onRebaseHere={(hash) => {
+          setCommitContextMenu(null);
+          void rebaseCurrentBranchHere(hash);
+        }}
       />
 
       <WorkingFileContextMenu
@@ -5093,6 +5145,7 @@ function App() {
         checkoutLocalBranch={(branch) => void checkoutRefBadgeLocalBranch(branch)}
         checkoutRemoteBranch={(remoteBranch) => void checkoutRefBadgeRemoteBranch(remoteBranch)}
         mergeIntoCurrentBranch={(ref) => void mergeIntoCurrentBranch(ref)}
+        onRebaseHere={(ref) => void rebaseCurrentBranchHere(ref)}
       />
 
       {renameBranchOpen ? (
@@ -5172,6 +5225,7 @@ function App() {
         setError={setError}
         openCreateBranchDialog={openCreateBranchDialog}
         mergeIntoCurrentBranch={(branch) => void mergeIntoCurrentBranch(branch)}
+        onRebaseHere={(branch) => void rebaseCurrentBranchHere(branch)}
       />
 
       <StashContextMenu

@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type CommitContextMenuState = {
   x: number;
@@ -34,6 +35,8 @@ export function CommitContextMenu(props: {
 
   onCheckoutBranch: (branch: string) => void;
   onResetHardAndCheckoutBranch: (branch: string) => void;
+
+  onRebaseHere: (hash: string) => void;
 }) {
   const {
     menu,
@@ -58,7 +61,10 @@ export function CommitContextMenu(props: {
     onReset,
     onCheckoutBranch,
     onResetHardAndCheckoutBranch,
+    onRebaseHere,
   } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 
@@ -114,6 +120,15 @@ export function CommitContextMenu(props: {
       </button>
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onReset("hard", menu.hash)}>
         git reset --hard here
+      </button>
+
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading || isDetached || isHead}
+        title={isDetached ? "Cannot rebase from detached HEAD" : isHead ? "Already at HEAD" : `Rebase current branch onto ${menu.hash.slice(0, 8)}`}
+        onClick={() => onRebaseHere(menu.hash)}
+      >
+        Rebase current branch here
       </button>
 
       {isDetached && commitContextBranchesLoading ? (

@@ -294,6 +294,10 @@ export function gitRebaseAbort(repoPath: string) {
   return invoke<string>("git_rebase_abort", { repoPath });
 }
 
+export function gitRebaseOnto(params: { repoPath: string; target: string }) {
+  return invoke<PullResult>("git_rebase_onto", params);
+}
+
 export function gitRebaseSkip(repoPath: string) {
   return invoke<string>("git_rebase_skip", { repoPath });
 }

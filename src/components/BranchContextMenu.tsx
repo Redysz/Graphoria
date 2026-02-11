@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type BranchContextMenuState = {
   x: number;
@@ -19,6 +20,7 @@ export function BranchContextMenu(props: {
   setError: (msg: string) => void;
   openCreateBranchDialog: (at: string) => void;
   mergeIntoCurrentBranch: (branch: string) => void | Promise<void>;
+  onRebaseHere: (branch: string) => void;
 }) {
   const {
     menu,
@@ -31,7 +33,10 @@ export function BranchContextMenu(props: {
     setError,
     openCreateBranchDialog,
     mergeIntoCurrentBranch,
+    onRebaseHere,
   } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 
@@ -83,6 +88,20 @@ export function BranchContextMenu(props: {
         }}
       >
         Create branch…
+      </button>
+
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading || !currentBranchName.trim() || menu.branch.trim() === currentBranchName.trim()}
+        title={!currentBranchName.trim() ? "Cannot rebase from detached HEAD" : `Rebase current branch onto '${menu.branch}'`}
+        onClick={() => {
+          if (!activeRepoPath) return;
+          const branch = menu.branch;
+          onClose();
+          onRebaseHere(branch);
+        }}
+      >
+        Rebase current branch here
       </button>
     </div>
   );

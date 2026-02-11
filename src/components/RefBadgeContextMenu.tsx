@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type RefBadgeContextMenuState = {
   x: number;
@@ -19,6 +20,7 @@ export function RefBadgeContextMenu(props: {
   checkoutLocalBranch: (branch: string) => void;
   checkoutRemoteBranch: (remoteBranch: string) => void;
   mergeIntoCurrentBranch: (ref: string) => void | Promise<void>;
+  onRebaseHere: (ref: string) => void;
 }) {
   const {
     menu,
@@ -30,7 +32,10 @@ export function RefBadgeContextMenu(props: {
     checkoutLocalBranch,
     checkoutRemoteBranch,
     mergeIntoCurrentBranch,
+    onRebaseHere,
   } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 
@@ -84,6 +89,20 @@ export function RefBadgeContextMenu(props: {
           Checkout remote branch
         </button>
       )}
+
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading || !currentBranchName.trim() || menu.label.trim() === currentBranchName.trim()}
+        title={!currentBranchName.trim() ? "Cannot rebase from detached HEAD" : `Rebase current branch onto '${menu.label}'`}
+        onClick={() => {
+          if (!activeRepoPath) return;
+          const ref = menu.label;
+          onClose();
+          onRebaseHere(ref);
+        }}
+      >
+        Rebase current branch here
+      </button>
     </div>
   );
 }

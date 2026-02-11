@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useContextMenuFit } from "../hooks/useContextMenuFit";
 
 export type WorkingFileContextMenuState = {
   x: number;
@@ -38,6 +39,8 @@ export function WorkingFileContextMenu(props: {
     onRevealInExplorer,
     onAddToGitignore,
   } = props;
+
+  useContextMenuFit(menuRef, menu);
 
   if (!menu) return null;
 
