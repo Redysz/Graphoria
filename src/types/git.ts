@@ -135,6 +135,47 @@ export type GitPatchPredictResult = {
   files: string[];
 };
 
+export type InteractiveRebaseCommitInfo = {
+  hash: string;
+  short_hash: string;
+  subject: string;
+  body: string;
+  author_name: string;
+  author_email: string;
+  author_date: string;
+  is_pushed: boolean;
+};
+
+export type InteractiveRebaseTodoEntry = {
+  action: "pick" | "reword" | "edit" | "squash" | "fixup" | "drop";
+  hash: string;
+  short_hash?: string;
+  original_message?: string;
+  new_message?: string;
+  new_author?: string;
+};
+
+export type InteractiveRebaseResult = {
+  status: "completed" | "stopped_at_edit" | "conflicts" | "error";
+  message: string;
+  current_step?: number | null;
+  total_steps?: number | null;
+  stopped_commit_hash?: string | null;
+  stopped_commit_message?: string | null;
+  stopped_commit_author_name?: string | null;
+  stopped_commit_author_email?: string | null;
+  conflict_files: string[];
+};
+
+export type InteractiveRebaseStatusInfo = {
+  in_progress: boolean;
+  current_step?: number | null;
+  total_steps?: number | null;
+  stopped_commit_hash?: string | null;
+  stopped_commit_message?: string | null;
+  conflict_files: string[];
+};
+
 export type GitPatchPredictGraphResult = {
   ok: boolean;
   message: string;

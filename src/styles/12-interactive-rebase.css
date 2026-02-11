@@ -1,0 +1,61 @@
+.irRebaseList {
+  display: flex;
+  flex-direction: column;
+}
+
+.irRebaseRow {
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+
+.irRebaseRow:last-child {
+  border-bottom: none;
+}
+
+.irRebaseRow:hover {
+  background: rgba(47, 111, 237, 0.04);
+}
+
+
+.irRebaseRowMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  min-height: 38px;
+}
+
+.irDragHandle {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.irActionSelect {
+  outline: none;
+}
+
+.irActionDropdown {
+  animation: irDropdownFadeIn 0.12s ease-out;
+}
+
+@keyframes irDropdownFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.irRebaseRowExpanded {
+  padding: 8px 10px 10px 46px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+:root[data-theme="dark"] .irRebaseRowExpanded {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme="dark"] .irRebaseRow:hover {
+  background: rgba(47, 111, 237, 0.07);
+}
+

@@ -28,6 +28,7 @@ export function CommandsMenu(props: {
   openMergeBranchesDialog: () => void | Promise<void>;
   openResetDialog: () => void;
   openCherryPickDialog: () => void | Promise<void>;
+  openInteractiveRebaseDialog: () => void;
 
   openExportPatchDialog: () => void | Promise<void>;
   openApplyPatchDialog: () => void | Promise<void>;
@@ -58,6 +59,7 @@ export function CommandsMenu(props: {
     openMergeBranchesDialog,
     openResetDialog,
     openCherryPickDialog,
+    openInteractiveRebaseDialog,
     openExportPatchDialog,
     openApplyPatchDialog,
     menuItem,
@@ -220,6 +222,18 @@ export function CommandsMenu(props: {
             title={!activeRepoPath ? "No repository" : "Cherry-pick a commit onto a target branch"}
           >
             {menuItem("Cherry-pick…", shortcutLabel("cmd.cherryPick"))}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCommandsMenuOpen(false);
+              openInteractiveRebaseDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Interactive rebase: reorder, reword, edit, squash, fixup, or drop commits"}
+          >
+            {menuItem("Interactive rebase…")}
           </button>
 
           <div style={{ height: 1, background: "var(--border)", margin: "8px 0" }} />
