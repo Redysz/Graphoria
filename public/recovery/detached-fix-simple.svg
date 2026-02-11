@@ -1,20 +1,47 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <defs>
+    <marker id="ah1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7a8bb1"/></marker>
+    <marker id="ah1r" markerWidth="10" markerHeight="8" refX="10" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8" fill="#b00020"/></marker>
+  </defs>
   <rect width="560" height="280" rx="16" fill="#ffffff"/>
   <rect x="16" y="16" width="528" height="248" rx="12" fill="#f5f7fb" stroke="#d7dbe3"/>
 
-  <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">Detached HEAD</text>
-  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#3b4250">Fix: checkout branch that points at current commit</text>
+  <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">No changes — just checkout</text>
+  <text x="28" y="62" font-family="Inter,Segoe UI,Arial" font-size="11" fill="#3b4250">HEAD is detached. Move it back to the branch.</text>
 
-  <line x1="120" y1="110" x2="420" y2="110" stroke="#b7c2d6" stroke-width="2"/>
-  <circle cx="140" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="230" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="320" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="410" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <!-- Commit line -->
+  <line x1="80" y1="130" x2="160" y2="130" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah1)"/>
+  <line x1="190" y1="130" x2="270" y2="130" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah1)"/>
+  <line x1="300" y1="130" x2="380" y2="130" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah1)"/>
 
-  <text x="406" y="144" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#2f6fed">branch</text>
-  <path d="M404 118 L404 132" stroke="#2f6fed" stroke-width="3"/>
+  <!-- Nodes A B C D -->
+  <rect x="52" y="114" width="36" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="70" y="135" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">A</text>
 
-  <text x="324" y="88" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">HEAD</text>
-  <path d="M330 92 L330 100" stroke="#b00020" stroke-width="3"/>
-  <text x="268" y="212" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git checkout &lt;branch&gt;</text>
+  <rect x="162" y="114" width="36" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="180" y="135" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">B</text>
+
+  <rect x="272" y="114" width="36" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="290" y="135" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">C</text>
+
+  <rect x="382" y="114" width="36" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="400" y="135" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">D</text>
+
+  <!-- HEAD label at C -->
+  <rect x="264" y="78" width="52" height="22" rx="4" fill="#fce4e4" stroke="#b00020" stroke-width="1.5"/>
+  <text x="290" y="93" font-family="Inter,Segoe UI,Arial" font-size="11" font-weight="700" fill="#b00020" text-anchor="middle">HEAD</text>
+  <line x1="290" y1="100" x2="290" y2="114" stroke="#b00020" stroke-width="1.5"/>
+
+  <!-- branch label at D -->
+  <rect x="365" y="152" width="70" height="22" rx="4" fill="#dbe8fd" stroke="#2f6fed" stroke-width="1.5"/>
+  <text x="400" y="167" font-family="Inter,Segoe UI,Arial" font-size="11" font-weight="700" fill="#2f6fed" text-anchor="middle">branch</text>
+  <line x1="400" y1="146" x2="400" y2="152" stroke="#2f6fed" stroke-width="1.5"/>
+
+  <!-- Arrow: HEAD moves from C to D -->
+  <path d="M310 86 C 340 76, 370 76, 395 86" stroke="#b00020" stroke-width="2" fill="none" stroke-dasharray="5,3" marker-end="url(#ah1r)"/>
+  <text x="352" y="74" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="600" fill="#b00020" text-anchor="middle">moves</text>
+
+  <!-- Command -->
+  <rect x="140" y="202" width="280" height="28" rx="6" fill="#f0f2f5" stroke="#d7dbe3" stroke-width="1"/>
+  <text x="280" y="221" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#0f0f0f" text-anchor="middle">git checkout &lt;branch&gt;</text>
 </svg>

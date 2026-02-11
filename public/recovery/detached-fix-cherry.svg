@@ -1,22 +1,64 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <defs>
+    <marker id="ah4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7a8bb1"/></marker>
+    <marker id="ah4o" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#e67e22"/></marker>
+    <marker id="ah4b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2f6fed"/></marker>
+  </defs>
   <rect width="560" height="280" rx="16" fill="#ffffff"/>
   <rect x="16" y="16" width="528" height="248" rx="12" fill="#f5f7fb" stroke="#d7dbe3"/>
 
   <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">Save changes with cherry-pick</text>
-  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#3b4250">Commit on detached HEAD, then cherry-pick onto branch</text>
+  <text x="28" y="62" font-family="Inter,Segoe UI,Arial" font-size="11" fill="#3b4250">Commit on detached HEAD, then cherry-pick onto branch.</text>
 
-  <line x1="120" y1="110" x2="420" y2="110" stroke="#b7c2d6" stroke-width="2"/>
-  <circle cx="140" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="230" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="320" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="410" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <!-- Main commit line A→B→C→D -->
+  <line x1="62" y1="120" x2="120" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah4)"/>
+  <line x1="148" y1="120" x2="208" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah4)"/>
+  <line x1="236" y1="120" x2="296" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah4)"/>
 
-  <circle cx="330" cy="148" r="8" fill="#b00020"/>
-  <path d="M330 118 L330 140" stroke="#b00020" stroke-width="3"/>
-  <text x="286" y="92" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">commit</text>
+  <!-- Nodes A B C D -->
+  <rect x="36" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="53" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">A</text>
 
-  <path d="M330 148 C 360 160, 380 150, 404 132" stroke="#2f6fed" stroke-width="3" fill="none"/>
-  <text x="392" y="144" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#2f6fed">branch</text>
+  <rect x="122" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="139" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">B</text>
 
-  <text x="170" y="212" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git reflog  →  git cherry-pick &lt;hash&gt;</text>
+  <rect x="210" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="227" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">C</text>
+
+  <rect x="298" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="315" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">D</text>
+
+  <!-- HEAD label at C (detached) -->
+  <rect x="201" y="76" width="52" height="20" rx="4" fill="#fce4e4" stroke="#b00020" stroke-width="1.5"/>
+  <text x="227" y="90" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#b00020" text-anchor="middle">HEAD</text>
+  <line x1="227" y1="96" x2="227" y2="104" stroke="#b00020" stroke-width="1.5"/>
+
+  <!-- branch label at D -->
+  <rect x="289" y="142" width="52" height="20" rx="4" fill="#dbe8fd" stroke="#2f6fed" stroke-width="1.5"/>
+  <text x="315" y="156" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#2f6fed" text-anchor="middle">branch</text>
+  <line x1="315" y1="136" x2="315" y2="142" stroke="#2f6fed" stroke-width="1.5"/>
+
+  <!-- Commit E on detached HEAD (below C, grayed/abandoned) -->
+  <line x1="237" y1="136" x2="258" y2="172" stroke="#c0c0c0" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <rect x="258" y="168" width="30" height="26" rx="6" fill="#f0f0f0" stroke="#b0b0b0" stroke-width="1.5" opacity="0.5"/>
+  <text x="273" y="186" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="600" fill="#999" text-anchor="middle" opacity="0.6">E</text>
+  <text x="273" y="206" font-family="Inter,Segoe UI,Arial" font-size="8" font-weight="600" fill="#999" text-anchor="middle" opacity="0.6">abandoned</text>
+
+  <!-- Cherry-pick arrow: curved dashed from E to E' -->
+  <path d="M288 178 C 350 200, 410 190, 450 140" stroke="#e67e22" stroke-width="2" fill="none" stroke-dasharray="5,3" marker-end="url(#ah4o)"/>
+  <text x="390" y="194" font-family="Inter,Segoe UI,Arial" font-size="9" font-weight="700" fill="#e67e22" text-anchor="middle">cherry-pick</text>
+
+  <!-- E' node (cherry-picked copy on branch, after D) -->
+  <line x1="334" y1="120" x2="450" y2="120" stroke="#2f6fed" stroke-width="2" marker-end="url(#ah4b)"/>
+  <rect x="452" y="104" width="34" height="32" rx="7" fill="#fef3e2" stroke="#e67e22" stroke-width="2"/>
+  <text x="469" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#c65d00" text-anchor="middle">E'</text>
+
+  <!-- New HEAD+branch at E' -->
+  <rect x="428" y="76" width="82" height="20" rx="4" fill="#dbe8fd" stroke="#2f6fed" stroke-width="1.5"/>
+  <text x="469" y="90" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#2f6fed" text-anchor="middle">HEAD → branch</text>
+  <line x1="469" y1="96" x2="469" y2="104" stroke="#2f6fed" stroke-width="1.5"/>
+
+  <!-- Commands -->
+  <rect x="68" y="232" width="424" height="24" rx="6" fill="#f0f2f5" stroke="#d7dbe3" stroke-width="1"/>
+  <text x="280" y="249" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#0f0f0f" text-anchor="middle">commit → reset --hard → checkout &lt;branch&gt; → cherry-pick &lt;hash&gt;</text>
 </svg>
