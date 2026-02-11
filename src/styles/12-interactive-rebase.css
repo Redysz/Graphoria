@@ -36,10 +36,13 @@
   outline: none;
 }
 
-.irActionSelect option {
-  background: var(--panel) !important;
-  color: var(--fg) !important;
-  font-weight: 600;
+.irActionDropdown {
+  animation: irDropdownFadeIn 0.12s ease-out;
+}
+
+@keyframes irDropdownFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .irRebaseRowExpanded {

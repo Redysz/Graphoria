@@ -37,6 +37,8 @@ pub(crate) struct InteractiveRebaseResult {
     pub total_steps: Option<u32>,
     pub stopped_commit_hash: Option<String>,
     pub stopped_commit_message: Option<String>,
+    pub stopped_commit_author_name: Option<String>,
+    pub stopped_commit_author_email: Option<String>,
     pub conflict_files: Vec<String>,
 }
 
@@ -124,6 +126,23 @@ fn no_editor_env(cmd: &mut std::process::Command) {
     }
 }
 
+/// Fetch author name and email from HEAD commit.
+fn get_head_author(repo_path: &str) -> (Option<String>, Option<String>) {
+    let out = crate::git_command_in_repo(repo_path)
+        .args(["--no-pager", "log", "-1", "--pretty=format:%an\x1f%ae", "HEAD"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let parts: Vec<&str> = s.trim().splitn(2, '\x1f').collect();
+            let name = parts.first().map(|s| s.to_string()).filter(|s| !s.is_empty());
+            let email = parts.get(1).map(|s| s.to_string()).filter(|s| !s.is_empty());
+            (name, email)
+        }
+        _ => (None, None),
+    }
+}
+
 fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
     let in_progress = crate::is_rebase_in_progress(repo_path);
     if !in_progress {
@@ -137,6 +156,8 @@ fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
                 total_steps: None,
                 stopped_commit_hash: None,
                 stopped_commit_message: None,
+                stopped_commit_author_name: None,
+                stopped_commit_author_email: None,
                 conflict_files: Vec::new(),
             };
         }
@@ -155,6 +176,8 @@ fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let (author_name, author_email) = get_head_author(repo_path);
+
     let conflict_files = crate::list_unmerged_files(repo_path);
 
     if !conflict_files.is_empty() {
@@ -165,6 +188,8 @@ fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
             total_steps,
             stopped_commit_hash: stopped_sha,
             stopped_commit_message: stopped_message,
+            stopped_commit_author_name: author_name,
+            stopped_commit_author_email: author_email,
             conflict_files,
         };
     }
@@ -176,6 +201,8 @@ fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
         total_steps,
         stopped_commit_hash: stopped_sha,
         stopped_commit_message: stopped_message,
+        stopped_commit_author_name: author_name,
+        stopped_commit_author_email: author_email,
         conflict_files: Vec::new(),
     }
 }
@@ -393,8 +420,6 @@ pub(crate) fn git_interactive_rebase_start(
                 "squash" => {
                     let msg = entry.original_message.as_deref().unwrap_or("");
                     todo_lines.push(format!("fixup {} {}", hash, msg));
-                    // We use fixup to avoid editor. If user wants combined message,
-                    // we handle it by amending the target commit.
                 }
                 "fixup" => {
                     let msg = entry.original_message.as_deref().unwrap_or("");
@@ -418,33 +443,56 @@ pub(crate) fn git_interactive_rebase_start(
         }
 
         if todo_lines.is_empty() {
-            return Err(String::from("All commits were dropped. Nothing to rebase."));
+            // All commits dropped — reset branch to the base commit
+            let out = crate::git_command_in_repo(&repo_path)
+                .args(["reset", "--hard", base.trim()])
+                .output()
+                .map_err(|e| format!("Failed to reset to base: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                return Err(format!("Failed to drop commits: {stderr}"));
+            }
+            return Ok(InteractiveRebaseResult {
+                status: String::from("completed"),
+                message: String::from("All selected commits were dropped."),
+                current_step: None,
+                total_steps: None,
+                stopped_commit_hash: None,
+                stopped_commit_message: None,
+                stopped_commit_author_name: None,
+                stopped_commit_author_email: None,
+                conflict_files: Vec::new(),
+            });
         }
 
         let todo_content = todo_lines.join("\n") + "\n";
 
-        // Write todo to a temp file
+        // Write a shell script that overwrites git's todo file ($1) with our
+        // custom content using a heredoc.  This is more robust on Windows than
+        // the previous `cp` approach because it avoids path-translation and
+        // file-locking edge cases in MSYS2.
         let temp_dir = std::env::temp_dir().join(format!("graphoria_rebase_{}", std::process::id()));
         fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
-        let todo_file = temp_dir.join("todo.txt");
-        fs::write(&todo_file, &todo_content)
-            .map_err(|e| format!("Failed to write todo file: {e}"))?;
+        let mut script = String::from("#!/bin/sh\ncat > \"$1\" << 'GRAPHORIA_REBASE_TODO_EOF'\n");
+        script.push_str(&todo_content);
+        if !script.ends_with('\n') {
+            script.push('\n');
+        }
+        script.push_str("GRAPHORIA_REBASE_TODO_EOF\n");
+
+        let script_file = temp_dir.join("seq_editor.sh");
+        fs::write(&script_file, script.as_bytes())
+            .map_err(|e| format!("Failed to write seq editor script: {e}"))?;
 
         // Persist reword map to .git/ so continue can use it later
         save_reword_map(&repo_path, &reword_map);
 
-        // Build the sequence editor command that copies our todo file
-        let todo_path_str = todo_file.to_string_lossy().to_string();
+        let script_path_str = script_file.to_string_lossy().replace('\\', "/");
+        let seq_editor = format!("sh '{}'", script_path_str.replace('\'', "'\\''"));
 
-        #[cfg(target_os = "windows")]
-        let seq_editor = format!(
-            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Copy-Item -Path '{}' -Destination $args[0] -Force\"",
-            todo_path_str.replace('\'', "''")
-        );
-
-        #[cfg(not(target_os = "windows"))]
-        let seq_editor = format!("cp '{}' \"$1\"", todo_path_str.replace('\'', "'\\''"));
+        eprintln!("[graphoria rebase] base={} todo_lines={} seq_editor={}", base.trim(), todo_lines.len(), &seq_editor);
+        eprintln!("[graphoria rebase] todo:\n{}", &todo_content);
 
         // Start the rebase
         let mut cmd = crate::git_command_in_repo(&repo_path);
@@ -459,10 +507,17 @@ pub(crate) fn git_interactive_rebase_start(
         let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
         let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
 
+        eprintln!("[graphoria rebase] exit={} stdout={:?} stderr={:?}", out.status, &stdout, &stderr);
+
         // Clean up temp dir
         let _ = fs::remove_dir_all(&temp_dir);
 
-        if out.status.success() {
+        // Some git versions exit 0 even when stopping at an `edit` action.
+        // Always check if the rebase is still in progress before declaring completion.
+        let still_in_progress = rebase_merge_dir(&repo_path).is_some()
+            || crate::is_rebase_in_progress(&repo_path);
+
+        if out.status.success() && !still_in_progress {
             cleanup_reword_map(&repo_path);
             return Ok(InteractiveRebaseResult {
                 status: String::from("completed"),
@@ -471,6 +526,8 @@ pub(crate) fn git_interactive_rebase_start(
                 total_steps: None,
                 stopped_commit_hash: None,
                 stopped_commit_message: None,
+                stopped_commit_author_name: None,
+                stopped_commit_author_email: None,
                 conflict_files: Vec::new(),
             });
         }
@@ -505,6 +562,8 @@ fn auto_amend_reword_loop(
                 total_steps: None,
                 stopped_commit_hash: None,
                 stopped_commit_message: None,
+                stopped_commit_author_name: None,
+                stopped_commit_author_email: None,
                 conflict_files: Vec::new(),
             });
         }
@@ -583,6 +642,8 @@ fn auto_amend_reword_loop(
                             total_steps: None,
                             stopped_commit_hash: None,
                             stopped_commit_message: None,
+                            stopped_commit_author_name: None,
+                            stopped_commit_author_email: None,
                             conflict_files: Vec::new(),
                         });
                     }
@@ -691,6 +752,8 @@ pub(crate) fn git_interactive_rebase_continue(
                     total_steps: None,
                     stopped_commit_hash: None,
                     stopped_commit_message: None,
+                    stopped_commit_author_name: None,
+                    stopped_commit_author_email: None,
                     conflict_files: Vec::new(),
                 });
             }
@@ -746,4 +809,116 @@ pub(crate) fn git_interactive_rebase_status(
         stopped_commit_message: stopped_message,
         conflict_files,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Edit-stop file operations
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct EditStopFileEntry {
+    pub status: String,   // "A", "M", "D", "R", "C", etc.
+    pub path: String,
+    pub old_path: Option<String>, // for renames
+}
+
+/// List files changed in the currently stopped commit (HEAD vs HEAD^).
+#[tauri::command]
+pub(crate) fn git_interactive_rebase_edit_files(
+    repo_path: String,
+) -> Result<Vec<EditStopFileEntry>, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let out = crate::git_command_in_repo(&repo_path)
+        .args(["diff-tree", "--no-commit-id", "-r", "--name-status", "HEAD"])
+        .output()
+        .map_err(|e| format!("Failed to list commit files: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        return Err(format!("git diff-tree failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.len() < 2 { continue; }
+        let status_raw = parts[0].to_string();
+        // For renames/copies: status is like R100, path is "old\tnew"
+        let (status, path, old_path) = if status_raw.starts_with('R') || status_raw.starts_with('C') {
+            let old = parts.get(1).unwrap_or(&"").to_string();
+            let new = parts.get(2).unwrap_or(&"").to_string();
+            (status_raw.chars().next().unwrap_or('R').to_string(), new, Some(old))
+        } else {
+            (status_raw, parts[1].to_string(), None)
+        };
+        entries.push(EditStopFileEntry { status, path, old_path });
+    }
+    Ok(entries)
+}
+
+/// Read a file from the working tree.
+#[tauri::command]
+pub(crate) fn git_read_working_file(
+    repo_path: String,
+    path: String,
+) -> Result<String, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    let full = std::path::Path::new(&repo_path).join(&path);
+    std::fs::read_to_string(&full)
+        .map_err(|e| format!("Failed to read {}: {e}", path))
+}
+
+/// Write content to a file in the working tree.
+#[tauri::command]
+pub(crate) fn git_write_working_file(
+    repo_path: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    let full = std::path::Path::new(&repo_path).join(&path);
+    // Ensure parent dir exists
+    if let Some(parent) = full.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&full, content.as_bytes())
+        .map_err(|e| format!("Failed to write {}: {e}", path))
+}
+
+/// Rename a file in the working tree using git mv.
+#[tauri::command]
+pub(crate) fn git_rename_working_file(
+    repo_path: String,
+    old_path: String,
+    new_path: String,
+) -> Result<(), String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::run_git(&repo_path, &["mv", &old_path, &new_path])?;
+    Ok(())
+}
+
+/// Delete a file from the working tree using git rm.
+#[tauri::command]
+pub(crate) fn git_delete_working_file(
+    repo_path: String,
+    path: String,
+) -> Result<(), String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::run_git(&repo_path, &["rm", "-f", &path])?;
+    Ok(())
+}
+
+/// Discard changes to a file during edit stop (restore from HEAD).
+#[tauri::command]
+pub(crate) fn git_restore_working_file(
+    repo_path: String,
+    path: String,
+) -> Result<(), String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::run_git(&repo_path, &["checkout", "HEAD", "--", &path])?;
+    Ok(())
 }

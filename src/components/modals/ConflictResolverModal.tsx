@@ -193,10 +193,17 @@ function makeLogicalLineLabelsForConflictText(text: string) {
   return labels;
 }
 
+function isUnmergedStatus(s: string) {
+  const t = (s ?? "").replace(/\s+/g, "");
+  if (t.includes("U")) return true;
+  if (t === "AA" || t === "DD") return true;
+  return false;
+}
+
 function formatConflictStatus(status: string) {
   const s = (status ?? "").trim();
   if (!s) return "U";
-  if (s.includes("U")) return "U";
+  if (isUnmergedStatus(s)) return "U";
   return s[0] ?? "U";
 }
 
@@ -808,6 +815,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
           setRenameKeepName(null);
         }
 
+        // Auto-switch to Result tab when Diff view can't show side-by-side
+        if (next.conflictKind === "text" && (!next.ours.trim() || !next.theirs.trim())) {
+          setEditMode("result");
+        }
+
         if (!initialWorkingByPathRef.current[selectedPath]) {
           initialWorkingByPathRef.current[selectedPath] = next.working;
         }
@@ -843,8 +855,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
 
   const hasUnmergedFiles = useMemo(() => {
     for (const f of files) {
-      const s = (f.status ?? "").replace(/\s+/g, "");
-      if (s.includes("U")) return true;
+      if (isUnmergedStatus(f.status)) return true;
     }
     return false;
   }, [files]);
@@ -1206,7 +1217,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     if (!p) return false;
     const f = files.find((x) => x.path === p);
     if (!f) return false;
-    return (f.status ?? "").replace(/\s+/g, "").includes("U");
+    return isUnmergedStatus(f.status);
   }, [files, selectedPath]);
 
   useEffect(() => {
@@ -1229,7 +1240,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
   const nextUnmergedPath = useMemo(() => {
     const p = selectedPath.trim();
     const list = displayFiles;
-    const isUnmerged = (st: string) => (st ?? "").replace(/\s+/g, "").includes("U");
+    const isUnmerged = (st: string) => isUnmergedStatus(st);
     const idx = p ? list.findIndex((f) => f.path === p) : -1;
     for (let i = Math.max(0, idx + 1); i < list.length; i++) {
       const f = list[i];
@@ -1271,7 +1282,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     try {
       for (const f of files) {
         const s = (f.status ?? "").replace(/\s+/g, "");
-        if (!s.includes("U")) continue;
+        if (!isUnmergedStatus(s)) continue;
         const initial = initialWorkingByPathRef.current[f.path];
         if (typeof initial !== "string") continue;
         await gitConflictApply({ repoPath, path: f.path, content: initial });
@@ -2061,8 +2072,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       beforeMount={(monaco) => {
                         ensureConflictThemes(monaco);
                       }}
+                      onChange={(v: string | undefined) => {
+                        setResultDraft(v ?? "");
+                      }}
                       options={{
-                        readOnly: true,
+                        readOnly: false,
                         contextmenu: false,
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,

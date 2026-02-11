@@ -162,6 +162,8 @@ export type InteractiveRebaseResult = {
   total_steps?: number | null;
   stopped_commit_hash?: string | null;
   stopped_commit_message?: string | null;
+  stopped_commit_author_name?: string | null;
+  stopped_commit_author_email?: string | null;
   conflict_files: string[];
 };
 

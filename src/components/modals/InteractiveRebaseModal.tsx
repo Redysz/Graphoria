@@ -14,7 +14,14 @@ import {
   gitStatus,
   gitStagePaths,
   gitUnstagePaths,
+  gitInteractiveRebaseEditFiles,
+  gitReadWorkingFile,
+  gitWriteWorkingFile,
+  gitRenameWorkingFile,
+  gitDeleteWorkingFile,
+  gitRestoreWorkingFile,
 } from "../../api/git";
+import type { EditStopFileEntry } from "../../api/git";
 
 type RebaseAction = "pick" | "reword" | "edit" | "squash" | "fixup" | "drop";
 
@@ -31,8 +38,8 @@ const ACTION_DESCRIPTIONS: Record<RebaseAction, string> = {
   pick: "Use commit as-is",
   reword: "Change commit message / author",
   edit: "Stop to amend files, message, or author",
-  squash: "Fold into preceding non-squash/fixup commit (discard this message)",
-  fixup: "Fold into preceding non-squash/fixup commit (discard this message)",
+  squash: "Fold into the nearest older non-squash/fixup commit",
+  fixup: "Fold into the nearest older non-squash/fixup commit (discard message)",
   drop: "Remove this commit entirely",
 };
 
@@ -83,6 +90,16 @@ export function InteractiveRebaseModal({
   const [commits, setCommits] = useState<InteractiveRebaseCommitInfo[]>([]);
   const [todoRows, setTodoRows] = useState<TodoRow[]>([]);
   const [loadingCommits, setLoadingCommits] = useState(false);
+  const [originalOldestHash, setOriginalOldestHash] = useState("");
+  const [allCommits, setAllCommits] = useState<InteractiveRebaseCommitInfo[]>([]);
+  const [includePushed, setIncludePushed] = useState(false);
+
+  // Confirmation dialog
+  const [showConfirmation, setShowConfirmation] = useState(false);
+
+  // Autocomplete for base ref
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const baseRefWrapperRef = useRef<HTMLDivElement>(null);
 
   // Running/edit state
   const [result, setResult] = useState<InteractiveRebaseResult | null>(null);
@@ -92,10 +109,36 @@ export function InteractiveRebaseModal({
   const [editStatusEntries, setEditStatusEntries] = useState<GitStatusEntry[]>([]);
   const [editStatusLoading, setEditStatusLoading] = useState(false);
 
+  // Edit-stop file management
+  const [commitFiles, setCommitFiles] = useState<EditStopFileEntry[]>([]);
+  const [commitFilesLoading, setCommitFilesLoading] = useState(false);
+  const [expandedFile, setExpandedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>("");
+  const [fileContentLoading, setFileContentLoading] = useState(false);
+  const [fileContentDirty, setFileContentDirty] = useState(false);
+  const [renamingFile, setRenamingFile] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
   // Drag state (pointer events, like QuickButtonsModal)
   const [drag, setDrag] = useState<{ idx: number; pointerId: number } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<"before" | "after">("before");
+
+  // Custom dropdown state
+  const [openDropdown, setOpenDropdown] = useState<number | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpenDropdown(null);
+      }
+    };
+    document.addEventListener("pointerdown", handler, true);
+    return () => document.removeEventListener("pointerdown", handler, true);
+  }, [openDropdown]);
 
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +171,109 @@ export function InteractiveRebaseModal({
     } catch { /* ignore */ }
   }, [repoPath, refreshEditStatus]);
 
+  // Load files changed in the stopped commit
+  const loadCommitFiles = useCallback(async () => {
+    if (!repoPath) return;
+    setCommitFilesLoading(true);
+    try {
+      const files = await gitInteractiveRebaseEditFiles(repoPath);
+      setCommitFiles(files);
+    } catch {
+      setCommitFiles([]);
+    } finally {
+      setCommitFilesLoading(false);
+    }
+  }, [repoPath]);
+
+  // Open file in inline editor
+  const openFileEditor = useCallback(async (path: string) => {
+    if (!repoPath) return;
+    if (expandedFile === path) {
+      setExpandedFile(null);
+      return;
+    }
+    setFileContentLoading(true);
+    setExpandedFile(path);
+    setFileContentDirty(false);
+    try {
+      const content = await gitReadWorkingFile({ repoPath, path });
+      setFileContent(content);
+    } catch (e) {
+      setFileContent(`/* Error reading file: ${typeof e === "string" ? e : JSON.stringify(e)} */`);
+    } finally {
+      setFileContentLoading(false);
+    }
+  }, [repoPath, expandedFile]);
+
+  // Save file content
+  const saveFileContent = useCallback(async (path: string) => {
+    if (!repoPath) return;
+    try {
+      await gitWriteWorkingFile({ repoPath, path, content: fileContent });
+      await gitStagePaths({ repoPath, paths: [path] });
+      setFileContentDirty(false);
+      await refreshEditStatus();
+    } catch { /* ignore */ }
+  }, [repoPath, fileContent, refreshEditStatus]);
+
+  // Discard file changes (restore from HEAD)
+  const restoreFile = useCallback(async (path: string) => {
+    if (!repoPath) return;
+    try {
+      await gitRestoreWorkingFile({ repoPath, path });
+      await refreshEditStatus();
+      // Reload content if expanded
+      if (expandedFile === path) {
+        const content = await gitReadWorkingFile({ repoPath, path });
+        setFileContent(content);
+        setFileContentDirty(false);
+      }
+    } catch { /* ignore */ }
+  }, [repoPath, expandedFile, refreshEditStatus]);
+
+  // Delete file
+  const deleteFile = useCallback(async (path: string) => {
+    if (!repoPath) return;
+    try {
+      await gitDeleteWorkingFile({ repoPath, path });
+      if (expandedFile === path) setExpandedFile(null);
+      await refreshEditStatus();
+      await loadCommitFiles();
+    } catch { /* ignore */ }
+  }, [repoPath, expandedFile, refreshEditStatus, loadCommitFiles]);
+
+  // Rename file
+  const renameFile = useCallback(async (oldPath: string, newPath: string) => {
+    if (!repoPath || !newPath.trim() || newPath === oldPath) return;
+    try {
+      await gitRenameWorkingFile({ repoPath, oldPath, newPath: newPath.trim() });
+      setRenamingFile(null);
+      if (expandedFile === oldPath) setExpandedFile(newPath.trim());
+      await refreshEditStatus();
+      await loadCommitFiles();
+    } catch { /* ignore */ }
+  }, [repoPath, expandedFile, refreshEditStatus, loadCommitFiles]);
+
+  // Build todoRows from a commit list (newest-first)
+  const buildTodoRows = useCallback((newestFirst: InteractiveRebaseCommitInfo[]) => {
+    // Find oldest commit (last in newest-first list) for base computation
+    if (newestFirst.length > 0) {
+      setOriginalOldestHash(newestFirst[newestFirst.length - 1].hash);
+    }
+    setCommits(newestFirst);
+    setTodoRows(
+      newestFirst.map((c, i) => ({
+        id: `${c.hash}_${i}`,
+        commit: c,
+        action: "pick" as RebaseAction,
+        newMessage: c.subject,
+        newAuthorName: c.author_name,
+        newAuthorEmail: c.author_email,
+        expanded: false,
+      })),
+    );
+  }, []);
+
   // Load commits on open or when baseRef changes
   const loadCommits = useCallback(async () => {
     if (!repoPath) return;
@@ -138,43 +284,92 @@ export function InteractiveRebaseModal({
       const res = await gitInteractiveRebaseCommits({ repoPath, base });
       // Display newest-first (reverse backend's oldest-first order)
       const reversed = [...res].reverse();
-      setCommits(reversed);
-      setTodoRows(
-        reversed.map((c, i) => ({
-          id: `${c.hash}_${i}`,
-          commit: c,
-          action: "pick" as RebaseAction,
-          newMessage: c.subject,
-          newAuthorName: c.author_name,
-          newAuthorEmail: c.author_email,
-          expanded: false,
-        })),
-      );
+      setAllCommits(reversed);
+      // Apply pushed filter
+      const filtered = includePushed ? reversed : reversed.filter((c) => !c.is_pushed);
+      buildTodoRows(filtered.length > 0 ? filtered : reversed);
+      // If all are pushed, show all anyway (nothing to filter)
+      if (!includePushed && filtered.length === 0 && reversed.length > 0) {
+        setIncludePushed(true);
+      }
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setLoadingCommits(false);
     }
-  }, [repoPath, baseRef]);
+  }, [repoPath, baseRef, includePushed, buildTodoRows]);
+
+  // Toggle pushed commits visibility
+  const toggleIncludePushed = useCallback(() => {
+    setIncludePushed((prev) => {
+      const next = !prev;
+      const filtered = next ? allCommits : allCommits.filter((c) => !c.is_pushed);
+      buildTodoRows(filtered.length > 0 ? filtered : allCommits);
+      return next;
+    });
+  }, [allCommits, buildTodoRows]);
 
   useEffect(() => {
     if (!open) return;
+    // Reset state when modal opens
+    setPhase("planning");
+    setError("");
+    setResult(null);
+    setShowConfirmation(false);
+    setCommitFiles([]);
+    setExpandedFile(null);
+    setFileContentDirty(false);
+    setEditStatusEntries([]);
     // Set default base to selected hash if available, otherwise let backend determine
-    if (selectedHash && !baseRef) {
+    if (selectedHash) {
       setBaseRef(selectedHash);
+    } else {
+      setBaseRef("");
     }
     void loadCommits();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Autocomplete suggestions for base ref input
+  const baseRefSuggestions = useMemo(() => {
+    const q = baseRef.trim().toLowerCase();
+    if (q.length < 3 || allCommits.length === 0) return [];
+    return allCommits.filter(
+      (c) =>
+        c.hash.toLowerCase().startsWith(q) ||
+        c.short_hash.toLowerCase().startsWith(q) ||
+        c.subject.toLowerCase().includes(q),
+    ).slice(0, 12);
+  }, [baseRef, allCommits]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const handler = (e: MouseEvent) => {
+      if (baseRefWrapperRef.current && !baseRefWrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("pointerdown", handler, true);
+    return () => document.removeEventListener("pointerdown", handler, true);
+  }, [showSuggestions]);
 
   // Reload when baseRef changes manually
   const handleBaseRefChange = useCallback(
     (val: string) => {
       setBaseRef(val);
+      if (val.trim().length >= 3) setShowSuggestions(true);
+      else setShowSuggestions(false);
     },
     [],
   );
 
+  const handleSelectSuggestion = useCallback((hash: string) => {
+    setBaseRef(hash);
+    setShowSuggestions(false);
+  }, []);
+
   const handleLoadCommits = useCallback(() => {
+    setShowSuggestions(false);
     void loadCommits();
   }, [loadCommits]);
 
@@ -187,6 +382,45 @@ export function InteractiveRebaseModal({
       // If switching to reword, expand
       if (action === "reword") row.expanded = true;
       next[idx] = row;
+
+      // When squash is selected, auto-expand the target commit and pre-fill
+      // with the combined commit messages (like standard git squash behaviour).
+      if (action === "squash") {
+        // Find target: nearest older non-squash/fixup/drop (below in display)
+        let targetIdx = -1;
+        for (let j = idx + 1; j < next.length; j++) {
+          const a = next[j].action;
+          if (a !== "squash" && a !== "fixup" && a !== "drop") {
+            targetIdx = j;
+            break;
+          }
+        }
+        if (targetIdx >= 0) {
+          const target = next[targetIdx];
+          // Only pre-fill if target's message hasn't been manually edited
+          if (target.newMessage === target.commit.subject) {
+            // Collect messages: target (oldest) first, then squash commits
+            // oldest-to-newest (= reverse display order from targetIdx-1 down to 0)
+            const msgs: string[] = [target.commit.subject];
+            for (let j = targetIdx - 1; j >= 0; j--) {
+              const a = next[j].action;
+              if (a === "squash") {
+                msgs.push(next[j].commit.subject);
+              } else if (a === "fixup" || a === "drop") {
+                // fixup discards message; drop is omitted — skip
+              } else {
+                break; // reached a different group
+              }
+            }
+            next[targetIdx] = {
+              ...next[targetIdx],
+              expanded: true,
+              newMessage: msgs.join("\n\n"),
+            };
+          }
+        }
+      }
+
       return next;
     });
   }, []);
@@ -233,7 +467,7 @@ export function InteractiveRebaseModal({
     (e: React.PointerEvent, idx: number) => {
       if (e.button !== 0) return;
       const t = e.target instanceof HTMLElement ? e.target : null;
-      if (t?.closest("button") || t?.closest("select") || t?.closest("input") || t?.closest("textarea")) return;
+      if (t?.closest("button") || t?.closest("select") || t?.closest("input") || t?.closest("textarea") || t?.closest(".irActionDropdown")) return;
       const el = e.currentTarget as HTMLElement;
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       setDrag({ idx, pointerId: e.pointerId });
@@ -314,9 +548,32 @@ export function InteractiveRebaseModal({
     );
   }, []);
 
-  // Start rebase
-  const startRebase = useCallback(async () => {
+  // Confirmation warnings
+  const pushedCount = useMemo(() => todoRows.filter((r) => r.commit.is_pushed).length, [todoRows]);
+  const hiddenPushedCount = useMemo(() => {
+    if (includePushed) return 0;
+    return allCommits.filter((c) => c.is_pushed).length;
+  }, [allCommits, includePushed]);
+
+  const confirmationWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    if (todoRows.length > 5) {
+      warnings.push(
+        `You are about to perform ${todoRows.length} interactive rebase steps. Consider limiting the number of commits using the "Base commit / ref" input field.`,
+      );
+    }
+    if (pushedCount > 0) {
+      warnings.push(
+        `You are about to rebase ${pushedCount} commit${pushedCount > 1 ? "s" : ""} that ${pushedCount > 1 ? "have" : "has"} already been pushed. This will rewrite published history and may cause issues for collaborators.`,
+      );
+    }
+    return warnings;
+  }, [todoRows.length, pushedCount]);
+
+  // Actually execute the rebase
+  const executeRebase = useCallback(async () => {
     if (!repoPath || todoRows.length === 0) return;
+    setShowConfirmation(false);
     setBusy(true);
     setError("");
     setPhase("running");
@@ -325,10 +582,9 @@ export function InteractiveRebaseModal({
       // Determine effective base: user-specified or parent of oldest commit
       let base = baseRef.trim();
       if (!base) {
-        // Compute from oldest commit (last in display = newest-first)
-        const oldest = todoRows[todoRows.length - 1];
-        if (oldest) {
-          base = `${oldest.commit.hash}^`;
+        const oldestHash = originalOldestHash || todoRows[todoRows.length - 1]?.commit.hash;
+        if (oldestHash) {
+          base = `${oldestHash}^`;
         } else {
           setError("Please specify a base commit/ref or load commits first.");
           setPhase("planning");
@@ -337,10 +593,10 @@ export function InteractiveRebaseModal({
         }
       }
 
-      // Validate: first non-drop commit cannot be squash/fixup
-      const firstNonDrop = todoRows.find((r) => r.action !== "drop");
-      if (firstNonDrop && (firstNonDrop.action === "squash" || firstNonDrop.action === "fixup")) {
-        setError("The first commit cannot be squash or fixup — there is no preceding commit to fold into.");
+      // Validate: the oldest non-drop commit (last in display, first in todo) cannot be squash/fixup
+      const oldestNonDrop = [...todoRows].reverse().find((r) => r.action !== "drop");
+      if (oldestNonDrop && (oldestNonDrop.action === "squash" || oldestNonDrop.action === "fixup")) {
+        setError("The oldest commit cannot be squash or fixup — there is no preceding commit to fold into.");
         setPhase("planning");
         setBusy(false);
         return;
@@ -355,7 +611,6 @@ export function InteractiveRebaseModal({
         const newAuthor = `${row.newAuthorName} <${row.newAuthorEmail}>`;
         const authorChanged = newAuthor !== origAuthor;
 
-        // Auto-upgrade pick to reword if message or author was changed
         let effectiveAction = row.action;
         if (effectiveAction === "pick" && (msgChanged || authorChanged)) {
           effectiveAction = "reword";
@@ -394,7 +649,16 @@ export function InteractiveRebaseModal({
     } finally {
       setBusy(false);
     }
-  }, [repoPath, baseRef, todoRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [repoPath, baseRef, todoRows, originalOldestHash]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start rebase — show confirmation if needed, otherwise execute directly
+  const startRebase = useCallback(() => {
+    if (confirmationWarnings.length > 0) {
+      setShowConfirmation(true);
+    } else {
+      void executeRebase();
+    }
+  }, [confirmationWarnings, executeRebase]);
 
   const handleRebaseResult = useCallback(
     (res: InteractiveRebaseResult) => {
@@ -405,10 +669,13 @@ export function InteractiveRebaseModal({
         case "stopped_at_edit":
           setPhase("edit_stop");
           setEditMessage(res.stopped_commit_message ?? "");
-          setEditAuthorName("");
-          setEditAuthorEmail("");
+          setEditAuthorName(res.stopped_commit_author_name ?? "");
+          setEditAuthorEmail(res.stopped_commit_author_email ?? "");
           setEditStatusEntries([]);
+          setExpandedFile(null);
+          setFileContentDirty(false);
           void refreshEditStatus();
+          void loadCommitFiles();
           break;
         case "conflicts":
           setPhase("conflicts");
@@ -514,7 +781,9 @@ export function InteractiveRebaseModal({
         className="modal"
         style={{
           width: "min(1000px, 96vw)",
+          minHeight: 420,
           maxHeight: "min(88vh, 900px)",
+          position: "relative",
         }}
       >
         {/* Header */}
@@ -562,14 +831,71 @@ export function InteractiveRebaseModal({
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    value={baseRef}
-                    onChange={(e) => handleBaseRefChange(e.target.value)}
-                    className="modalInput mono"
-                    disabled={busy || loadingCommits}
-                    placeholder="e.g. origin/main, HEAD~5, abc1234"
-                    style={{ flex: 1 }}
-                  />
+                  <div ref={baseRefWrapperRef} style={{ flex: 1, position: "relative" }}>
+                    <input
+                      value={baseRef}
+                      onChange={(e) => handleBaseRefChange(e.target.value)}
+                      onFocus={() => { if (baseRef.trim().length >= 3) setShowSuggestions(true); }}
+                      className="modalInput mono"
+                      disabled={busy || loadingCommits}
+                      placeholder="e.g. origin/main, HEAD~5, abc1234, or commit message"
+                      style={{ width: "100%" }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setShowSuggestions(false);
+                        if (e.key === "Enter") { setShowSuggestions(false); handleLoadCommits(); }
+                      }}
+                    />
+                    {showSuggestions && baseRefSuggestions.length > 0 ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "100%",
+                          left: 0,
+                          right: 0,
+                          zIndex: 999,
+                          marginTop: 2,
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "var(--panel)",
+                          boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                          padding: "4px 0",
+                          maxHeight: 240,
+                          overflowY: "auto",
+                        }}
+                      >
+                        {baseRefSuggestions.map((c) => (
+                          <div
+                            key={c.hash}
+                            onClick={() => handleSelectSuggestion(c.hash)}
+                            style={{
+                              padding: "5px 10px",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              fontSize: 12,
+                              color: "var(--fg)",
+                              transition: "background 0.1s",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--accent-bg, rgba(47,111,237,0.08))"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                          >
+                            <span className="mono" style={{ opacity: 0.6, flexShrink: 0, fontSize: 11 }}>
+                              {c.short_hash}
+                            </span>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                              {c.subject}
+                            </span>
+                            {c.is_pushed ? (
+                              <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(244,67,54,0.8)", flexShrink: 0 }}>
+                                PUSHED
+                              </span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     onClick={handleLoadCommits}
@@ -607,12 +933,31 @@ export function InteractiveRebaseModal({
                         </span>
                       ) : null}
                     </div>
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {hiddenPushedCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={toggleIncludePushed}
+                          disabled={busy}
+                          title="Show pushed commits in the list"
+                        >
+                          + {hiddenPushedCount} pushed
+                        </button>
+                      ) : null}
+                      {includePushed && allCommits.some((c) => c.is_pushed) ? (
+                        <button
+                          type="button"
+                          onClick={toggleIncludePushed}
+                          disabled={busy}
+                          title="Hide pushed commits from the list"
+                        >
+                          Hide pushed
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={resetAllToPick}
                         disabled={busy}
-                        style={{ fontSize: 11, padding: "3px 8px" }}
                         title="Reset all actions to Pick"
                       >
                         Reset all
@@ -644,8 +989,8 @@ export function InteractiveRebaseModal({
                     data-ir-list="commits"
                     className="irRebaseList"
                     style={{
-                      maxHeight: "min(50vh, 480px)",
-                      overflowY: "auto",
+                      maxHeight: todoRows.length > 5 ? "min(50vh, 480px)" : undefined,
+                      overflowY: todoRows.length > 5 ? "auto" : "visible",
                       border: "1px solid var(--border)",
                       borderRadius: 10,
                     }}
@@ -710,35 +1055,93 @@ export function InteractiveRebaseModal({
                             </button>
                           </div>
 
-                          {/* Action selector */}
-                          <select
-                            value={row.action}
-                            onChange={(e) => setRowAction(idx, e.target.value as RebaseAction)}
-                            disabled={busy}
-                            className="irActionSelect"
-                            style={{
-                              background: ACTION_COLORS[row.action],
-                              color: "#fff",
-                              fontWeight: 700,
-                              border: "none",
-                              borderRadius: 6,
-                              padding: "3px 6px",
-                              fontSize: 12,
-                              cursor: "pointer",
-                              minWidth: 80,
-                            }}
-                            title={ACTION_DESCRIPTIONS[row.action]}
-                          >
-                            {(Object.keys(ACTION_LABELS) as RebaseAction[]).map((a) => (
-                              <option
-                                key={a}
-                                value={a}
-                                disabled={(a === "squash" || a === "fixup") && idx === 0}
+                          {/* Action selector (custom dropdown) */}
+                          <div style={{ position: "relative" }} ref={openDropdown === idx ? dropdownRef : undefined}>
+                            <button
+                              type="button"
+                              onClick={() => { if (!busy) setOpenDropdown(openDropdown === idx ? null : idx); }}
+                              disabled={busy}
+                              className="irActionSelect"
+                              style={{
+                                background: ACTION_COLORS[row.action],
+                                color: "#fff",
+                                fontWeight: 700,
+                                border: "none",
+                                borderRadius: 6,
+                                padding: "3px 8px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                                minWidth: 80,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                              title={ACTION_DESCRIPTIONS[row.action]}
+                            >
+                              {ACTION_LABELS[row.action]}
+                              <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+                            </button>
+                            {openDropdown === idx ? (
+                              <div
+                                className="irActionDropdown"
+                                style={{
+                                  position: "absolute",
+                                  top: "100%",
+                                  left: 0,
+                                  zIndex: 999,
+                                  minWidth: 260,
+                                  whiteSpace: "nowrap",
+                                  marginTop: 2,
+                                  borderRadius: 8,
+                                  border: "1px solid var(--border)",
+                                  background: "var(--panel)",
+                                  boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                                  padding: "4px 0",
+                                  overflow: "hidden",
+                                }}
                               >
-                                {ACTION_LABELS[a]}
-                              </option>
-                            ))}
-                          </select>
+                                {(Object.keys(ACTION_LABELS) as RebaseAction[]).map((a) => {
+                                  const disabled = (a === "squash" || a === "fixup") && idx === todoRows.length - 1;
+                                  const selected = a === row.action;
+                                  return (
+                                    <div
+                                      key={a}
+                                      onClick={() => { if (!disabled) { setRowAction(idx, a); setOpenDropdown(null); } }}
+                                      style={{
+                                        padding: "5px 10px",
+                                        cursor: disabled ? "not-allowed" : "pointer",
+                                        opacity: disabled ? 0.35 : 1,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        background: selected ? "var(--accent-bg, rgba(47,111,237,0.08))" : "transparent",
+                                        fontWeight: selected ? 700 : 500,
+                                        fontSize: 12,
+                                        color: "var(--fg)",
+                                        transition: "background 0.1s",
+                                      }}
+                                      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "var(--accent-bg, rgba(47,111,237,0.08))"; }}
+                                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = selected ? "var(--accent-bg, rgba(47,111,237,0.08))" : "transparent"; }}
+                                    >
+                                      <span
+                                        style={{
+                                          width: 10,
+                                          height: 10,
+                                          borderRadius: 3,
+                                          background: ACTION_COLORS[a],
+                                          flexShrink: 0,
+                                        }}
+                                      />
+                                      <span style={{ fontWeight: 700 }}>{ACTION_LABELS[a]}</span>
+                                      <span style={{ opacity: 0.5, fontSize: 11, flex: 1, textAlign: "right" }}>
+                                        {ACTION_DESCRIPTIONS[a]}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
 
                           {/* Commit info */}
                           <div style={{ flex: 1, minWidth: 0, display: "grid", gap: 2 }}>
@@ -778,11 +1181,11 @@ export function InteractiveRebaseModal({
                             </div>
                             <div style={{ fontSize: 11, opacity: 0.55 }}>
                               {row.commit.author_name} &lt;{row.commit.author_email}&gt;
-                              {(row.action === "squash" || row.action === "fixup") && idx > 0 ? (
+                              {(row.action === "squash" || row.action === "fixup") && idx < todoRows.length - 1 ? (
                                 <span style={{ marginLeft: 8, fontStyle: "italic", opacity: 0.7 }}>
                                   → folds into{" "}
                                   {(() => {
-                                    for (let j = idx - 1; j >= 0; j--) {
+                                    for (let j = idx + 1; j < todoRows.length; j++) {
                                       if (todoRows[j].action !== "squash" && todoRows[j].action !== "fixup" && todoRows[j].action !== "drop") {
                                         return todoRows[j].commit.short_hash;
                                       }
@@ -907,20 +1310,26 @@ export function InteractiveRebaseModal({
           {/* ── EDIT STOP PHASE ────────────────────────────────── */}
           {phase === "edit_stop" ? (
             <div style={{ display: "grid", gap: 12 }}>
-              <div style={{ fontWeight: 800, opacity: 0.8, fontSize: 14 }}>
-                Rebase stopped for editing
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontWeight: 800, opacity: 0.8, fontSize: 14 }}>
+                  Rebase stopped for editing
+                </div>
+                {result?.current_step != null && result?.total_steps != null ? (
+                  <span style={{ fontSize: 12, opacity: 0.5 }}>
+                    Step {result.current_step} of {result.total_steps}
+                  </span>
+                ) : null}
+                {result?.stopped_commit_hash ? (
+                  <span className="mono" style={{ fontSize: 11, opacity: 0.5 }}>
+                    {result.stopped_commit_hash.substring(0, 10)}
+                  </span>
+                ) : null}
+                {result?.stopped_commit_message ? (
+                  <span style={{ fontSize: 11, opacity: 0.45, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>
+                    {result.stopped_commit_message}
+                  </span>
+                ) : null}
               </div>
-              {result?.current_step != null && result?.total_steps != null ? (
-                <div style={{ fontSize: 12, opacity: 0.6 }}>
-                  Step {result.current_step} of {result.total_steps}
-                </div>
-              ) : null}
-              {result?.stopped_commit_hash ? (
-                <div style={{ fontSize: 12, opacity: 0.6 }}>
-                  Commit:{" "}
-                  <span className="mono">{result.stopped_commit_hash.substring(0, 10)}</span>
-                </div>
-              ) : null}
 
               <div style={{ display: "grid", gap: 4 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
@@ -931,17 +1340,14 @@ export function InteractiveRebaseModal({
                   onChange={(e) => setEditMessage(e.target.value)}
                   disabled={busy}
                   className="modalTextarea mono"
-                  rows={5}
+                  rows={3}
                   style={{ fontSize: 12 }}
                 />
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div style={{ display: "grid", gap: 4 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
-                    Author name{" "}
-                    <span style={{ fontWeight: 400, opacity: 0.5 }}>(leave empty to keep)</span>
-                  </label>
+                  <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>Author name</label>
                   <input
                     value={editAuthorName}
                     onChange={(e) => setEditAuthorName(e.target.value)}
@@ -951,10 +1357,7 @@ export function InteractiveRebaseModal({
                   />
                 </div>
                 <div style={{ display: "grid", gap: 4 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
-                    Author email{" "}
-                    <span style={{ fontWeight: 400, opacity: 0.5 }}>(leave empty to keep)</span>
-                  </label>
+                  <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>Author email</label>
                   <input
                     value={editAuthorEmail}
                     onChange={(e) => setEditAuthorEmail(e.target.value)}
@@ -965,7 +1368,173 @@ export function InteractiveRebaseModal({
                 </div>
               </div>
 
-              {/* Changed files list */}
+              {/* Files in this commit */}
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
+                    Files in this commit
+                  </label>
+                  {commitFilesLoading ? <span className="miniSpinner" /> : null}
+                </div>
+                {commitFiles.length > 0 ? (
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  >
+                    {commitFiles.map((cf) => {
+                      const isExpanded = expandedFile === cf.path;
+                      const isRenaming = renamingFile === cf.path;
+                      const statusColor =
+                        cf.status === "A" ? "rgba(76,175,80,0.8)" :
+                        cf.status === "D" ? "rgba(244,67,54,0.8)" :
+                        cf.status === "R" ? "rgba(33,150,243,0.8)" :
+                        "rgba(255,152,0,0.8)";
+                      return (
+                        <div key={cf.path}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "5px 8px",
+                              borderBottom: "1px solid var(--border)",
+                            }}
+                          >
+                            <span
+                              className="mono"
+                              style={{ fontSize: 11, fontWeight: 700, width: 16, textAlign: "center", color: statusColor, flexShrink: 0 }}
+                            >
+                              {cf.status}
+                            </span>
+                            {isRenaming ? (
+                              <input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") void renameFile(cf.path, renameValue);
+                                  if (e.key === "Escape") setRenamingFile(null);
+                                }}
+                                autoFocus
+                                className="modalInput mono"
+                                style={{ flex: 1, fontSize: 11, padding: "2px 6px" }}
+                              />
+                            ) : (
+                              <span
+                                className="mono"
+                                style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, cursor: cf.status !== "D" ? "pointer" : undefined, textDecoration: cf.status !== "D" ? "underline dotted" : undefined }}
+                                onClick={() => { if (cf.status !== "D") void openFileEditor(cf.path); }}
+                                title={cf.status !== "D" ? "Click to edit this file" : "File was deleted"}
+                              >
+                                {cf.path}
+                              </span>
+                            )}
+                            {cf.old_path ? (
+                              <span style={{ fontSize: 10, opacity: 0.5, flexShrink: 0 }}>
+                                ← {cf.old_path}
+                              </span>
+                            ) : null}
+                            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                              {cf.status !== "D" && !isRenaming ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void openFileEditor(cf.path)}
+                                  disabled={busy}
+                                  style={{ fontSize: 11, padding: "2px 8px" }}
+                                  title="Edit file content"
+                                >
+                                  {isExpanded ? "Close" : "Edit"}
+                                </button>
+                              ) : null}
+                              {isRenaming ? (
+                                <>
+                                  <button type="button" onClick={() => void renameFile(cf.path, renameValue)} disabled={busy} style={{ fontSize: 11, padding: "2px 8px" }}>OK</button>
+                                  <button type="button" onClick={() => setRenamingFile(null)} style={{ fontSize: 11, padding: "2px 8px" }}>Cancel</button>
+                                </>
+                              ) : (
+                                <>
+                                  {cf.status !== "D" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => { setRenamingFile(cf.path); setRenameValue(cf.path); }}
+                                      disabled={busy}
+                                      style={{ fontSize: 11, padding: "2px 8px" }}
+                                      title="Rename this file"
+                                    >
+                                      Rename
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => void restoreFile(cf.path)}
+                                    disabled={busy}
+                                    style={{ fontSize: 11, padding: "2px 8px" }}
+                                    title="Discard changes and restore from commit"
+                                  >
+                                    Discard
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void deleteFile(cf.path)}
+                                    disabled={busy}
+                                    style={{ fontSize: 11, padding: "2px 8px", color: "rgba(244,67,54,0.8)" }}
+                                    title="Delete this file"
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          {/* Inline editor */}
+                          {isExpanded ? (
+                            <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)", background: "var(--panel-2, rgba(0,0,0,0.02))" }}>
+                              {fileContentLoading ? (
+                                <div style={{ textAlign: "center", padding: 12, opacity: 0.5 }}><span className="miniSpinner" /></div>
+                              ) : (
+                                <>
+                                  <textarea
+                                    value={fileContent}
+                                    onChange={(e) => { setFileContent(e.target.value); setFileContentDirty(true); }}
+                                    disabled={busy}
+                                    className="modalTextarea mono"
+                                    rows={12}
+                                    style={{ fontSize: 11, width: "100%", resize: "vertical" }}
+                                  />
+                                  <div style={{ display: "flex", gap: 6, marginTop: 4, justifyContent: "flex-end" }}>
+                                    {fileContentDirty ? (
+                                      <span style={{ fontSize: 10, opacity: 0.6, fontStyle: "italic", alignSelf: "center", marginRight: "auto" }}>
+                                        Unsaved changes
+                                      </span>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => void saveFileContent(cf.path)}
+                                      disabled={busy || !fileContentDirty}
+                                      style={{ fontSize: 10, padding: "2px 8px" }}
+                                      title="Save changes and stage the file"
+                                    >
+                                      Save &amp; Stage
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : !commitFilesLoading ? (
+                  <div style={{ fontSize: 11, opacity: 0.5, fontStyle: "italic" }}>
+                    No files changed in this commit.
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Working tree changes (external modifications) */}
               <div style={{ display: "grid", gap: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <label style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
@@ -973,7 +1542,7 @@ export function InteractiveRebaseModal({
                   </label>
                   <button
                     type="button"
-                    onClick={() => void refreshEditStatus()}
+                    onClick={() => { void refreshEditStatus(); void loadCommitFiles(); }}
                     disabled={busy || editStatusLoading}
                     style={{ fontSize: 10, padding: "2px 6px" }}
                     title="Refresh file status"
@@ -984,7 +1553,7 @@ export function InteractiveRebaseModal({
                 {editStatusEntries.length > 0 ? (
                   <div
                     style={{
-                      maxHeight: 160,
+                      maxHeight: 140,
                       overflowY: "auto",
                       border: "1px solid var(--border)",
                       borderRadius: 8,
@@ -1060,14 +1629,13 @@ export function InteractiveRebaseModal({
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, opacity: 0.5, fontStyle: "italic" }}>
-                    No changes detected. Modify files externally, then click Refresh.
+                    No additional working tree changes. You can edit files above, or modify files externally and click Refresh.
                   </div>
                 )}
               </div>
 
-              <div style={{ fontSize: 12, opacity: 0.6 }}>
-                Modify working tree files externally, stage them above, then click "Amend &amp;
-                Continue". Or click "Skip" to continue without changes.
+              <div style={{ fontSize: 11, opacity: 0.5 }}>
+                Edit commit files above, or modify files externally and click Refresh. Click "Amend &amp; Continue" to apply changes, or "Skip" to continue without modifications.
               </div>
             </div>
           ) : null}
@@ -1146,10 +1714,10 @@ export function InteractiveRebaseModal({
                     ? "Load commits first"
                     : !hasChanges && !isReordered
                       ? "No changes to apply. Modify at least one commit action, message, author, or reorder commits."
-                      : "Start interactive rebase"
+                      : `Start interactive rebase (${todoRows.length} commit${todoRows.length !== 1 ? "s" : ""})`
                 }
               >
-                Start rebase
+                Start rebase ({todoRows.length} commit{todoRows.length !== 1 ? "s" : ""})
               </button>
             ) : null}
 
@@ -1178,6 +1746,66 @@ export function InteractiveRebaseModal({
           </div>
         </div>
       </div>
+
+      {/* Confirmation dialog overlay */}
+      {showConfirmation ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            borderRadius: "inherit",
+          }}
+        >
+          <div
+            style={{
+              background: "var(--panel, #fff)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: "20px 24px",
+              maxWidth: 480,
+              width: "90%",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
+              display: "grid",
+              gap: 16,
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 15 }}>Confirm rebase</div>
+            {confirmationWarnings.map((w, i) => (
+              <div
+                key={i}
+                style={{
+                  fontSize: 13,
+                  padding: "10px 14px",
+                  background: "rgba(255, 152, 0, 0.1)",
+                  border: "1px solid rgba(255, 152, 0, 0.3)",
+                  borderRadius: 8,
+                  color: "var(--fg)",
+                  lineHeight: 1.45,
+                }}
+              >
+                ⚠ {w}
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={() => setShowConfirmation(false)}>
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => void executeRebase()}
+                style={{ fontWeight: 700 }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

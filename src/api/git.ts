@@ -489,3 +489,33 @@ export function gitInteractiveRebaseContinue(repoPath: string) {
 export function gitInteractiveRebaseStatus(repoPath: string) {
   return invoke<InteractiveRebaseStatusInfo>("git_interactive_rebase_status", { repoPath });
 }
+
+export type EditStopFileEntry = {
+  status: string;
+  path: string;
+  old_path: string | null;
+};
+
+export function gitInteractiveRebaseEditFiles(repoPath: string) {
+  return invoke<EditStopFileEntry[]>("git_interactive_rebase_edit_files", { repoPath });
+}
+
+export function gitReadWorkingFile(params: { repoPath: string; path: string }) {
+  return invoke<string>("git_read_working_file", params);
+}
+
+export function gitWriteWorkingFile(params: { repoPath: string; path: string; content: string }) {
+  return invoke<void>("git_write_working_file", params);
+}
+
+export function gitRenameWorkingFile(params: { repoPath: string; oldPath: string; newPath: string }) {
+  return invoke<void>("git_rename_working_file", params);
+}
+
+export function gitDeleteWorkingFile(params: { repoPath: string; path: string }) {
+  return invoke<void>("git_delete_working_file", params);
+}
+
+export function gitRestoreWorkingFile(params: { repoPath: string; path: string }) {
+  return invoke<void>("git_restore_working_file", params);
+}
