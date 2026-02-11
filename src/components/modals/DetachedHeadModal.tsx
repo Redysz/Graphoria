@@ -1,3 +1,5 @@
+import type { TerminalProfile } from "../../appSettingsStore";
+
 type Props = {
   busy: boolean;
   error: string;
@@ -28,7 +30,8 @@ type Props = {
   onSaveByBranch: () => void;
   onPrepareCherryPickSteps: () => void;
 
-  onOpenTerminal: () => void;
+  terminalProfiles: TerminalProfile[];
+  onOpenTerminalProfile: (profileId: string) => void;
   onTogglePreviewZoom: (src: string) => void;
 };
 
@@ -87,7 +90,8 @@ export function DetachedHeadModal({
   onFixDiscardChanges,
   onSaveByBranch,
   onPrepareCherryPickSteps,
-  onOpenTerminal,
+  terminalProfiles,
+  onOpenTerminalProfile,
   onTogglePreviewZoom,
 }: Props) {
   return (
@@ -287,10 +291,23 @@ export function DetachedHeadModal({
             <div className="recoveryOption">
               <div>
                 <div className="recoveryOptionTitle">I'll handle it myself — open terminal</div>
-                <div className="recoveryOptionDesc">Opens a terminal in the repository folder (Git Bash on Windows if available).</div>
-                <button type="button" onClick={onOpenTerminal} disabled={busy || !activeRepoPath}>
-                  Open terminal
-                </button>
+                <div className="recoveryOptionDesc">Opens a terminal in the repository folder.</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                  {terminalProfiles.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onOpenTerminalProfile(p.id)}
+                      disabled={busy || !activeRepoPath}
+                      title={p.kind === "custom" ? (p.command?.trim() ? p.command.trim() : "Custom") : undefined}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                  {terminalProfiles.length === 0 ? (
+                    <div style={{ opacity: 0.6, fontSize: 13 }}>No terminal profiles configured.</div>
+                  ) : null}
+                </div>
               </div>
               <button
                 type="button"

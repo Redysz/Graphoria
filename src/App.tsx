@@ -5232,7 +5232,8 @@ function App() {
           onFixDiscardChanges={() => void detachedFixDiscardChanges()}
           onSaveByBranch={() => void detachedSaveByBranch()}
           onPrepareCherryPickSteps={() => void detachedPrepareCherryPickSteps()}
-          onOpenTerminal={() => void openTerminalProfile()}
+          terminalProfiles={terminalSettings.profiles ?? []}
+          onOpenTerminalProfile={(id) => void openTerminalProfile(id)}
           onTogglePreviewZoom={(src) => togglePreviewZoom(src)}
         />
       ) : null}

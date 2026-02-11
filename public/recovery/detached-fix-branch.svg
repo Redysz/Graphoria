@@ -1,25 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">
+  <defs>
+    <marker id="ah3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7a8bb1"/></marker>
+    <marker id="ah3g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#1a8a4a"/></marker>
+    <marker id="ah3m" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8b5cf6"/></marker>
+  </defs>
   <rect width="560" height="280" rx="16" fill="#ffffff"/>
-  <rect x="16" y="16" width="528" height="248" rx="12" fill="#f5f7fb" stroke="#d7dbe3"/>
+  <rect x="16" y="16" width="528" height="248" rx="12" fill="#f5faf6" stroke="#c3dece"/>
 
   <text x="28" y="44" font-family="Inter,Segoe UI,Arial" font-size="14" font-weight="700" fill="#0f0f0f">Save changes with a branch</text>
-  <text x="28" y="64" font-family="Inter,Segoe UI,Arial" font-size="12" fill="#3b4250">Commit, create temp branch, checkout target, merge</text>
+  <text x="28" y="62" font-family="Inter,Segoe UI,Arial" font-size="11" fill="#3b4250">Commit → temp branch → checkout target → merge</text>
 
-  <line x1="120" y1="110" x2="420" y2="110" stroke="#b7c2d6" stroke-width="2"/>
-  <circle cx="140" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="230" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="320" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
-  <circle cx="410" cy="110" r="14" fill="#ffffff" stroke="#7a8bb1" stroke-width="2"/>
+  <!-- Main commit line A→B→C→D -->
+  <line x1="62" y1="120" x2="120" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah3)"/>
+  <line x1="148" y1="120" x2="208" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah3)"/>
+  <line x1="236" y1="120" x2="294" y2="120" stroke="#b7c2d6" stroke-width="2" marker-end="url(#ah3)"/>
 
-  <path d="M330 118 L360 140" stroke="#b00020" stroke-width="3"/>
-  <text x="304" y="92" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">HEAD</text>
+  <!-- Nodes A B C D -->
+  <rect x="36" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="53" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">A</text>
 
-  <text x="372" y="156" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#b00020">temp</text>
-  <circle cx="368" cy="148" r="6" fill="#b00020"/>
+  <rect x="122" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="139" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">B</text>
 
-  <text x="396" y="144" font-family="Inter,Segoe UI,Arial" font-size="12" font-weight="700" fill="#2f6fed">target</text>
-  <path d="M404 118 L404 132" stroke="#2f6fed" stroke-width="3"/>
+  <rect x="210" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="227" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">C</text>
 
-  <text x="170" y="212" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git commit -a -m &quot;...&quot;</text>
-  <text x="170" y="232" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" fill="#0f0f0f">git branch &lt;temp&gt;  &amp;&amp;  git merge &lt;temp&gt;</text>
+  <rect x="296" y="104" width="34" height="32" rx="7" fill="#e8ecf3" stroke="#7a8bb1" stroke-width="2"/>
+  <text x="313" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#3b4250" text-anchor="middle">D</text>
+
+  <!-- HEAD label at C -->
+  <rect x="201" y="76" width="52" height="20" rx="4" fill="#fce4e4" stroke="#b00020" stroke-width="1.5"/>
+  <text x="227" y="90" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#b00020" text-anchor="middle">HEAD</text>
+  <line x1="227" y1="96" x2="227" y2="104" stroke="#b00020" stroke-width="1.5"/>
+
+  <!-- target label at D -->
+  <rect x="290" y="142" width="48" height="20" rx="4" fill="#dbe8fd" stroke="#2f6fed" stroke-width="1.5"/>
+  <text x="314" y="156" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#2f6fed" text-anchor="middle">target</text>
+  <line x1="313" y1="136" x2="313" y2="142" stroke="#2f6fed" stroke-width="1.5"/>
+
+  <!-- New commit E (changes committed) on temp branch, below and right of C -->
+  <line x1="237" y1="136" x2="260" y2="176" stroke="#1a8a4a" stroke-width="2" marker-end="url(#ah3g)"/>
+  <rect x="260" y="168" width="34" height="28" rx="7" fill="#d4f5df" stroke="#1a8a4a" stroke-width="2"/>
+  <text x="277" y="187" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#1a6b3a" text-anchor="middle">E</text>
+
+  <!-- temp label at E -->
+  <rect x="240" y="200" width="42" height="18" rx="4" fill="#d4f5df" stroke="#1a8a4a" stroke-width="1.2"/>
+  <text x="261" y="213" font-family="Inter,Segoe UI,Arial" font-size="9" font-weight="700" fill="#1a6b3a" text-anchor="middle">temp</text>
+
+  <!-- Merge: D → merge commit F -->
+  <line x1="332" y1="120" x2="448" y2="120" stroke="#8b5cf6" stroke-width="2" marker-end="url(#ah3m)"/>
+  <line x1="293" y1="180" x2="448" y2="126" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="5,3"/>
+
+  <rect x="450" y="104" width="34" height="32" rx="7" fill="#ede9fe" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="467" y="125" font-family="Inter,Segoe UI,Arial" font-size="13" font-weight="600" fill="#6d28d9" text-anchor="middle">F</text>
+
+  <!-- merge label -->
+  <text x="467" y="150" font-family="Inter,Segoe UI,Arial" font-size="9" font-weight="600" fill="#8b5cf6" text-anchor="middle">merge</text>
+
+  <!-- New HEAD+branch label at F -->
+  <rect x="428" y="76" width="78" height="20" rx="4" fill="#dbe8fd" stroke="#2f6fed" stroke-width="1.5"/>
+  <text x="467" y="90" font-family="Inter,Segoe UI,Arial" font-size="10" font-weight="700" fill="#2f6fed" text-anchor="middle">HEAD → target</text>
+  <line x1="467" y1="96" x2="467" y2="104" stroke="#2f6fed" stroke-width="1.5"/>
+
+  <!-- Commands -->
+  <rect x="60" y="232" width="440" height="24" rx="6" fill="#f0f2f5" stroke="#d7dbe3" stroke-width="1"/>
+  <text x="280" y="249" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#0f0f0f" text-anchor="middle">commit → branch &lt;temp&gt; → checkout &lt;target&gt; → merge &lt;temp&gt;</text>
 </svg>
