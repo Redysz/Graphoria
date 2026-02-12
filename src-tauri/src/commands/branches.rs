@@ -291,3 +291,32 @@ pub(crate) fn git_branches_points_at(repo_path: String, commit: String) -> Resul
     out.dedup();
     Ok(out)
 }
+
+#[tauri::command]
+pub(crate) fn git_branches_contains(repo_path: String, commit: String) -> Result<Vec<String>, String> {
+    crate::ensure_is_git_worktree(&repo_path)?;
+
+    let commit = commit.trim().to_string();
+    if commit.is_empty() {
+        return Err(String::from("commit is empty"));
+    }
+
+    let raw = crate::run_git(
+        &repo_path,
+        &[
+            "branch",
+            "--format=%(refname:short)",
+            "--contains",
+            commit.as_str(),
+        ],
+    )?;
+    let mut out: Vec<String> = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}

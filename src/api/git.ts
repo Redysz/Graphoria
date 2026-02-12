@@ -155,6 +155,10 @@ export function gitBranchesPointsAt(params: { repoPath: string; commit: string }
   return invoke<string[]>("git_branches_points_at", params);
 }
 
+export function gitBranchesContains(params: { repoPath: string; commit: string }) {
+  return invoke<string[]>("git_branches_contains", params);
+}
+
 export function gitCreateBranch(params: { repoPath: string; branch: string }) {
   return invoke<string>("git_create_branch", params);
 }

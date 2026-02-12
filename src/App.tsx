@@ -70,6 +70,7 @@ import {
   initRepo,
   gitCommitSummary,
   gitBranchesPointsAt,
+  gitBranchesContains,
   gitDeleteBranch,
   gitDeleteWorkingPath,
   gitDiscardWorkingPath,
@@ -1909,19 +1910,52 @@ function App() {
     }
 
     let alive = true;
+
+    function applyBranches(pointsAt: string[], contains: string[]) {
+      if (!alive) return;
+      setDetachedPointsAtBranches(pointsAt);
+
+      const exact = normalizeBranchList(pointsAt);
+      const ancestor = normalizeBranchList(contains);
+      const fallback = normalizeBranchList(overview?.branches ?? []);
+
+      // Prefer exact tip match, then branches containing commit, then all branches
+      const options = exact.length > 0 ? exact : ancestor.length > 0 ? ancestor : fallback;
+
+      // When using --contains results, prefer non-main/master/develop (likely the feature branch)
+      const pickBranch = (list: string[]) => {
+        if (list === ancestor && ancestor.length > 0) {
+          const nonDefault = list.filter((b) => !["main", "master", "develop"].includes(b));
+          if (nonDefault.length > 0) return nonDefault[0];
+        }
+        return pickPreferredBranch(list);
+      };
+
+      setDetachedTargetBranch((prev) => {
+        if (prev && options.includes(prev)) return prev;
+        return pickBranch(options);
+      });
+    }
+
     void gitBranchesPointsAt({ repoPath: activeRepoPath, commit: headHash })
       .then((branches) => {
         if (!alive) return;
-        const next = Array.isArray(branches) ? branches : [];
-        setDetachedPointsAtBranches(next);
-
-        const preferred = normalizeBranchList(next);
-        const fallback = normalizeBranchList(overview?.branches ?? []);
-        const options = preferred.length > 0 ? preferred : fallback;
-        setDetachedTargetBranch((prev) => {
-          if (prev && options.includes(prev)) return prev;
-          return pickPreferredBranch(options);
-        });
+        const pointsAt = Array.isArray(branches) ? branches : [];
+        const preferred = normalizeBranchList(pointsAt);
+        if (preferred.length > 0) {
+          applyBranches(pointsAt, []);
+        } else {
+          // No branch tip matches — try --contains to find ancestor branches
+          void gitBranchesContains({ repoPath: activeRepoPath, commit: headHash })
+            .then((containsBranches) => {
+              if (!alive) return;
+              applyBranches(pointsAt, Array.isArray(containsBranches) ? containsBranches : []);
+            })
+            .catch(() => {
+              if (!alive) return;
+              applyBranches(pointsAt, []);
+            });
+        }
       })
       .catch((e) => {
         if (!alive) return;
