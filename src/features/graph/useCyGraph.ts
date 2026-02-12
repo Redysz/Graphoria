@@ -980,10 +980,7 @@ export function useCyGraph({
     if (selectedHash) {
       cy.$id(selectedHash).addClass("selected");
     }
-    if (!selectedHash && headHash) {
-      cy.$id(headHash).addClass("selected");
-    }
-  }, [selectedHash, headHash, viewMode, elements.nodes.length, elements.edges.length]);
+  }, [selectedHash, headHash, viewMode, elements.nodes, elements.edges]);
 
   return {
     graphRef,
