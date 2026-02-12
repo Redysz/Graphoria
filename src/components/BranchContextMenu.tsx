@@ -21,6 +21,7 @@ export function BranchContextMenu(props: {
   openCreateBranchDialog: (at: string) => void;
   mergeIntoCurrentBranch: (branch: string) => void | Promise<void>;
   onRebaseHere: (branch: string) => void;
+  onFocusOnGraph: (branch: string) => void;
 }) {
   const {
     menu,
@@ -34,6 +35,7 @@ export function BranchContextMenu(props: {
     openCreateBranchDialog,
     mergeIntoCurrentBranch,
     onRebaseHere,
+    onFocusOnGraph,
   } = props;
 
   useContextMenuFit(menuRef, menu);
@@ -102,6 +104,19 @@ export function BranchContextMenu(props: {
         }}
       >
         Rebase current branch here
+      </button>
+
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading}
+        onClick={() => {
+          if (!activeRepoPath) return;
+          const branch = menu.branch;
+          onClose();
+          onFocusOnGraph(branch);
+        }}
+      >
+        Focus on Graph
       </button>
     </div>
   );

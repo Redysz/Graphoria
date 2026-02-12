@@ -5260,6 +5260,17 @@ function App() {
         openCreateBranchDialog={openCreateBranchDialog}
         mergeIntoCurrentBranch={(branch) => void mergeIntoCurrentBranch(branch)}
         onRebaseHere={(branch) => void rebaseCurrentBranchHere(branch)}
+        onFocusOnGraph={(branch) => {
+          void (async () => {
+            try {
+              const hash = await gitResolveRef({ repoPath: activeRepoPath, reference: branch });
+              const h = (hash ?? "").trim();
+              if (!h) return;
+              setSelectedHash(h);
+              focusOnHash(h, 1, 0.22);
+            } catch (_) { /* ignore */ }
+          })();
+        }}
       />
 
       <StashContextMenu
