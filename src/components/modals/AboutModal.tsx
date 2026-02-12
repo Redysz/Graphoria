@@ -199,7 +199,7 @@ export function AboutModal(props: { onClose: () => void }) {
             </div>
 
             <div className="aboutCopyright">
-              © {new Date().getFullYear()} Graphoria. All rights reserved.
+              Graphoria is a completely free, open source application distributed without any warranty.
             </div>
           </div>
         </div>
