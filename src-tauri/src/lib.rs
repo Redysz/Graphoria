@@ -2719,7 +2719,19 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let app_menu = SubmenuBuilder::new(_app, "Graphoria").quit().build()?;
-                let menu = MenuBuilder::new(_app).item(&app_menu).build()?;
+                let edit_menu = SubmenuBuilder::new(_app, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+                let menu = MenuBuilder::new(_app)
+                    .item(&app_menu)
+                    .item(&edit_menu)
+                    .build()?;
                 _app.set_menu(menu)?;
             }
 
