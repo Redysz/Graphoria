@@ -25,3 +25,5 @@ pub(crate) mod patches;
 pub(crate) mod interactive_rebase;
 
 pub(crate) mod startup;
+
+pub(crate) mod gitlog;

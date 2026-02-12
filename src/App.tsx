@@ -136,6 +136,7 @@ import { CreateBranchModal } from "./components/modals/CreateBranchModal";
 import { CreateTagModal } from "./components/modals/CreateTagModal";
 import { CherryPickModal } from "./components/modals/CherryPickModal";
 import { InteractiveRebaseModal } from "./components/modals/InteractiveRebaseModal";
+import { GitLogModal } from "./components/modals/GitLogModal";
 import { PatchModal } from "./components/modals/PatchModal";
 import { PatchPredictModal } from "./components/modals/PatchPredictModal";
 import { FilePreviewModal } from "./components/modals/FilePreviewModal";
@@ -513,6 +514,8 @@ function App() {
   const [cherryPickCommitSummary, setCherryPickCommitSummary] = useState<GitCommitSummary | null>(null);
 
   const [interactiveRebaseOpen, setInteractiveRebaseOpen] = useState(false);
+
+  const [gitLogOpen, setGitLogOpen] = useState(false);
 
   const [patchOpen, setPatchOpen] = useState(false);
   const [patchMode, setPatchMode] = useState<"export" | "apply">("apply");
@@ -2295,6 +2298,11 @@ function App() {
   function openInteractiveRebaseDialog() {
     if (!activeRepoPath) return;
     setInteractiveRebaseOpen(true);
+  }
+
+  function openGitLogDialog() {
+    if (!activeRepoPath) return;
+    setGitLogOpen(true);
   }
 
   async function openExportPatchDialog() {
@@ -4472,6 +4480,7 @@ function App() {
               openResetDialog={openResetDialog}
               openCherryPickDialog={openCherryPickDialog}
               openInteractiveRebaseDialog={openInteractiveRebaseDialog}
+              openGitLogDialog={openGitLogDialog}
               openExportPatchDialog={openExportPatchDialog}
               openApplyPatchDialog={openApplyPatchDialog}
               menuItem={menuItem}
@@ -5059,6 +5068,21 @@ function App() {
             setPullConflictFiles(files);
             setPullConflictMessage("");
             setPullConflictOpen(true);
+          }}
+        />
+      ) : null}
+
+      {gitLogOpen && activeRepoPath ? (
+        <GitLogModal
+          repoPath={activeRepoPath}
+          onClose={() => setGitLogOpen(false)}
+          onShowOnGraph={(hash) => {
+            setGitLogOpen(false);
+            focusHashOnGraph(hash);
+          }}
+          onShowOnCommits={(hash) => {
+            setGitLogOpen(false);
+            focusHashOnCommits(hash);
           }}
         />
       ) : null}
