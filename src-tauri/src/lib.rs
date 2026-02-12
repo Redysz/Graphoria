@@ -2684,6 +2684,11 @@ pub fn run() {
                 _app.set_menu(menu)?;
             }
 
+            // Set window icon so it shows correctly in dev mode too
+            if let Some(window) = _app.get_webview_window("main") {
+                let _ = window.set_icon(tauri::include_image!("./icons/32x32.png"));
+            }
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
