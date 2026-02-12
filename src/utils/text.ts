@@ -14,13 +14,24 @@ export function truncate(s: string, max: number) {
 }
 
 export function authorInitials(author: string) {
-  const parts = author
+  const cleaned = author.replace(/\([^)]*\)/g, "");
+  let parts = cleaned
     .trim()
     .split(/\s+/g)
-    .filter((p) => p.length > 0);
+    .filter((p) => p.length > 0 && /^\p{L}/u.test(p));
+
+  if (parts.length === 1 && parts[0].length === 1 || parts.length === 0) {
+    const withParens = author
+      .replace(/[()]/g, " ")
+      .trim()
+      .split(/\s+/g)
+      .filter((p) => p.length > 0 && /^\p{L}/u.test(p));
+    if (withParens.length > parts.length) parts = withParens;
+  }
+
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 export function statusBadge(status: string) {
