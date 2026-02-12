@@ -2673,6 +2673,45 @@ async fn open_devtools_main(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+#[derive(Serialize)]
+struct SystemInfo {
+    os_name: String,
+    os_version: String,
+    arch: String,
+    tauri_version: String,
+}
+
+#[tauri::command]
+fn get_system_info() -> SystemInfo {
+    SystemInfo {
+        os_name: std::env::consts::OS.to_string(),
+        os_version: {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let out = Command::new("cmd")
+                    .args(["/C", "ver"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                match out {
+                    Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                    Err(_) => String::from("unknown"),
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let out = Command::new("uname").arg("-r").output();
+                match out {
+                    Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                    Err(_) => String::from("unknown"),
+                }
+            }
+        },
+        arch: std::env::consts::ARCH.to_string(),
+        tauri_version: tauri::VERSION.to_string(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2826,7 +2865,8 @@ pub fn run() {
             git_rename_working_file,
             git_delete_working_file,
             git_restore_working_file,
-            git_log_search
+            git_log_search,
+            get_system_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
