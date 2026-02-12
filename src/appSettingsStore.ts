@@ -157,7 +157,7 @@ export type AppSettingsState = {
 };
 
 function buildDefaultShortcutBindings(platform: AppPlatform): Record<ShortcutActionId, ShortcutSpec> {
-  const goToCommit = platform === "macos" ? "Meta+Shift+C" : "Ctrl+C";
+  const goToCommit = platform === "macos" ? "Meta+G" : "Ctrl+G";
   const goToTag = platform === "macos" ? "Meta+Shift+T" : "Ctrl+T";
   const pullMenu = platform === "macos" ? "Meta+P" : "Ctrl+P";
   const commitSearch = platform === "macos" ? "Meta+F" : "Ctrl+F";
@@ -400,7 +400,7 @@ export const useAppSettings = create<AppSettingsState>()(
     }),
     {
       name: "graphoria.settings.v1",
-      version: 24,
+      version: 25,
       migrate: (persisted, _version) => {
         const s = persisted as any;
         if (!s || typeof s !== "object") return s;
@@ -522,6 +522,10 @@ export const useAppSettings = create<AppSettingsState>()(
         if (s.shortcuts?.bindings?.["panel.branches.show"] === "ArrowLeft" && s.shortcuts?.bindings?.["panel.branches.hide"] === "ArrowRight") {
           s.shortcuts.bindings["panel.branches.show"] = "ArrowRight";
           s.shortcuts.bindings["panel.branches.hide"] = "ArrowLeft";
+        }
+
+        if (s.shortcuts?.bindings?.["nav.goToCommit"] === "Ctrl+C" || s.shortcuts?.bindings?.["nav.goToCommit"] === "Meta+Shift+C") {
+          s.shortcuts.bindings["nav.goToCommit"] = defaultShortcutsSettings.bindings["nav.goToCommit"];
         }
 
         if (!s.graphoriaIgnore || typeof s.graphoriaIgnore !== "object") {
