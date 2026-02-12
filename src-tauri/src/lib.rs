@@ -112,6 +112,7 @@ use commands::diff::{
     git_working_file_text_preview,
     read_text_file,
     write_text_file,
+    write_binary_file,
 };
 use commands::reflog::{
     git_cherry_pick,
@@ -161,6 +162,8 @@ use commands::interactive_rebase::{
 };
 
 use commands::startup::{get_open_on_startup, set_open_on_startup};
+
+use commands::gitlog::git_log_search;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -2728,6 +2731,7 @@ pub fn run() {
             git_head_file_text_preview,
             read_text_file,
             write_text_file,
+            write_binary_file,
             git_head_vs_working_diff,
             git_head_vs_working_text_diff,
             git_diff_no_index,
@@ -2816,7 +2820,8 @@ pub fn run() {
             git_write_working_file,
             git_rename_working_file,
             git_delete_working_file,
-            git_restore_working_file
+            git_restore_working_file,
+            git_log_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

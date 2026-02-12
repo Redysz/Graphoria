@@ -1,0 +1,352 @@
+.gitLogModal {
+  width: min(920px, 96vw);
+  max-height: min(88vh, 900px);
+}
+
+.gitLogFilters {
+  display: grid;
+  gap: 14px;
+}
+
+.gitLogSection {
+  display: grid;
+  gap: 6px;
+}
+
+.gitLogSectionTitle {
+  font-weight: 900;
+  opacity: 0.75;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.gitLogRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gitLogRow label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gitLogRow input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.gitLogRow input[type="text"],
+.gitLogRow input[type="date"],
+.gitLogRow input[type="number"] {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  min-width: 0;
+}
+
+.gitLogRow input[type="text"]:focus,
+.gitLogRow input[type="date"]:focus,
+.gitLogRow input[type="number"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.gitLogAuthors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gitLogAuthorRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gitLogAuthorRow input[type="text"] {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  min-width: 0;
+}
+
+.gitLogAuthorRow input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.gitLogAuthorRow button {
+  padding: 2px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.gitLogAuthorRow button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.gitLogPaths {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gitLogPathRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gitLogPathRow input[type="text"] {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  min-width: 0;
+}
+
+.gitLogPathRow input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.gitLogPathRow button {
+  padding: 2px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.gitLogPathRow button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.gitLogSep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.gitLogResults {
+  margin-top: 8px;
+}
+
+.gitLogResultsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.gitLogResultsActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gitLogResultsActions button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.gitLogResultsActions button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.gitLogResultsList {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.gitLogResultItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  cursor: default;
+}
+
+.gitLogResultItem:last-child {
+  border-bottom: none;
+}
+
+.gitLogResultItem:hover {
+  background: rgba(47, 111, 237, 0.06);
+}
+
+:root[data-theme="dark"] .gitLogResultItem:hover {
+  background: rgba(75, 139, 255, 0.08);
+}
+
+.gitLogResultInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gitLogResultSubject {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gitLogResultMeta {
+  font-size: 11px;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gitLogResultHash {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+.gitLogResultBtns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.gitLogResultBtns button {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gitLogResultBtns button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.gitLogEmpty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 13px;
+}
+
+.gitLogAddBtn {
+  padding: 2px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--accent-2);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.gitLogAddBtn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.gitLogInlineInput {
+  flex: 1;
+  min-width: 80px;
+  max-width: 200px;
+}
+
+.gitLogWideInput {
+  flex: 1;
+  min-width: 120px;
+  max-width: 320px;
+}
+
+.gitLogExportMenu {
+  position: relative;
+  display: inline-block;
+}
+
+.gitLogExportDropdown {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 60;
+  min-width: 120px;
+  padding: 4px;
+}
+
+.gitLogExportDropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.gitLogExportDropdown button:hover {
+  background: var(--accent);
+  color: #fff;
+}
