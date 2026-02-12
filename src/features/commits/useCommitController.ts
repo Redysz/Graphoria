@@ -176,8 +176,10 @@ export function useCommitController(opts: {
 
         const st = commitPreviewStatus.trim();
 
+        const isNewOrRenamed = st.startsWith("??") || st.startsWith("R");
+
         if (isDocTextPreviewExt(ext)) {
-          if (st.startsWith("??")) {
+          if (isNewOrRenamed) {
             const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: commitPreviewPath });
             if (!alive) return;
             setCommitPreviewContent(content);
@@ -197,7 +199,7 @@ export function useCommitController(opts: {
           return;
         }
 
-        if (st.startsWith("??")) {
+        if (isNewOrRenamed) {
           const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: commitPreviewPath });
           if (!alive) return;
           setCommitPreviewContent(content);
@@ -246,7 +248,7 @@ export function useCommitController(opts: {
     if (!activeRepoPath) return;
 
     if (!commitAdvancedMode) {
-      const paths = statusEntries.filter((e) => selectedPaths[e.path]).map((e) => e.path);
+      const paths = statusEntries.filter((e) => selectedPaths[e.path]).flatMap((e) => e.old_path ? [e.path, e.old_path] : [e.path]);
       if (paths.length === 0) {
         setCommitError("No files selected.");
         return;

@@ -251,9 +251,10 @@ export function useStashController(opts: {
         }
 
         const st = stashPreviewStatus.trim();
+        const isNewOrRenamed = st.startsWith("??") || st.startsWith("R");
 
         if (isDocTextPreviewExt(ext)) {
-          if (st.startsWith("??")) {
+          if (isNewOrRenamed) {
             const content = await gitWorkingFileTextPreview({ repoPath: activeRepoPath, path: stashPreviewPath });
             if (!alive) return;
             setStashPreviewContent(content);
@@ -273,7 +274,7 @@ export function useStashController(opts: {
           return;
         }
 
-        if (st.startsWith("??")) {
+        if (isNewOrRenamed) {
           const content = await gitWorkingFileContent({ repoPath: activeRepoPath, path: stashPreviewPath });
           if (!alive) return;
           setStashPreviewContent(content);
@@ -305,7 +306,7 @@ export function useStashController(opts: {
     setStashError("");
     try {
       if (!stashAdvancedMode) {
-        const paths = stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).map((e) => e.path);
+        const paths = stashStatusEntries.filter((e) => stashSelectedPaths[e.path]).flatMap((e) => e.old_path ? [e.path, e.old_path] : [e.path]);
         if (paths.length === 0) {
           setStashError("No files selected.");
           return;

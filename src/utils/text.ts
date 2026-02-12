@@ -34,6 +34,11 @@ export function authorInitials(author: string) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
+export function statusDisplayPath(entry: { path: string; old_path?: string | null }): string {
+  if (entry.old_path) return `${entry.old_path} \u2192 ${entry.path}`;
+  return entry.path;
+}
+
 export function statusBadge(status: string) {
   const s = status.replace(/\s+/g, "");
   if (!s) return "?";
