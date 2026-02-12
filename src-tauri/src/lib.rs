@@ -61,6 +61,7 @@ use commands::status::{
     git_unstage_paths,
 };
 use commands::branches::{
+    git_branches_contains,
     git_branches_points_at,
     git_checkout_branch,
     git_checkout_commit,
@@ -2765,6 +2766,7 @@ pub fn run() {
             git_am_abort,
             git_am_continue_with_message,
             git_branches_points_at,
+            git_branches_contains,
             open_terminal,
             open_terminal_profile,
             git_pull,
