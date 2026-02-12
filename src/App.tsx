@@ -117,6 +117,7 @@ import { NavigateMenu } from "./components/menus/NavigateMenu";
 import { ViewMenu } from "./components/menus/ViewMenu";
 import { CommandsMenu } from "./components/menus/CommandsMenu";
 import { ToolsMenu } from "./components/menus/ToolsMenu";
+import { HelpMenu } from "./components/menus/HelpMenu";
 import { MenubarRight } from "./components/menus/MenubarRight";
 import { GoToModal } from "./components/modals/GoToModal";
 import { ConfirmModal } from "./components/modals/ConfirmModal";
@@ -149,6 +150,7 @@ import { CommitModal } from "./components/modals/CommitModal";
 import { CloneModal } from "./components/modals/CloneModal";
 import { GitTrustModal } from "./components/modals/GitTrustModal";
 import { DetachedHeadModal } from "./components/modals/DetachedHeadModal";
+import { AboutModal } from "./components/modals/AboutModal";
 import DiffToolModal from "./DiffToolModal";
 import TooltipLayer from "./TooltipLayer";
 import type {
@@ -210,6 +212,8 @@ function App() {
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
   const [gitignoreModifierOpen, setGitignoreModifierOpen] = useState(false);
   const [cleanOldBranchesOpen, setCleanOldBranchesOpen] = useState(false);
@@ -1499,6 +1503,7 @@ function App() {
       viewMenuOpen,
       commandsMenuOpen,
       toolsMenuOpen,
+      helpMenuOpen,
       pullMenuOpen,
 
       gitTrustOpen,
@@ -1591,6 +1596,7 @@ function App() {
     viewMenuOpen,
     commandsMenuOpen,
     toolsMenuOpen,
+    helpMenuOpen,
     pullMenuOpen,
     gitTrustOpen,
     diffToolModalOpen,
@@ -1696,7 +1702,8 @@ function App() {
     !!filePreviewOpen ||
     !!detachedHelpOpen ||
     !!cherryStepsOpen ||
-    !!previewZoomSrc;
+    !!previewZoomSrc ||
+    !!aboutOpen;
 
   useEffect(() => {
     if (!anyModalOpenForFocus) return;
@@ -4352,6 +4359,7 @@ function App() {
                 setToolsMenuOpen(false);
                 setNavigateMenuOpen(false);
                 setViewMenuOpen(false);
+                setHelpMenuOpen(false);
               }}
               loading={loading}
               cloneBusy={cloneBusy}
@@ -4376,6 +4384,7 @@ function App() {
                 setCommandsMenuOpen(false);
                 setToolsMenuOpen(false);
                 setViewMenuOpen(false);
+                setHelpMenuOpen(false);
               }}
               repos={repos}
               activeRepoPath={activeRepoPath}
@@ -4414,6 +4423,7 @@ function App() {
                 setCommandsMenuOpen(false);
                 setToolsMenuOpen(false);
                 setNavigateMenuOpen(false);
+                setHelpMenuOpen(false);
               }}
               openQuickButtonsModal={() => {
                 setQuickButtonsModalOpen(true);
@@ -4459,6 +4469,7 @@ function App() {
                 setToolsMenuOpen(false);
                 setNavigateMenuOpen(false);
                 setViewMenuOpen(false);
+                setHelpMenuOpen(false);
               }}
               activeRepoPath={activeRepoPath}
               loading={loading}
@@ -4495,6 +4506,7 @@ function App() {
                 setCommandsMenuOpen(false);
                 setNavigateMenuOpen(false);
                 setViewMenuOpen(false);
+                setHelpMenuOpen(false);
               }}
               activeRepoPath={activeRepoPath}
               loading={loading}
@@ -4518,7 +4530,18 @@ function App() {
               shortcutLabel={shortcutLabel}
             />
 
-            <div className="menuitem">Help</div>
+            <HelpMenu
+              helpMenuOpen={helpMenuOpen}
+              setHelpMenuOpen={setHelpMenuOpen}
+              closeOtherMenus={() => {
+                setRepositoryMenuOpen(false);
+                setCommandsMenuOpen(false);
+                setToolsMenuOpen(false);
+                setNavigateMenuOpen(false);
+                setViewMenuOpen(false);
+              }}
+              openAbout={() => setAboutOpen(true)}
+            />
           </div>
 
           <MenubarRight theme={theme} setTheme={setTheme} openSettings={() => setSettingsOpen(true)} />
@@ -4559,6 +4582,7 @@ function App() {
             setRepositoryMenuOpen(false);
             setCommandsMenuOpen(false);
             setToolsMenuOpen(false);
+            setHelpMenuOpen(false);
             void pickRepository();
           }}
           refreshRepo={() => { clearGravatarCache(); void loadRepo(); }}
@@ -5790,6 +5814,8 @@ function App() {
           onSave={(next) => setQuickButtons(next)}
         />
       ) : null}
+
+      {aboutOpen ? <AboutModal onClose={() => setAboutOpen(false)} /> : null}
     </div>
   );
 }
