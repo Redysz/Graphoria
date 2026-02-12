@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type Dispatch, type MouseEvent as ReactMouse
 import type { GitStatusEntry } from "../../types/git";
 import { parseUnifiedDiff, renderTextForPre, renderUnifiedDiffForPre } from "../../DiffView";
 import { fileExtLower, imageMimeFromExt } from "../../utils/filePreview";
-import { statusBadge } from "../../utils/text";
+import { statusBadge, statusDisplayPath } from "../../utils/text";
 import { useAppSettings } from "../../appSettingsStore";
 
 type FilesViewMode = "flat" | "tree";
@@ -378,7 +378,7 @@ export function CommitModal({
                           <span className="statusCode" title={e.status}>
                             {statusBadge(e.status)}
                           </span>
-                          <span className="statusPath">{e.path}</span>
+                          <span className="statusPath">{statusDisplayPath(e)}</span>
                           <span className="statusActions">
                             <button
                               type="button"
@@ -551,7 +551,7 @@ export function CommitModal({
                                 <span className="statusCode" title={e.status}>
                                   {statusBadge(e.status)}
                                 </span>
-                                <span className="statusPath">{n.name}</span>
+                                <span className="statusPath">{e.old_path ? statusDisplayPath(e) : n.name}</span>
                                 <span className="statusActions">
                                   <button
                                     type="button"

@@ -24,7 +24,7 @@ pub(crate) fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, Strin
     crate::ensure_is_git_worktree(&repo_path)?;
 
     let out = crate::git_command_in_repo(&repo_path)
-        .args(["status", "--porcelain", "-z", "--untracked-files=all"])
+        .args(["status", "--porcelain", "-z", "--find-renames", "--untracked-files=all"])
         .output()
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
@@ -102,7 +102,130 @@ pub(crate) fn git_status(repo_path: String) -> Result<Vec<GitStatusEntry>, Strin
         }
     }
 
+    detect_unstaged_renames(&repo_path, &mut entries);
+
     Ok(entries)
+}
+
+/// Post-process status entries: detect renames among unstaged D + (??/A) pairs
+/// by comparing blob hashes (HEAD version vs working-tree file).
+fn detect_unstaged_renames(repo_path: &str, entries: &mut Vec<GitStatusEntry>) {
+    use std::collections::HashMap;
+
+    let mut del_indices: Vec<usize> = Vec::new();
+    let mut add_indices: Vec<usize> = Vec::new();
+
+    for (i, e) in entries.iter().enumerate() {
+        let sb = e.status.as_bytes();
+        let x = sb.first().copied().unwrap_or(b' ');
+        let y = sb.get(1).copied().unwrap_or(b' ');
+
+        // Skip entries that are already renames/copies
+        if x == b'R' || y == b'R' || x == b'C' || y == b'C' {
+            continue;
+        }
+
+        if x == b'D' || y == b'D' {
+            del_indices.push(i);
+        }
+        if e.status == "??" || x == b'A' || y == b'A' {
+            add_indices.push(i);
+        }
+    }
+
+    if del_indices.is_empty() || add_indices.is_empty() {
+        return;
+    }
+
+    // Get HEAD blob hashes for deleted files via `git ls-tree HEAD -- <paths>`
+    let mut head_hash_by_del_idx: HashMap<usize, String> = HashMap::new();
+    {
+        let del_paths: Vec<&str> = del_indices.iter().map(|&i| entries[i].path.as_str()).collect();
+        let mut args: Vec<&str> = vec!["ls-tree", "HEAD", "--"];
+        args.extend(&del_paths);
+        if let Ok(out) = crate::git_command_in_repo(repo_path).args(&args).output() {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    // Format: <mode> <type> <hash>\t<path>
+                    if let Some(tab_pos) = line.find('\t') {
+                        let meta = &line[..tab_pos];
+                        let path = &line[tab_pos + 1..];
+                        let parts: Vec<&str> = meta.split_whitespace().collect();
+                        if parts.len() >= 3 {
+                            let hash = parts[2];
+                            for &idx in &del_indices {
+                                if entries[idx].path == path {
+                                    head_hash_by_del_idx.insert(idx, hash.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if head_hash_by_del_idx.is_empty() {
+        return;
+    }
+
+    // Get working-tree blob hashes for added/untracked files via `git hash-object -- <paths>`
+    let mut work_hash_by_add_idx: HashMap<usize, String> = HashMap::new();
+    {
+        let add_paths: Vec<&str> = add_indices.iter().map(|&i| entries[i].path.as_str()).collect();
+        let mut args: Vec<&str> = vec!["hash-object", "--"];
+        args.extend(&add_paths);
+        if let Ok(out) = crate::git_command_in_repo(repo_path).args(&args).output() {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for (i, line) in text.lines().enumerate() {
+                    if i < add_indices.len() {
+                        let hash = line.trim().to_string();
+                        if !hash.is_empty() {
+                            work_hash_by_add_idx.insert(add_indices[i], hash);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build reverse map: head_hash -> del_idx
+    let mut hash_to_del: HashMap<String, usize> = HashMap::new();
+    for (&idx, hash) in &head_hash_by_del_idx {
+        hash_to_del.entry(hash.clone()).or_insert(idx);
+    }
+
+    // Match add entries to delete entries by identical blob hash
+    let mut matched_del: Vec<usize> = Vec::new();
+    let mut rename_pairs: Vec<(usize, usize)> = Vec::new(); // (add_idx, del_idx)
+
+    for (&add_idx, hash) in &work_hash_by_add_idx {
+        if let Some(&del_idx) = hash_to_del.get(hash) {
+            if !matched_del.contains(&del_idx) {
+                matched_del.push(del_idx);
+                rename_pairs.push((add_idx, del_idx));
+            }
+        }
+    }
+
+    if rename_pairs.is_empty() {
+        return;
+    }
+
+    // Update add entries to become rename entries
+    for &(add_idx, del_idx) in &rename_pairs {
+        entries[add_idx].status = "R ".to_string();
+        entries[add_idx].old_path = Some(entries[del_idx].path.clone());
+    }
+
+    // Remove matched delete entries (reverse sorted order to preserve indices)
+    matched_del.sort_unstable();
+    matched_del.dedup();
+    for &idx in matched_del.iter().rev() {
+        entries.remove(idx);
+    }
 }
 
 #[tauri::command]
