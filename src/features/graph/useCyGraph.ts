@@ -30,6 +30,7 @@ export type UseCyGraphParams = {
   headHash: string;
 
   setSelectedHash: (hash: string) => void;
+  onCommitDoubleClick: (hash: string) => void;
 
   openCommitContextMenu: (hash: string, x: number, y: number) => void;
   openStashContextMenu: (stashRef: string, stashMessage: string, x: number, y: number) => void;
@@ -58,6 +59,7 @@ export function useCyGraph({
   selectedHash,
   headHash,
   setSelectedHash,
+  onCommitDoubleClick,
   openCommitContextMenu,
   openStashContextMenu,
   openRefBadgeContextMenu,
@@ -74,6 +76,7 @@ export function useCyGraph({
   const pendingAutoCenterByRepoRef = useRef<Record<string, boolean | undefined>>({});
   const initializingByRepoRef = useRef<Record<string, boolean | undefined>>({});
   const viewportRafRef = useRef<number | null>(null);
+  const lastTapRef = useRef<{ hash: string; atMs: number } | null>(null);
 
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [autoCenterToken, setAutoCenterToken] = useState(0);
@@ -767,7 +770,19 @@ export function useCyGraph({
     cy.on("tap", "node", (evt) => {
       if ((evt.target as any).hasClass?.("refBadge")) return;
       if ((evt.target as any).hasClass?.("stashBadge")) return;
-      setSelectedHash(evt.target.id());
+      const hash = evt.target.id();
+      const now = Date.now();
+      const lastTap = lastTapRef.current;
+
+      setSelectedHash(hash);
+
+      if (lastTap && lastTap.hash === hash && now - lastTap.atMs <= 300) {
+        lastTapRef.current = null;
+        onCommitDoubleClick(hash);
+        return;
+      }
+
+      lastTapRef.current = { hash, atMs: now };
     });
 
     cy.on("cxttap", "node", (evt) => {
@@ -864,6 +879,7 @@ export function useCyGraph({
     });
 
     return () => {
+      lastTapRef.current = null;
       if (viewportRafRef.current) {
         cancelAnimationFrame(viewportRafRef.current);
         viewportRafRef.current = null;

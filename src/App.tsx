@@ -633,6 +633,18 @@ function App() {
   const [showChangesOpen, setShowChangesOpen] = useState(false);
   const [showChangesCommit, setShowChangesCommit] = useState("");
 
+  const openCommitDetailsModal = useCallback(
+    (hash: string, tab: "details" | "changes" = "changes") => {
+      const h = (hash ?? "").trim();
+      if (!h) return;
+      setSelectedHash(h);
+      setShowChangesCommit(h);
+      setDetailsTab(tab);
+      setShowChangesOpen(true);
+    },
+    []
+  );
+
   const error = activeRepoPath ? ((errorByRepo[activeRepoPath] ?? "") || globalError) : globalError;
   function setError(msg: string) {
     const m = msg ?? "";
@@ -2009,6 +2021,11 @@ function App() {
     if (!selectedHash) return undefined;
     return commitsAll.find((c) => c.hash === selectedHash);
   }, [commitsAll, selectedHash]);
+
+  const modalCommit = useMemo(() => {
+    if (!showChangesCommit) return undefined;
+    return commitsAll.find((c) => c.hash === showChangesCommit);
+  }, [commitsAll, showChangesCommit]);
 
   const tagsExpanded = activeRepoPath ? (tagsExpandedByRepo[activeRepoPath] ?? false) : false;
   const stashChangedCount = changedCount;
@@ -3881,6 +3898,7 @@ function App() {
     headHash,
 
     setSelectedHash,
+    onCommitDoubleClick: (hash) => openCommitDetailsModal(hash, "changes"),
 
     openCommitContextMenu,
     openStashContextMenu,
@@ -4842,6 +4860,7 @@ function App() {
                           data-commit-hash={c.hash}
                           type="button"
                           onClick={() => setSelectedHash(c.hash)}
+                          onDoubleClick={() => openCommitDetailsModal(c.hash, "changes")}
                           onContextMenu={(e) => {
                             if (!activeRepoPath || loading) return;
                             e.preventDefault();
@@ -4962,10 +4981,7 @@ function App() {
         pickPreferredBranch={pickPreferredBranch}
         onShowChanges={(hash) => {
           setCommitContextMenu(null);
-          setShowChangesCommit(hash);
-          setShowChangesOpen(true);
-          setDetailsTab("changes");
-          setSelectedHash(hash);
+          openCommitDetailsModal(hash, "changes");
         }}
         onCopyHash={(hash) => {
           void copyText(hash);
@@ -5711,7 +5727,12 @@ function App() {
       {showChangesOpen ? (
         <ChangesModal
           activeRepoPath={activeRepoPath}
-          commit={showChangesCommit}
+          selectedCommit={modalCommit}
+          detailsTab={detailsTab}
+          setDetailsTab={setDetailsTab}
+          copyHash={() => void copyText(showChangesCommit)}
+          checkoutSelectedCommit={() => void checkoutCommit(showChangesCommit)}
+          loading={loading}
           tool={diffTool}
           onClose={() => setShowChangesOpen(false)}
         />

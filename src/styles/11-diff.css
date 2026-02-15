@@ -39,6 +39,7 @@
   padding: 10px;
   display: grid;
   gap: 6px;
+  align-content: start;
  }
 
  .diffFile {
@@ -239,4 +240,3 @@
   text-align: right;
   user-select: none;
  }
-
