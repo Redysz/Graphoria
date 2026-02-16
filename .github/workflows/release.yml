@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-22.04]
 
     runs-on: ${{ matrix.os }}
 
@@ -30,6 +30,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
       - name: Install dependencies
         run: npm ci
 
@@ -40,6 +50,10 @@ jobs:
       - name: Build Tauri (macOS)
         if: runner.os == 'macOS'
         run: npm run tauri build -- --bundles dmg
+
+      - name: Build Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: npm run tauri build -- --bundles deb appimage
 
       - name: Upload bundles
         uses: actions/upload-artifact@v4
