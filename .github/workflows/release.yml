@@ -88,9 +88,15 @@ jobs:
         with:
           path: dist-artifacts
 
+      - name: Collect installers
+        run: |
+          mkdir -p release-files
+          find dist-artifacts -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) -exec cp {} release-files/ \;
+          echo "--- Files to release ---"
+          ls -lh release-files/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist-artifacts/**
+          files: release-files/*
           generate_release_notes: true
