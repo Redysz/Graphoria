@@ -35,6 +35,8 @@ export function useRepoOpenClose(opts: {
   setGitTrustOpen: Dispatch<SetStateAction<boolean>>;
 
   loadRepo: (repoPath: string) => Promise<boolean>;
+  onWorktreeValidationError?: (repoPath: string, message: string) => void;
+  onWorktreeValidationSuccess?: () => void;
 }) {
   const {
     defaultViewMode,
@@ -63,10 +65,22 @@ export function useRepoOpenClose(opts: {
     setGitTrustActionError,
     setGitTrustOpen,
     loadRepo,
+    onWorktreeValidationError,
+    onWorktreeValidationSuccess,
   } = opts;
+
+  const attachRepository = useCallback(
+    (path: string) => {
+      setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
+      setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
+      setActiveRepoPath(path);
+    },
+    [defaultViewMode, setActiveRepoPath, setRepos, setViewModeByRepo],
+  );
 
   const openRepository = useCallback(
     async (path: string) => {
+      onWorktreeValidationSuccess?.();
       setGlobalError("");
       setErrorByRepo((prev) => ({ ...prev, [path]: "" }));
       setPullErrorByRepo((prev) => ({ ...prev, [path]: "" }));
@@ -88,18 +102,20 @@ export function useRepoOpenClose(opts: {
           return;
         }
         setGlobalError(msg);
+        onWorktreeValidationError?.(path, msg);
         setLoading(false);
         return;
       }
 
-      setViewModeByRepo((prev) => (prev[path] ? prev : { ...prev, [path]: defaultViewMode }));
-      setRepos((prev) => (prev.includes(path) ? prev : [...prev, path]));
-      setActiveRepoPath(path);
+      attachRepository(path);
       await loadRepo(path);
     },
     [
+      attachRepository,
       defaultViewMode,
       loadRepo,
+      onWorktreeValidationError,
+      onWorktreeValidationSuccess,
       setActiveRepoPath,
       setErrorByRepo,
       setGitTrustActionError,
@@ -113,6 +129,34 @@ export function useRepoOpenClose(opts: {
       setRepos,
       setSelectedHash,
       setViewModeByRepo,
+    ],
+  );
+
+  const continueOpenRepositoryWithIgnoredError = useCallback(
+    async (path: string, message: string) => {
+      const msg = message ?? "";
+      onWorktreeValidationSuccess?.();
+      setSelectedHash("");
+      setLoading(true);
+      setGlobalError("");
+      setErrorByRepo((prev) => ({ ...prev, [path]: msg }));
+      setPullErrorByRepo((prev) => ({ ...prev, [path]: "" }));
+      attachRepository(path);
+      try {
+        await loadRepo(path);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      attachRepository,
+      loadRepo,
+      onWorktreeValidationSuccess,
+      setErrorByRepo,
+      setGlobalError,
+      setLoading,
+      setPullErrorByRepo,
+      setSelectedHash,
     ],
   );
 
@@ -208,5 +252,5 @@ export function useRepoOpenClose(opts: {
     ],
   );
 
-  return { openRepository, closeRepository };
+  return { openRepository, continueOpenRepositoryWithIgnoredError, closeRepository };
 }
