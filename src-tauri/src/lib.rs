@@ -1334,6 +1334,14 @@ fn is_git_dubious_ownership_error(stderr_lower: &str) -> bool {
         || stderr_lower.contains("safe.directory")
 }
 
+fn format_worktree_validation_error(summary: &str, details: &str) -> String {
+    let d = details.trim();
+    if d.is_empty() {
+        return summary.to_string();
+    }
+    format!("GIT_WORKTREE_VALIDATION_ERROR\n{summary}\n\n{d}")
+}
+
 fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
     let check = git_command_in_repo(repo_path)
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -1346,7 +1354,8 @@ fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
         if !stderr.is_empty() && is_git_dubious_ownership_error(stderr_lower.as_str()) {
             return Err(format!("GIT_DUBIOUS_OWNERSHIP\n{stderr}"));
         }
-        return Err(String::from("Selected path is not a Git working tree."));
+        let summary = "Selected path is not a Git working tree.";
+        return Err(format_worktree_validation_error(summary, stderr.as_str()));
     }
 
     let top = git_command_in_repo(repo_path)
@@ -1355,7 +1364,11 @@ fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to spawn git: {e}"))?;
 
     if !top.status.success() {
-        return Err(String::from("Selected path is not a Git working tree."));
+        let stderr = String::from_utf8_lossy(&top.stderr).trim_end().to_string();
+        let stdout = String::from_utf8_lossy(&top.stdout).trim_end().to_string();
+        let details = if !stderr.is_empty() { stderr } else { stdout };
+        let summary = "Selected path is not a Git working tree.";
+        return Err(format_worktree_validation_error(summary, details.as_str()));
     }
 
     let top_s = String::from_utf8_lossy(&top.stdout).trim().to_string();

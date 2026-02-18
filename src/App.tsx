@@ -149,6 +149,7 @@ import { StashViewModal } from "./components/modals/StashViewModal";
 import { CommitModal } from "./components/modals/CommitModal";
 import { CloneModal } from "./components/modals/CloneModal";
 import { GitTrustModal } from "./components/modals/GitTrustModal";
+import { ErrorDetailsModal } from "./components/modals/ErrorDetailsModal";
 import { DetachedHeadModal } from "./components/modals/DetachedHeadModal";
 import { AboutModal } from "./components/modals/AboutModal";
 import DiffToolModal from "./DiffToolModal";
@@ -170,6 +171,41 @@ import "./styles/index.css";
 
 type GitResetMode = "soft" | "mixed" | "hard";
 
+const WORKTREE_VALIDATION_ERROR_PREFIX = "GIT_WORKTREE_VALIDATION_ERROR\n";
+
+type ParsedUiError = {
+  summary: string;
+  details: string;
+  hasDetails: boolean;
+};
+
+function parseErrorForUi(raw: string): ParsedUiError {
+  const text = (raw ?? "").replace(/\r\n/g, "\n").trim();
+  if (!text) {
+    return { summary: "", details: "", hasDetails: false };
+  }
+
+  if (text.startsWith(WORKTREE_VALIDATION_ERROR_PREFIX)) {
+    const body = text.slice(WORKTREE_VALIDATION_ERROR_PREFIX.length).trim();
+    const [firstLine, ...rest] = body.split("\n");
+    const summary = (firstLine ?? "").trim() || "Error";
+    const details = rest.join("\n").trim();
+    return { summary, details, hasDetails: details.length > 0 };
+  }
+
+  const lines = text.split("\n");
+  if (lines.length <= 1) {
+    return { summary: text, details: "", hasDetails: false };
+  }
+
+  const summary = (lines[0] ?? "").trim() || "Error";
+  const details = lines.slice(1).join("\n").trim();
+  if (!details) {
+    return { summary: text, details: "", hasDetails: false };
+  }
+  return { summary, details, hasDetails: true };
+}
+
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
@@ -189,6 +225,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string>("");
   const [errorByRepo, setErrorByRepo] = useState<Record<string, string>>({});
+  const [worktreeValidationError, setWorktreeValidationError] = useState<{ repoPath: string; message: string } | null>(null);
+  const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
+  const [errorIgnoreBusy, setErrorIgnoreBusy] = useState(false);
   const {
     gitTrustOpen,
     setGitTrustOpen,
@@ -646,6 +685,11 @@ function App() {
   );
 
   const error = activeRepoPath ? ((errorByRepo[activeRepoPath] ?? "") || globalError) : globalError;
+  const parsedError = useMemo(() => parseErrorForUi(error), [error]);
+  const canIgnoreCurrentError = useMemo(() => {
+    return !!worktreeValidationError && error === worktreeValidationError.message;
+  }, [error, worktreeValidationError]);
+
   function setError(msg: string) {
     const m = msg ?? "";
     if (activeRepoPath) {
@@ -654,6 +698,16 @@ function App() {
     }
     setGlobalError(m);
   }
+
+  useEffect(() => {
+    if (!error.trim()) {
+      setErrorDetailsOpen(false);
+      return;
+    }
+    if (!parsedError.hasDetails && errorDetailsOpen) {
+      setErrorDetailsOpen(false);
+    }
+  }, [error, errorDetailsOpen, parsedError.hasDetails]);
 
   const { openTerminalProfile, openActiveRepoInExplorer } = useSystemHelpers({
     activeRepoPath,
@@ -732,7 +786,7 @@ function App() {
     setStatusSummaryByRepo,
   });
 
-  const { openRepository, closeRepository } = useRepoOpenClose({
+  const { openRepository, continueOpenRepositoryWithIgnoredError, closeRepository } = useRepoOpenClose({
     defaultViewMode,
     repos,
     activeRepoPath,
@@ -764,7 +818,29 @@ function App() {
     setGitTrustOpen,
 
     loadRepo,
+
+    onWorktreeValidationError: (repoPath, message) => {
+      setWorktreeValidationError({ repoPath, message });
+    },
+    onWorktreeValidationSuccess: () => {
+      setWorktreeValidationError(null);
+    },
   });
+
+  const ignoreCurrentWorktreeErrorAndContinue = useCallback(async () => {
+    if (!worktreeValidationError) return;
+    const parsed = parseErrorForUi(worktreeValidationError.message);
+    setErrorIgnoreBusy(true);
+    try {
+      await continueOpenRepositoryWithIgnoredError(worktreeValidationError.repoPath, parsed.summary);
+      setErrorDetailsOpen(false);
+      if (fetchAfterOpenRepo) {
+        void runFetchBackground(worktreeValidationError.repoPath);
+      }
+    } finally {
+      setErrorIgnoreBusy(false);
+    }
+  }, [continueOpenRepositoryWithIgnoredError, fetchAfterOpenRepo, worktreeValidationError]);
 
   const autoFetchInFlightRef = useRef(false);
   const autoRefreshInFlightRef = useRef(false);
@@ -4618,7 +4694,14 @@ function App() {
           openTerminalDefault={() => void openTerminalProfile(terminalSettings.defaultProfileId)}
           openTerminalSettings={() => setSettingsOpen(true)}
           indicatorsUpdating={indicatorsUpdating}
-          error={error}
+          error={parsedError.summary}
+          errorHasDetails={parsedError.hasDetails}
+          onOpenErrorDetails={() => setErrorDetailsOpen(true)}
+          errorCanIgnore={canIgnoreCurrentError}
+          onIgnoreError={() => {
+            void ignoreCurrentWorktreeErrorAndContinue();
+          }}
+          errorIgnoreBusy={errorIgnoreBusy}
           pullError={pullError}
         />
 
@@ -5822,6 +5905,19 @@ function App() {
           onRevealInExplorer={() => void revealRepoInExplorerFromTrustDialog()}
           onOpenTerminal={() => void openTerminalFromTrustDialog()}
           onToggleDetails={() => setGitTrustDetailsOpen((v) => !v)}
+        />
+      ) : null}
+
+      {errorDetailsOpen && parsedError.hasDetails ? (
+        <ErrorDetailsModal
+          summary={parsedError.summary}
+          details={parsedError.details}
+          canIgnore={canIgnoreCurrentError}
+          busy={errorIgnoreBusy}
+          onIgnore={() => {
+            void ignoreCurrentWorktreeErrorAndContinue();
+          }}
+          onClose={() => setErrorDetailsOpen(false)}
         />
       ) : null}
 

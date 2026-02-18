@@ -44,6 +44,11 @@ export function TopToolbar(props: {
   openTerminalSettings: () => void;
   indicatorsUpdating: boolean;
   error: string;
+  errorHasDetails?: boolean;
+  onOpenErrorDetails?: () => void;
+  errorCanIgnore?: boolean;
+  onIgnoreError?: () => void;
+  errorIgnoreBusy?: boolean;
   pullError: string;
 }) {
   const {
@@ -88,6 +93,11 @@ export function TopToolbar(props: {
     openTerminalSettings,
     indicatorsUpdating,
     error,
+    errorHasDetails,
+    onOpenErrorDetails,
+    errorCanIgnore,
+    onIgnoreError,
+    errorIgnoreBusy,
     pullError,
   } = props;
 
@@ -373,7 +383,21 @@ export function TopToolbar(props: {
           <span>Loading…</span>
         </div>
       ) : null}
-      {error ? <div className="error">{error}</div> : null}
+      {error ? (
+        <div className="error" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>{error}</span>
+          {errorHasDetails && onOpenErrorDetails ? (
+            <button type="button" onClick={onOpenErrorDetails} style={{ padding: "2px 8px", minHeight: 24 }}>
+              Details
+            </button>
+          ) : null}
+          {errorCanIgnore && onIgnoreError ? (
+            <button type="button" onClick={onIgnoreError} disabled={!!errorIgnoreBusy} style={{ padding: "2px 8px", minHeight: 24 }}>
+              {errorIgnoreBusy ? "Ignoring…" : "Ignore"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {pullError ? <div className="error">{pullError}</div> : null}
     </div>
   );
