@@ -4,16 +4,29 @@ import type { ThemeName } from "../appSettingsStore";
 
 const generatedCache = new Map<string, string>();
 
+function getAvatarRenderScale(): number {
+  if (typeof window === "undefined") return 1;
+  const dpr = Number(window.devicePixelRatio || 1);
+  if (!Number.isFinite(dpr)) return 1;
+  return Math.min(3, Math.max(1, dpr));
+}
+
 export function generateAvatarDataUrl(author: string, theme: ThemeName, size = 28): string {
-  const key = `${author}::${theme}::${size}`;
+  const scale = getAvatarRenderScale();
+  const key = `${author}::${theme}::${size}::${scale.toFixed(2)}`;
   const cached = generatedCache.get(key);
   if (cached) return cached;
 
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = Math.max(1, Math.round(size * scale));
+  canvas.height = Math.max(1, Math.round(size * scale));
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
+  ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   const r = size / 2;
 
@@ -38,8 +51,8 @@ export function generateAvatarDataUrl(author: string, theme: ThemeName, size = 2
     size * 0.35, size * 0.28, 0,
     size * 0.35, size * 0.28, size * 0.5,
   );
-  glassGrad.addColorStop(0, "rgba(255, 255, 255, 0.55)");
-  glassGrad.addColorStop(0.5, "rgba(255, 255, 255, 0.08)");
+  glassGrad.addColorStop(0, "rgba(255, 255, 255, 0.65)");
+  glassGrad.addColorStop(0.45, "rgba(255, 255, 255, 0.14)");
   glassGrad.addColorStop(1, "transparent");
   ctx.fillStyle = glassGrad;
   ctx.fillRect(0, 0, size, size);
@@ -48,7 +61,7 @@ export function generateAvatarDataUrl(author: string, theme: ThemeName, size = 2
     size * 0.6, size * 0.85, 0,
     size * 0.6, size * 0.85, size * 0.35,
   );
-  bottomGrad.addColorStop(0, "rgba(255, 255, 255, 0.12)");
+  bottomGrad.addColorStop(0, "rgba(255, 255, 255, 0.18)");
   bottomGrad.addColorStop(1, "transparent");
   ctx.fillStyle = bottomGrad;
   ctx.fillRect(0, 0, size, size);
@@ -84,7 +97,8 @@ const gravatarLoadingSet = new Set<string>();
 const gravatarFailedSet = new Set<string>();
 
 export function getGravatarCircleUrl(email: string, size = 28): string | null {
-  const key = `${email}::${size}`;
+  const scale = getAvatarRenderScale();
+  const key = `${email}::${size}::${scale.toFixed(2)}`;
   return gravatarCircleCache.get(key) ?? null;
 }
 
@@ -94,7 +108,8 @@ export function loadGravatarCircle(
   size: number,
   onReady: () => void,
 ): void {
-  const key = `${email}::${size}`;
+  const scale = getAvatarRenderScale();
+  const key = `${email}::${size}::${scale.toFixed(2)}`;
   if (gravatarCircleCache.has(key) || gravatarLoadingSet.has(key) || gravatarFailedSet.has(key)) return;
   gravatarLoadingSet.add(key);
 
@@ -103,10 +118,15 @@ export function loadGravatarCircle(
   img.onload = () => {
     gravatarLoadingSet.delete(key);
     const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = Math.max(1, Math.round(size * scale));
+    canvas.height = Math.max(1, Math.round(size * scale));
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    ctx.scale(scale, scale);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     const r = size / 2;
     ctx.beginPath();
@@ -129,5 +149,6 @@ export function loadGravatarCircle(
     gravatarLoadingSet.delete(key);
     gravatarFailedSet.add(key);
   };
-  img.src = `https://www.gravatar.com/avatar/${md5}?d=404&s=${size * 2}`;
+  const gravatarFetchSize = Math.max(64, Math.round(size * scale * 2));
+  img.src = `https://www.gravatar.com/avatar/${md5}?d=404&s=${gravatarFetchSize}`;
 }
