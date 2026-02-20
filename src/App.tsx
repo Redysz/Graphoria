@@ -4812,6 +4812,7 @@ function App() {
                         className="statusPill statusPillDanger"
                         onClick={() => {
                           setDetachedError("");
+                          setDetachedPreferCommitChangesOnConflict(true);
                           setDetachedHelpOpen(true);
                         }}
                         disabled={!activeRepoPath}
@@ -5652,6 +5653,7 @@ function App() {
             setConflictResolverOpen(false);
             if (pullConflictOperation === "cherry-pick") {
               setCherryPickOpen(false);
+              setCherryStepsOpen(false);
             }
             await loadRepo(activeRepoPath);
           }}

@@ -416,15 +416,18 @@ pub(crate) fn git_cherry_pick_continue_with_message(repo_path: String, message: 
         return Err(String::from("No cherry-pick in progress."));
     }
 
-    // Keep message in sync with what Git expects during cherry-pick.
-    // Git uses CHERRY_PICK_MSG when continuing.
+    // Keep message in sync with what Git may use during cherry-pick continue.
+    // Depending on Git version/flow this can be CHERRY_PICK_MSG, MERGE_MSG,
+    // or sequencer/message.
     write_git_path_text(&repo_path, "CHERRY_PICK_MSG", message.as_str())?;
+    let _ = write_git_path_text(&repo_path, "MERGE_MSG", message.as_str());
+    let _ = write_git_path_text(&repo_path, "sequencer/message", message.as_str());
 
-    // Continue without launching editor.
+    // Continue without launching editor, but allow Git to use CHERRY_PICK_MSG.
     let mut cmd = crate::git_command_in_repo(&repo_path);
     no_editor_env(&mut cmd);
     let out = cmd
-        .args(["cherry-pick", "--continue", "--no-edit"])
+        .args(["cherry-pick", "--continue"])
         .output()
         .map_err(|e| format!("Failed to spawn git cherry-pick --continue: {e}"))?;
 
