@@ -588,6 +588,7 @@ function App() {
   const [detachedTempBranchName, setDetachedTempBranchName] = useState<string>("");
   const [detachedTempBranchRandom, setDetachedTempBranchRandom] = useState<boolean>(true);
   const [detachedMergeAfterSave, setDetachedMergeAfterSave] = useState<boolean>(true);
+  const [detachedPreferCommitChangesOnConflict, setDetachedPreferCommitChangesOnConflict] = useState<boolean>(true);
 
   const [cherryStepsOpen, setCherryStepsOpen] = useState(false);
   const [cherryCommitHash, setCherryCommitHash] = useState<string>("");
@@ -3548,20 +3549,39 @@ function App() {
     try {
       await gitResetHard(activeRepoPath);
       await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
-      const args: string[] = [];
-      if (cherryPickAppendOrigin) args.push("-x");
-      if (cherryPickNoCommit) args.push("--no-commit");
-
-      if (args.length === 0) {
-        await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
-      } else {
-        await gitCherryPickAdvanced({ repoPath: activeRepoPath, commits: [h], appendOrigin: cherryPickAppendOrigin, noCommit: cherryPickNoCommit });
-      }
+      await gitCherryPickAdvanced({
+        repoPath: activeRepoPath,
+        commits: [h],
+        appendOrigin: cherryPickAppendOrigin,
+        noCommit: cherryPickNoCommit,
+        ...(detachedPreferCommitChangesOnConflict
+          ? {
+              // Detached-HEAD recovery intent: prefer incoming detached commit changes.
+              conflictPreference: "theirs" as const,
+            }
+          : {}),
+      });
 
       setCherryStepsOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
-      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+      const raw = typeof e === "string" ? e : JSON.stringify(e);
+
+      try {
+        const st = await gitConflictState(activeRepoPath);
+        const op = (st.operation ?? "").trim();
+        if (op === "cherry-pick") {
+          setPullConflictOperation("cherry-pick");
+          setPullConflictFiles((st.files ?? []).map((f: any) => f.path).filter(Boolean));
+          setPullConflictMessage(raw);
+          setPullConflictOpen(true);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      setDetachedError(raw);
     } finally {
       setDetachedBusy(false);
     }
@@ -4792,12 +4812,13 @@ function App() {
                         className="statusPill statusPillDanger"
                         onClick={() => {
                           setDetachedError("");
+                          setDetachedPreferCommitChangesOnConflict(true);
                           setDetachedHelpOpen(true);
                         }}
                         disabled={!activeRepoPath}
                         title="HEAD is detached. Click for recovery options."
                       >
-                        Head detached
+                        Detached HEAD
                       </button>
                     </div>
                   ) : null}
@@ -5473,6 +5494,8 @@ function App() {
           setTempBranchRandom={setDetachedTempBranchRandom}
           mergeAfterSave={detachedMergeAfterSave}
           setMergeAfterSave={setDetachedMergeAfterSave}
+          preferCommitChangesOnConflict={detachedPreferCommitChangesOnConflict}
+          setPreferCommitChangesOnConflict={setDetachedPreferCommitChangesOnConflict}
           onClose={() => setDetachedHelpOpen(false)}
           onFixSimple={() => void detachedFixSimple()}
           onFixDiscardChanges={() => void detachedFixDiscardChanges()}
@@ -5630,6 +5653,7 @@ function App() {
             setConflictResolverOpen(false);
             if (pullConflictOperation === "cherry-pick") {
               setCherryPickOpen(false);
+              setCherryStepsOpen(false);
             }
             await loadRepo(activeRepoPath);
           }}
