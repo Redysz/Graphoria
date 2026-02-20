@@ -23,6 +23,9 @@ type Props = {
   mergeAfterSave: boolean;
   setMergeAfterSave: (v: boolean) => void;
 
+  preferCommitChangesOnConflict: boolean;
+  setPreferCommitChangesOnConflict: (v: boolean) => void;
+
   onClose: () => void;
 
   onFixSimple: () => void;
@@ -85,6 +88,8 @@ export function DetachedHeadModal({
   setTempBranchRandom,
   mergeAfterSave,
   setMergeAfterSave,
+  preferCommitChangesOnConflict,
+  setPreferCommitChangesOnConflict,
   onClose,
   onFixSimple,
   onFixDiscardChanges,
@@ -257,6 +262,18 @@ export function DetachedHeadModal({
               <div>
                 <div className="recoveryOptionTitle">Save changes by cherry-picks</div>
                 <div className="recoveryOptionDesc">Commits your changes, then shows the steps to cherry-pick onto the target branch.</div>
+                <label
+                  style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 900, opacity: 0.85, margin: "8px 0 10px" }}
+                  title="When enabled, overlapping changes are auto-resolved in favor of the detached commit."
+                >
+                  <input
+                    type="checkbox"
+                    checked={preferCommitChangesOnConflict}
+                    onChange={(e) => setPreferCommitChangesOnConflict(e.target.checked)}
+                    disabled={busy}
+                  />
+                  Prefer detached commit changes on conflict
+                </label>
                 <div className="mono" style={{ opacity: 0.9, marginBottom: 10 }}>
                   git commit -a -m &quot;&lt;message&gt;&quot;
                   <br />

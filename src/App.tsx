@@ -588,6 +588,7 @@ function App() {
   const [detachedTempBranchName, setDetachedTempBranchName] = useState<string>("");
   const [detachedTempBranchRandom, setDetachedTempBranchRandom] = useState<boolean>(true);
   const [detachedMergeAfterSave, setDetachedMergeAfterSave] = useState<boolean>(true);
+  const [detachedPreferCommitChangesOnConflict, setDetachedPreferCommitChangesOnConflict] = useState<boolean>(true);
 
   const [cherryStepsOpen, setCherryStepsOpen] = useState(false);
   const [cherryCommitHash, setCherryCommitHash] = useState<string>("");
@@ -3553,8 +3554,12 @@ function App() {
         commits: [h],
         appendOrigin: cherryPickAppendOrigin,
         noCommit: cherryPickNoCommit,
-        // Detached-HEAD recovery intent is to keep the detached commit's change.
-        conflictPreference: "theirs",
+        ...(detachedPreferCommitChangesOnConflict
+          ? {
+              // Detached-HEAD recovery intent: prefer incoming detached commit changes.
+              conflictPreference: "theirs" as const,
+            }
+          : {}),
       });
 
       setCherryStepsOpen(false);
@@ -5488,6 +5493,8 @@ function App() {
           setTempBranchRandom={setDetachedTempBranchRandom}
           mergeAfterSave={detachedMergeAfterSave}
           setMergeAfterSave={setDetachedMergeAfterSave}
+          preferCommitChangesOnConflict={detachedPreferCommitChangesOnConflict}
+          setPreferCommitChangesOnConflict={setDetachedPreferCommitChangesOnConflict}
           onClose={() => setDetachedHelpOpen(false)}
           onFixSimple={() => void detachedFixSimple()}
           onFixDiscardChanges={() => void detachedFixDiscardChanges()}
