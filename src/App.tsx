@@ -3548,20 +3548,35 @@ function App() {
     try {
       await gitResetHard(activeRepoPath);
       await gitCheckoutBranch({ repoPath: activeRepoPath, branch: b });
-      const args: string[] = [];
-      if (cherryPickAppendOrigin) args.push("-x");
-      if (cherryPickNoCommit) args.push("--no-commit");
-
-      if (args.length === 0) {
-        await gitCherryPick({ repoPath: activeRepoPath, commits: [h] });
-      } else {
-        await gitCherryPickAdvanced({ repoPath: activeRepoPath, commits: [h], appendOrigin: cherryPickAppendOrigin, noCommit: cherryPickNoCommit });
-      }
+      await gitCherryPickAdvanced({
+        repoPath: activeRepoPath,
+        commits: [h],
+        appendOrigin: cherryPickAppendOrigin,
+        noCommit: cherryPickNoCommit,
+        // Detached-HEAD recovery intent is to keep the detached commit's change.
+        conflictPreference: "theirs",
+      });
 
       setCherryStepsOpen(false);
       await loadRepo(activeRepoPath);
     } catch (e) {
-      setDetachedError(typeof e === "string" ? e : JSON.stringify(e));
+      const raw = typeof e === "string" ? e : JSON.stringify(e);
+
+      try {
+        const st = await gitConflictState(activeRepoPath);
+        const op = (st.operation ?? "").trim();
+        if (op === "cherry-pick") {
+          setPullConflictOperation("cherry-pick");
+          setPullConflictFiles((st.files ?? []).map((f: any) => f.path).filter(Boolean));
+          setPullConflictMessage(raw);
+          setPullConflictOpen(true);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      setDetachedError(raw);
     } finally {
       setDetachedBusy(false);
     }
@@ -4797,7 +4812,7 @@ function App() {
                         disabled={!activeRepoPath}
                         title="HEAD is detached. Click for recovery options."
                       >
-                        Head detached
+                        Detached HEAD
                       </button>
                     </div>
                   ) : null}

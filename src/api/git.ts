@@ -230,7 +230,13 @@ export function gitCherryPick(params: { repoPath: string; commits: string[] }) {
   return invoke<string>("git_cherry_pick", params);
 }
 
-export function gitCherryPickAdvanced(params: { repoPath: string; commits: string[]; appendOrigin: boolean; noCommit: boolean }) {
+export function gitCherryPickAdvanced(params: {
+  repoPath: string;
+  commits: string[];
+  appendOrigin: boolean;
+  noCommit: boolean;
+  conflictPreference?: "" | "ours" | "theirs";
+}) {
   return invoke<string>("git_cherry_pick_advanced", params);
 }
 

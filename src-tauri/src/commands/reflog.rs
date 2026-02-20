@@ -34,6 +34,7 @@ pub(crate) fn git_cherry_pick_advanced(
     commits: Vec<String>,
     append_origin: bool,
     no_commit: bool,
+    conflict_preference: Option<String>,
 ) -> Result<String, String> {
     crate::ensure_is_git_worktree(&repo_path)?;
 
@@ -53,6 +54,17 @@ pub(crate) fn git_cherry_pick_advanced(
     }
     if no_commit {
         args.push("--no-commit");
+    }
+    let pref = conflict_preference
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if !pref.is_empty() {
+        if pref != "ours" && pref != "theirs" {
+            return Err(String::from("Invalid conflict preference. Use 'ours' or 'theirs'."));
+        }
+        args.push("-X");
+        args.push(pref.as_str());
     }
     for c in &commits {
         args.push(c.as_str());
