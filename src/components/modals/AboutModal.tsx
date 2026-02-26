@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 type SystemInfo = {
   os_name: string;
@@ -166,7 +167,7 @@ export function AboutModal(props: { onClose: () => void }) {
                 type="button"
                 className="aboutDonateBtn"
                 title="Support the project"
-                onClick={() => { /* TODO: open buymeacoffee link */ }}
+                onClick={() => { void openUrl("https://buymeacoffee.com/graphoria"); }}
               >
                 ☕ Buy me a coffee
               </button>
