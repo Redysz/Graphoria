@@ -154,13 +154,13 @@ export function AboutModal(props: { onClose: () => void }) {
 
             <div className="aboutLinks">
               <a
-                href="https://graphoria.dev"
+                href="https://gitgraphoria.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="aboutLink"
                 onClick={(e) => { e.preventDefault(); /* TODO: open URL via Tauri */ }}
               >
-                graphoria.dev
+                gitgraphoria.com
               </a>
 
               <button
