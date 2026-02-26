@@ -3,6 +3,7 @@ import type { ShortcutActionId } from "../../shortcuts";
 
 export function NavigateMenu(props: {
   navigateMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setNavigateMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
@@ -29,6 +30,7 @@ export function NavigateMenu(props: {
 }) {
   const {
     navigateMenuOpen,
+    anyTopMenuOpen,
     setNavigateMenuOpen,
     closeOtherMenus,
     repos,
@@ -55,6 +57,11 @@ export function NavigateMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setNavigateMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || navigateMenuOpen) return;
+          closeOtherMenus();
+          setNavigateMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >

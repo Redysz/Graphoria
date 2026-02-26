@@ -4495,6 +4495,8 @@ function App() {
     </span>
   );
 
+  const anyTopMenuOpen = repositoryMenuOpen || navigateMenuOpen || viewMenuOpen || commandsMenuOpen || toolsMenuOpen || helpMenuOpen;
+
   return (
     <div className="app">
       <TooltipLayer />
@@ -4503,6 +4505,7 @@ function App() {
           <div className="menubarLeft" ref={menubarLeftRef}>
             <RepositoryMenu
               repositoryMenuOpen={repositoryMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setRepositoryMenuOpen={setRepositoryMenuOpen}
               closeOtherMenus={() => {
                 setCommandsMenuOpen(false);
@@ -4528,6 +4531,7 @@ function App() {
 
             <NavigateMenu
               navigateMenuOpen={navigateMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setNavigateMenuOpen={setNavigateMenuOpen}
               closeOtherMenus={() => {
                 setRepositoryMenuOpen(false);
@@ -4567,6 +4571,7 @@ function App() {
 
             <ViewMenu
               viewMenuOpen={viewMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setViewMenuOpen={setViewMenuOpen}
               closeOtherMenus={() => {
                 setRepositoryMenuOpen(false);
@@ -4613,6 +4618,7 @@ function App() {
 
             <CommandsMenu
               commandsMenuOpen={commandsMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setCommandsMenuOpen={setCommandsMenuOpen}
               closeOtherMenus={() => {
                 setRepositoryMenuOpen(false);
@@ -4650,6 +4656,7 @@ function App() {
 
             <ToolsMenu
               toolsMenuOpen={toolsMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setToolsMenuOpen={setToolsMenuOpen}
               closeOtherMenus={() => {
                 setRepositoryMenuOpen(false);
@@ -4682,6 +4689,7 @@ function App() {
 
             <HelpMenu
               helpMenuOpen={helpMenuOpen}
+              anyTopMenuOpen={anyTopMenuOpen}
               setHelpMenuOpen={setHelpMenuOpen}
               closeOtherMenus={() => {
                 setRepositoryMenuOpen(false);

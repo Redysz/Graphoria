@@ -3,6 +3,7 @@ import type { ShortcutActionId } from "../../shortcuts";
 
 export function RepositoryMenu(props: {
   repositoryMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setRepositoryMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
@@ -24,6 +25,7 @@ export function RepositoryMenu(props: {
 }) {
   const {
     repositoryMenuOpen,
+    anyTopMenuOpen,
     setRepositoryMenuOpen,
     closeOtherMenus,
     loading,
@@ -48,6 +50,11 @@ export function RepositoryMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setRepositoryMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || repositoryMenuOpen) return;
+          closeOtherMenus();
+          setRepositoryMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >

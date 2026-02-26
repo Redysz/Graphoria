@@ -1,10 +1,11 @@
 export function HelpMenu(props: {
   helpMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setHelpMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
   openAbout: () => void;
 }) {
-  const { helpMenuOpen, setHelpMenuOpen, closeOtherMenus, openAbout } = props;
+  const { helpMenuOpen, anyTopMenuOpen, setHelpMenuOpen, closeOtherMenus, openAbout } = props;
 
   return (
     <div style={{ position: "relative" }}>
@@ -13,6 +14,11 @@ export function HelpMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setHelpMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || helpMenuOpen) return;
+          closeOtherMenus();
+          setHelpMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >
