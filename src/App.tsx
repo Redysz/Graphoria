@@ -252,6 +252,7 @@ function App() {
   const [commandsMenuOpen, setCommandsMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const menubarLeftRef = useRef<HTMLDivElement | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [diffToolModalOpen, setDiffToolModalOpen] = useState(false);
   const [gitignoreModifierOpen, setGitignoreModifierOpen] = useState(false);
@@ -1070,6 +1071,41 @@ function App() {
     const idx = Math.max(0, Math.min(buttons.length - 1, terminalMenuIndex));
     buttons[idx]?.focus();
   }, [terminalMenuIndex, terminalMenuOpen]);
+
+  useEffect(() => {
+    if (!repositoryMenuOpen && !navigateMenuOpen && !viewMenuOpen && !commandsMenuOpen && !toolsMenuOpen && !helpMenuOpen) return;
+
+    const closeTopMenus = () => {
+      setRepositoryMenuOpen(false);
+      setNavigateMenuOpen(false);
+      setViewMenuOpen(false);
+      setCommandsMenuOpen(false);
+      setToolsMenuOpen(false);
+      setHelpMenuOpen(false);
+    };
+
+    const onMouseDown = (ev: MouseEvent) => {
+      const root = menubarLeftRef.current;
+      const target = ev.target;
+      if (!root || !(target instanceof Node)) {
+        closeTopMenus();
+        return;
+      }
+      if (root.contains(target)) return;
+      closeTopMenus();
+    };
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") closeTopMenus();
+    };
+
+    window.addEventListener("mousedown", onMouseDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [repositoryMenuOpen, navigateMenuOpen, viewMenuOpen, commandsMenuOpen, toolsMenuOpen, helpMenuOpen]);
 
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
@@ -4464,7 +4500,7 @@ function App() {
       <TooltipLayer />
       <div className="topbar">
         <div className="menubar">
-          <div className="menubarLeft">
+          <div className="menubarLeft" ref={menubarLeftRef}>
             <RepositoryMenu
               repositoryMenuOpen={repositoryMenuOpen}
               setRepositoryMenuOpen={setRepositoryMenuOpen}
