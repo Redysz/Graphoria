@@ -3,6 +3,7 @@ import type { ShortcutActionId } from "../../shortcuts";
 
 export function CommandsMenu(props: {
   commandsMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setCommandsMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
@@ -39,6 +40,7 @@ export function CommandsMenu(props: {
 }) {
   const {
     commandsMenuOpen,
+    anyTopMenuOpen,
     setCommandsMenuOpen,
     closeOtherMenus,
     activeRepoPath,
@@ -75,6 +77,11 @@ export function CommandsMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setCommandsMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || commandsMenuOpen) return;
+          closeOtherMenus();
+          setCommandsMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >

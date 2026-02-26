@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 export function ViewMenu(props: {
   viewMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setViewMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
@@ -50,6 +51,7 @@ export function ViewMenu(props: {
 }) {
   const {
     viewMenuOpen,
+    anyTopMenuOpen,
     setViewMenuOpen,
     closeOtherMenus,
     openQuickButtonsModal,
@@ -93,6 +95,11 @@ export function ViewMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setViewMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || viewMenuOpen) return;
+          closeOtherMenus();
+          setViewMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >

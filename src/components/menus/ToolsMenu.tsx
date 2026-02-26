@@ -3,6 +3,7 @@ import type { ShortcutActionId } from "../../shortcuts";
 
 export function ToolsMenu(props: {
   toolsMenuOpen: boolean;
+  anyTopMenuOpen: boolean;
   setToolsMenuOpen: (next: boolean | ((prev: boolean) => boolean)) => void;
   closeOtherMenus: () => void;
 
@@ -23,6 +24,7 @@ export function ToolsMenu(props: {
 }) {
   const {
     toolsMenuOpen,
+    anyTopMenuOpen,
     setToolsMenuOpen,
     closeOtherMenus,
     activeRepoPath,
@@ -45,6 +47,11 @@ export function ToolsMenu(props: {
         onClick={() => {
           closeOtherMenus();
           setToolsMenuOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          if (!anyTopMenuOpen || toolsMenuOpen) return;
+          closeOtherMenus();
+          setToolsMenuOpen(true);
         }}
         style={{ cursor: "pointer", userSelect: "none" }}
       >
