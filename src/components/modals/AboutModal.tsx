@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 type SystemInfo = {
   os_name: string;
@@ -154,20 +155,19 @@ export function AboutModal(props: { onClose: () => void }) {
 
             <div className="aboutLinks">
               <a
-                href="https://graphoria.dev"
+                href="https://gitgraphoria.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="aboutLink"
-                onClick={(e) => { e.preventDefault(); /* TODO: open URL via Tauri */ }}
               >
-                graphoria.dev
+                gitgraphoria.com
               </a>
 
               <button
                 type="button"
                 className="aboutDonateBtn"
                 title="Support the project"
-                onClick={() => { /* TODO: open buymeacoffee link */ }}
+                onClick={() => { void openUrl("https://buymeacoffee.com/graphoria"); }}
               >
                 ☕ Buy me a coffee
               </button>
