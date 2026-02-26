@@ -158,7 +158,6 @@ export function AboutModal(props: { onClose: () => void }) {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="aboutLink"
-                onClick={(e) => { e.preventDefault(); /* TODO: open URL via Tauri */ }}
               >
                 gitgraphoria.com
               </a>
