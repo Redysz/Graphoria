@@ -671,6 +671,7 @@ function App() {
 
   const [selectedHash, setSelectedHash] = useState<string>("");
   const [detailsTab, setDetailsTab] = useState<"details" | "changes">("details");
+  const [changesModalTab, setChangesModalTab] = useState<"details" | "changes">("changes");
   const [showChangesOpen, setShowChangesOpen] = useState(false);
   const [showChangesCommit, setShowChangesCommit] = useState("");
 
@@ -680,7 +681,7 @@ function App() {
       if (!h) return;
       setSelectedHash(h);
       setShowChangesCommit(h);
-      setDetailsTab(tab);
+      setChangesModalTab(tab);
       setShowChangesOpen(true);
     },
     []
@@ -5879,8 +5880,8 @@ function App() {
         <ChangesModal
           activeRepoPath={activeRepoPath}
           selectedCommit={modalCommit}
-          detailsTab={detailsTab}
-          setDetailsTab={setDetailsTab}
+          detailsTab={changesModalTab}
+          setDetailsTab={setChangesModalTab}
           copyHash={() => void copyText(showChangesCommit)}
           checkoutSelectedCommit={() => void checkoutCommit(showChangesCommit)}
           loading={loading}
