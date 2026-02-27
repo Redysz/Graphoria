@@ -24,20 +24,6 @@ export function useGlobalShortcuts(
       return !!el.closest("input,textarea,select,[contenteditable='true']");
     };
 
-    const isTextareaTarget = (t: EventTarget | null) => {
-      const el = t instanceof HTMLElement ? t : null;
-      if (!el) return false;
-      if (el.tagName === "TEXTAREA") return true;
-      return !!el.closest("textarea");
-    };
-
-    const isContentEditableTarget = (t: EventTarget | null) => {
-      const el = t instanceof HTMLElement ? t : null;
-      if (!el) return false;
-      if (el.isContentEditable) return true;
-      return !!el.closest("[contenteditable='true']");
-    };
-
     const findTopModalOverlay = () => {
       const dialogs = Array.from(
         document.querySelectorAll<HTMLElement>(
@@ -279,31 +265,6 @@ export function useGlobalShortcuts(
           handledEvents.add(e);
           clickModalButton("cancel");
           return;
-        }
-
-        if (
-          isEnterKey(e) &&
-          !e.ctrlKey &&
-          !e.metaKey &&
-          !e.altKey &&
-          !e.shiftKey &&
-          !(e as any).isComposing &&
-          !isTextareaTarget(e.target) &&
-          !isTextareaTarget(document.activeElement) &&
-          !isContentEditableTarget(e.target) &&
-          !isContentEditableTarget(document.activeElement)
-        ) {
-          const t = e.target instanceof HTMLElement ? e.target : null;
-          const tag = (t?.tagName ?? "").toUpperCase();
-          if (tag !== "BUTTON" && tag !== "A") {
-            const didClick = clickModalButton("default");
-            if (didClick) {
-              e.preventDefault();
-              e.stopPropagation();
-              handledEvents.add(e);
-              return;
-            }
-          }
         }
 
         return;
