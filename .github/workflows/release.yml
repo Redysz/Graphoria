@@ -62,6 +62,33 @@ jobs:
           openssl pkcs12 -in /tmp/apple-cert.p12 -passin pass:"$APPLE_CERTIFICATE_PASSWORD" -nokeys -clcerts >/dev/null
           npm run tauri build -- --bundles dmg
 
+          APP_PATH="src-tauri/target/release/bundle/macos/Graphoria.app"
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | head -n 1)
+
+          if [ -z "$DMG_PATH" ]; then
+            echo "No DMG file found after build"
+            exit 1
+          fi
+
+          echo "Verifying app signature..."
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+
+          echo "Submitting DMG for notarization..."
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+
+          echo "Stapling notarization ticket..."
+          xcrun stapler staple "$DMG_PATH"
+
+          echo "Validating stapled DMG..."
+          xcrun stapler validate "$DMG_PATH"
+          spctl -a -vv -t open "$DMG_PATH"
+
       - name: Build Tauri (Linux)
         if: runner.os == 'Linux'
         run: npm run tauri build -- --bundles deb appimage
