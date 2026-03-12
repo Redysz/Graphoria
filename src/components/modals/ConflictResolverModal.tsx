@@ -1025,6 +1025,14 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
     }
   }
 
+  async function applyContentOrStageIfResolved(content: string) {
+    if (listConflictBlocksFromText(content).length === 0) {
+      await applyAndStageContent(content);
+      return;
+    }
+    await applyContent(content);
+  }
+
   async function takeOurs() {
     if (!selectedPath.trim()) return;
     if (versions?.conflictKind === "modify_delete") {
@@ -1445,10 +1453,11 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 {!selectedIsUnmerged ? (
                   hasOtherUnmerged ? (
                     <button
+                      key="next-unmerged"
                       type="button"
                       onClick={goToNextUnmerged}
                       disabled={disabled}
-                      title="Jump to the next file that still has conflicts"
+                      title="This file looks great, go to the next one"
                     >
                       Go to next file with conflicts
                     </button>
@@ -1458,6 +1467,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                 ) : (
                   <>
                     <button
+                      key="take-ours"
                       type="button"
                       onClick={() => void takeOurs()}
                       disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
@@ -1470,6 +1480,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       Take ours
                     </button>
                     <button
+                      key="take-theirs"
                       type="button"
                       onClick={() => void takeTheirs()}
                       disabled={disabled || !selectedPath.trim() || renameNeedsNameChoice}
@@ -1680,6 +1691,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       options={{
                         readOnly: false,
                         contextmenu: false,
+                        quickSuggestions: false,
+                        suggestOnTriggerCharacters: false,
+                        wordBasedSuggestions: "off",
+                        inlineSuggest: { enabled: false },
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
@@ -1757,6 +1772,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       options={{
                         readOnly: false,
                         contextmenu: false,
+                        quickSuggestions: false,
+                        suggestOnTriggerCharacters: false,
+                        wordBasedSuggestions: "off",
+                        inlineSuggest: { enabled: false },
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
@@ -1975,7 +1994,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const blocksNow = getBlocksNow();
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.oursText ?? "");
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                           },
@@ -1996,7 +2015,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const blocksNow = getBlocksNow();
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, blocksNow[blkIdx]?.theirsText ?? "");
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                           },
@@ -2020,7 +2039,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const combined = ours && theirs ? `${ours}\n${theirs}` : `${ours}${theirs}`;
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                           },
@@ -2044,7 +2063,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             const combined = theirs && ours ? `${theirs}\n${ours}` : `${theirs}${ours}`;
                             const next = applyConflictBlock(resultDraftRef.current, blkIdx, combined);
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                           },
@@ -2078,6 +2097,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       options={{
                         readOnly: false,
                         contextmenu: false,
+                        quickSuggestions: false,
+                        suggestOnTriggerCharacters: false,
+                        wordBasedSuggestions: "off",
+                        inlineSuggest: { enabled: false },
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
@@ -2219,7 +2242,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             model.applyEdits([{ range, text: oursLines.join("\n") }]);
                             const next = model.getValue();
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                             return;
@@ -2246,7 +2269,7 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                             model.applyEdits([{ range, text: theirLines.join("\n") }]);
                             const next = model.getValue();
                             setResultDraft(next);
-                            await applyContent(next);
+                            await applyContentOrStageIfResolved(next);
                             setDiffOurs(buildVariantFromWorking(next, "ours"));
                             setDiffTheirs(buildVariantFromWorking(next, "theirs"));
                             return;
@@ -2258,6 +2281,10 @@ export function ConflictResolverModal({ open, repoPath, operation, initialFiles,
                       options={{
                         readOnly: false,
                         contextmenu: false,
+                        quickSuggestions: false,
+                        suggestOnTriggerCharacters: false,
+                        wordBasedSuggestions: "off",
+                        inlineSuggest: { enabled: false },
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         wordWrap: "on",
