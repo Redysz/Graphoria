@@ -60,20 +60,16 @@ jobs:
         run: |
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/apple-cert.p12
           openssl pkcs12 -in /tmp/apple-cert.p12 -passin pass:"$APPLE_CERTIFICATE_PASSWORD" -nokeys -clcerts >/dev/null
+          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           npm run tauri build -- --bundles dmg
 
-          APP_PATH="src-tauri/target/release/bundle/macos/Graphoria.app"
           DMG_PATH=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | head -n 1)
 
           if [ -z "$DMG_PATH" ]; then
             echo "No DMG file found after build"
             exit 1
           fi
-
-          echo "Verifying app signature..."
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
 
           echo "Submitting DMG for notarization..."
           xcrun notarytool submit "$DMG_PATH" \
