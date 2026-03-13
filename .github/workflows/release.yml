@@ -76,11 +76,55 @@ jobs:
           echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
 
           echo "Submitting DMG for notarization..."
-          xcrun notarytool submit "$DMG_PATH" \
+          SUBMIT_JSON=$(xcrun notarytool submit "$DMG_PATH" \
             --key "$RUNNER_TEMP/AuthKey.p8" \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER" \
-            --wait
+            --output-format json)
+
+          SUBMISSION_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$SUBMIT_JSON")
+          echo "Notary submission id: $SUBMISSION_ID"
+
+          DEADLINE=$(( $(date +%s) + 7200 ))
+          ATTEMPT=0
+          LAST_STATUS="In Progress"
+
+          while [ $(date +%s) -lt $DEADLINE ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Polling notary status (attempt $ATTEMPT)..."
+
+            if INFO_JSON=$(xcrun notarytool info "$SUBMISSION_ID" \
+              --key "$RUNNER_TEMP/AuthKey.p8" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --output-format json 2>/dev/null); then
+              LAST_STATUS=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status", "Unknown"))' "$INFO_JSON")
+              echo "Current status: $LAST_STATUS"
+
+              if [ "$LAST_STATUS" = "Accepted" ]; then
+                break
+              fi
+
+              if [ "$LAST_STATUS" = "Invalid" ] || [ "$LAST_STATUS" = "Rejected" ]; then
+                echo "Notarization failed with status: $LAST_STATUS"
+                xcrun notarytool log "$SUBMISSION_ID" \
+                  --key "$RUNNER_TEMP/AuthKey.p8" \
+                  --key-id "$APPLE_API_KEY_ID" \
+                  --issuer "$APPLE_API_ISSUER" || true
+                exit 1
+              fi
+            else
+              echo "Transient network/notary API error while polling. Retrying in 20s..."
+            fi
+
+            sleep 20
+          done
+
+          if [ "$LAST_STATUS" != "Accepted" ]; then
+            echo "Notarization did not complete within 60 minutes (last status: $LAST_STATUS)."
+            echo "You can rerun the workflow; Apple notary queues are often delayed."
+            exit 1
+          fi
 
           echo "Stapling notarization ticket..."
           xcrun stapler staple "$DMG_PATH"
