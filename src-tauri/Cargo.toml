@@ -1,6 +1,6 @@
 [package]
 name = "graphoria"
-version = "1.0.0"
+version = "1.0.1"
 description = "Graphoria Git GUI Client"
 authors = ["Karol Kurek"]
 edition = "2024"
