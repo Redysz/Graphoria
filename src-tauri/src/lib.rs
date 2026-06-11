@@ -1559,6 +1559,7 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
 
     let mut add_args: Vec<&str> = Vec::new();
     add_args.push("add");
+    add_args.push("-A");
     add_args.push("--");
     for p in &paths {
         if !p.trim().is_empty() {
