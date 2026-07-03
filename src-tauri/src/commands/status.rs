@@ -266,6 +266,13 @@ pub(crate) fn git_stage_paths(repo_path: String, paths: Vec<String>) -> Result<S
         return Ok(String::from("ok"));
     }
 
+    // Drop paths that `git add` cannot match (e.g. the old side of an already-staged rename),
+    // which would otherwise abort the whole `git add` with "pathspec did not match any files".
+    let cleaned = crate::filter_addable_paths(&repo_path, &cleaned);
+    if cleaned.is_empty() {
+        return Ok(String::from("ok"));
+    }
+
     crate::with_repo_git_lock(&repo_path, || {
         let mut args: Vec<&str> = Vec::new();
         args.push("add");
