@@ -677,6 +677,47 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
+/// Filter a list of paths down to those that `git add` can actually match, i.e. paths that
+/// either exist in the working tree or are tracked in the index.
+///
+/// This guards against a known failure mode: for a *staged* rename (index shows `R old -> new`),
+/// the frontend passes both the new and the old path so that unstaged renames get their deletion
+/// staged too. For a staged rename, however, the old path exists neither in the working tree nor
+/// in the index (it was already removed by the staged rename), so `git add -- <old>` aborts the
+/// whole command with `pathspec '<old>' did not match any files`. Dropping such non-matching paths
+/// keeps the still-staged rename intact (it is committed regardless) while staging the new path.
+pub(crate) fn filter_addable_paths(repo_path: &str, paths: &[String]) -> Vec<String> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut tracked: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut args: Vec<&str> = vec!["ls-files", "-z", "--"];
+    for p in paths {
+        args.push(p.as_str());
+    }
+    if let Ok(out) = git_command_in_repo(repo_path).args(&args).output() {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for entry in text.split('\0') {
+                if !entry.is_empty() {
+                    tracked.insert(entry.to_string());
+                }
+            }
+        }
+    }
+
+    let base = std::path::Path::new(repo_path);
+    paths
+        .iter()
+        .filter(|p| {
+            let s = p.as_str();
+            tracked.contains(s) || base.join(s).exists()
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn run_git_with_stdin(repo_path: &str, args: &[&str], stdin_data: &str) -> Result<String, String> {
     let mut child = git_command_in_repo(repo_path)
         .args(args)
@@ -1557,24 +1598,34 @@ fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<
         return Err(String::from("No files selected to commit."));
     }
 
-    let mut add_args: Vec<&str> = Vec::new();
-    add_args.push("add");
-    add_args.push("-A");
-    add_args.push("--");
-    for p in &paths {
-        if !p.trim().is_empty() {
+    let cleaned: Vec<String> = paths
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    // Drop paths that `git add` cannot match (e.g. the old side of an already-staged rename),
+    // which would otherwise abort the whole `git add` with "pathspec did not match any files".
+    let addable = filter_addable_paths(&repo_path, &cleaned);
+
+    if !addable.is_empty() {
+        let mut add_args: Vec<&str> = Vec::new();
+        add_args.push("add");
+        add_args.push("-A");
+        add_args.push("--");
+        for p in &addable {
             add_args.push(p);
         }
-    }
 
-    let add_out = git_command_in_repo(&repo_path)
-        .args(&add_args)
-        .output()
-        .map_err(|e| format!("Failed to spawn git add: {e}"))?;
+        let add_out = git_command_in_repo(&repo_path)
+            .args(&add_args)
+            .output()
+            .map_err(|e| format!("Failed to spawn git add: {e}"))?;
 
-    if !add_out.status.success() {
-        let stderr = String::from_utf8_lossy(&add_out.stderr);
-        return Err(format!("git add failed: {stderr}"));
+        if !add_out.status.success() {
+            let stderr = String::from_utf8_lossy(&add_out.stderr);
+            return Err(format!("git add failed: {stderr}"));
+        }
     }
 
     let commit_out = git_command_in_repo(&repo_path)
@@ -3284,5 +3335,66 @@ mod tests {
         assert_eq!(result.operation, "merge");
         assert_eq!(result.status, "conflicts");
         assert!(result.conflict_files.iter().any(|p| p == "conflict.txt"));
+    }
+
+    #[test]
+    fn test_filter_addable_paths_drops_old_side_of_staged_rename() {
+        let td = TempDir::new().unwrap();
+        let repo = repo_path(&td, "repo");
+        init_repo(&repo);
+
+        let old_path = "src/views/chat/utils/htmlSanitizer.ts";
+        let new_path = "src/shared/utils/htmlSanitizer.ts";
+
+        write_file(&repo, old_path, "export const x = 1;\n");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-m", "seed"]);
+
+        // Stage a rename, then modify the file at the new path (unstaged) -> status "RM".
+        fs::create_dir_all(repo.join(new_path).parent().unwrap()).unwrap();
+        git(&repo, &["mv", old_path, new_path]);
+        write_file(&repo, new_path, "export const x = 2;\n");
+
+        let repo_str = repo.to_string_lossy().to_string();
+        let paths = vec![new_path.to_string(), old_path.to_string()];
+
+        let addable = filter_addable_paths(&repo_str, &paths);
+        // The old path no longer exists in the worktree nor the index (staged rename removed it),
+        // so it must be dropped; the new path must be kept.
+        assert!(addable.iter().any(|p| p == new_path));
+        assert!(!addable.iter().any(|p| p == old_path));
+    }
+
+    #[test]
+    fn test_git_commit_succeeds_for_staged_rename_with_old_path() {
+        let td = TempDir::new().unwrap();
+        let repo = repo_path(&td, "repo");
+        init_repo(&repo);
+
+        let old_path = "src/views/chat/utils/htmlSanitizer.ts";
+        let new_path = "src/shared/utils/htmlSanitizer.ts";
+
+        write_file(&repo, old_path, "export const x = 1;\n");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-m", "seed"]);
+
+        fs::create_dir_all(repo.join(new_path).parent().unwrap()).unwrap();
+        git(&repo, &["mv", old_path, new_path]);
+        write_file(&repo, new_path, "export const x = 2;\n");
+
+        let repo_str = repo.to_string_lossy().to_string();
+        // Frontend passes both new and old paths for a rename entry; this used to fail with
+        // "pathspec '<old>' did not match any files".
+        let head = git_commit(
+            repo_str,
+            "rename htmlSanitizer".to_string(),
+            vec![new_path.to_string(), old_path.to_string()],
+        )
+        .unwrap();
+        assert!(!head.trim().is_empty());
+
+        let show = git(&repo, &["show", "--name-status", "--format=", "HEAD"]);
+        assert!(show.contains(new_path));
+        assert!(!repo.join(old_path).exists());
     }
 }
