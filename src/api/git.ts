@@ -40,6 +40,22 @@ export function gitGetRemoteUrl(repoPath: string, remoteName: string) {
   return invoke<string | null>("git_get_remote_url", { repoPath, remoteName });
 }
 
+export function gitGetRemoteHost(repoPath: string) {
+  return invoke<string>("git_get_remote_host", { repoPath });
+}
+
+export function gitStoreCredential(params: { repoPath: string; username: string; password: string; scope: "repo" | "host" | "global" }) {
+  return invoke<void>("git_store_credential", params);
+}
+
+export function gitRemoveCredential(params: { repoPath: string; scope: "repo" | "host" | "global" }) {
+  return invoke<void>("git_remove_credential", params);
+}
+
+export function gitHasCredential(repoPath: string) {
+  return invoke<boolean>("git_has_credential", { repoPath });
+}
+
 export function gitAheadBehind(repoPath: string, remoteName: string) {
   return invoke<GitAheadBehind>("git_ahead_behind", { repoPath, remoteName });
 }

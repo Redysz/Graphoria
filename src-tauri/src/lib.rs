@@ -165,6 +165,14 @@ use commands::startup::{get_open_on_startup, set_open_on_startup};
 
 use commands::gitlog::git_log_search;
 
+use commands::credentials::{
+    git_get_remote_host,
+    git_store_credential,
+    git_remove_credential,
+    git_has_credential,
+    git_list_credential_hosts,
+};
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -346,6 +354,9 @@ fn git_command_in_repo(repo_path: &str) -> Command {
     }
     cmd.arg("-c").arg("core.quotepath=false");
     cmd.args(["-C", repo_path]);
+    // Do not let credential helpers (Git Credential Manager, terminal prompts) block with UI.
+    cmd.env("GCM_INTERACTIVE", "never");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd
 }
 
@@ -2943,7 +2954,12 @@ pub fn run() {
             git_delete_working_file,
             git_restore_working_file,
             git_log_search,
-            get_system_info
+            get_system_info,
+            git_get_remote_host,
+            git_store_credential,
+            git_remove_credential,
+            git_has_credential,
+            git_list_credential_hosts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
