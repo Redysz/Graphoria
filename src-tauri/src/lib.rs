@@ -165,6 +165,19 @@ use commands::startup::{get_open_on_startup, set_open_on_startup};
 
 use commands::gitlog::git_log_search;
 
+use commands::credentials::{
+    git_get_remote_host,
+    git_get_suggested_username,
+    git_open_default_login,
+    git_store_credential,
+    git_remove_credential,
+    git_has_credential,
+    git_list_credential_scopes,
+    git_list_credential_hosts,
+    graphoria_credential_helper_args,
+    clear_session_credentials,
+};
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -345,7 +358,16 @@ fn git_command_in_repo(repo_path: &str) -> Command {
         cmd.arg("-c").arg(format!("safe.directory={safe}"));
     }
     cmd.arg("-c").arg("core.quotepath=false");
+
+    // Use Graphoria's own credential stores even when the user chose not to pollute git's config.
+    for helper_arg in graphoria_credential_helper_args(repo_path) {
+        cmd.arg("-c").arg(helper_arg);
+    }
+
     cmd.args(["-C", repo_path]);
+    // Do not let credential helpers (Git Credential Manager, terminal prompts) block with UI.
+    cmd.env("GCM_INTERACTIVE", "never");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd
 }
 
@@ -2781,6 +2803,9 @@ fn get_system_info() -> SystemInfo {
 pub fn run() {
     tauri::Builder::default()
         .setup(|_app| {
+            // Wipe ephemeral "do not remember" credential stores from a previous run.
+            clear_session_credentials();
+
             #[cfg(target_os = "macos")]
             {
                 let app_menu = SubmenuBuilder::new(_app, "Graphoria").quit().build()?;
@@ -2943,7 +2968,15 @@ pub fn run() {
             git_delete_working_file,
             git_restore_working_file,
             git_log_search,
-            get_system_info
+            get_system_info,
+            git_get_remote_host,
+            git_get_suggested_username,
+            git_open_default_login,
+            git_store_credential,
+            git_remove_credential,
+            git_has_credential,
+            git_list_credential_scopes,
+            git_list_credential_hosts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

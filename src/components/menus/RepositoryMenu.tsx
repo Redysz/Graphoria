@@ -16,6 +16,7 @@ export function RepositoryMenu(props: {
   pickRepository: () => void | Promise<void>;
   initializeProject: () => void | Promise<void>;
   openRemoteDialog: () => void | Promise<void>;
+  openCredentialDialog: () => void | Promise<void>;
   loadRepo: (repoPath: string) => void | Promise<unknown>;
   runFetch: () => void | Promise<void>;
   openActiveRepoInExplorer: () => void | Promise<void>;
@@ -36,6 +37,7 @@ export function RepositoryMenu(props: {
     pickRepository,
     initializeProject,
     openRemoteDialog,
+    openCredentialDialog,
     loadRepo,
     runFetch,
     openActiveRepoInExplorer,
@@ -102,6 +104,17 @@ export function RepositoryMenu(props: {
             title={!activeRepoPath ? "No repository" : undefined}
           >
             Remote…
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setRepositoryMenuOpen(false);
+              void openCredentialDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Save remote username/token"}
+          >
+            Credentials…
           </button>
           <button
             type="button"

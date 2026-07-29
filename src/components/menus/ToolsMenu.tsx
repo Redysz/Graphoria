@@ -16,6 +16,7 @@ export function ToolsMenu(props: {
   setGitignoreModifierOpen: (next: boolean) => void;
   openCommitSearch: () => void;
   openCleanOldBranchesDialog: () => void | Promise<void>;
+  openCredentialDialog: () => void | Promise<void>;
 
   confirmClearAllStashes: () => void | Promise<void>;
 
@@ -35,6 +36,7 @@ export function ToolsMenu(props: {
     setGitignoreModifierOpen,
     openCommitSearch,
     openCleanOldBranchesDialog,
+    openCredentialDialog,
     confirmClearAllStashes,
     menuItem,
     shortcutLabel,
@@ -111,6 +113,17 @@ export function ToolsMenu(props: {
             title={!activeRepoPath ? "No repository" : undefined}
           >
             Clean old branches…
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setToolsMenuOpen(false);
+              void openCredentialDialog();
+            }}
+            disabled={!activeRepoPath || loading}
+            title={!activeRepoPath ? "No repository" : "Manage saved remote credentials"}
+          >
+            Manage credentials…
           </button>
           <button
             type="button"
