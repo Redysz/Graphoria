@@ -167,12 +167,15 @@ use commands::gitlog::git_log_search;
 
 use commands::credentials::{
     git_get_remote_host,
+    git_get_suggested_username,
+    git_open_default_login,
     git_store_credential,
     git_remove_credential,
     git_has_credential,
     git_list_credential_scopes,
     git_list_credential_hosts,
     graphoria_credential_helper_args,
+    clear_session_credentials,
 };
 
 #[tauri::command]
@@ -2800,6 +2803,9 @@ fn get_system_info() -> SystemInfo {
 pub fn run() {
     tauri::Builder::default()
         .setup(|_app| {
+            // Wipe ephemeral "do not remember" credential stores from a previous run.
+            clear_session_credentials();
+
             #[cfg(target_os = "macos")]
             {
                 let app_menu = SubmenuBuilder::new(_app, "Graphoria").quit().build()?;
@@ -2964,6 +2970,8 @@ pub fn run() {
             git_log_search,
             get_system_info,
             git_get_remote_host,
+            git_get_suggested_username,
+            git_open_default_login,
             git_store_credential,
             git_remove_credential,
             git_has_credential,

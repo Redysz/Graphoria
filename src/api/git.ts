@@ -48,10 +48,18 @@ export function gitStoreCredential(params: {
   repoPath: string;
   username: string;
   password: string;
-  scope: "repo" | "host" | "global";
+  scope: "repo" | "host" | "global" | "session";
   applyToGit: boolean;
 }) {
   return invoke<void>("git_store_credential", params);
+}
+
+export function gitGetSuggestedUsername(repoPath: string) {
+  return invoke<string>("git_get_suggested_username", { repoPath });
+}
+
+export function gitOpenDefaultLogin(params: { repoPath: string; username?: string }) {
+  return invoke<void>("git_open_default_login", params);
 }
 
 export function gitRemoveCredential(params: { repoPath: string; scope: "repo" | "host" | "global" }) {
