@@ -170,7 +170,9 @@ use commands::credentials::{
     git_store_credential,
     git_remove_credential,
     git_has_credential,
+    git_list_credential_scopes,
     git_list_credential_hosts,
+    graphoria_credential_helper_args,
 };
 
 #[tauri::command]
@@ -353,6 +355,12 @@ fn git_command_in_repo(repo_path: &str) -> Command {
         cmd.arg("-c").arg(format!("safe.directory={safe}"));
     }
     cmd.arg("-c").arg("core.quotepath=false");
+
+    // Use Graphoria's own credential stores even when the user chose not to pollute git's config.
+    for helper_arg in graphoria_credential_helper_args(repo_path) {
+        cmd.arg("-c").arg(helper_arg);
+    }
+
     cmd.args(["-C", repo_path]);
     // Do not let credential helpers (Git Credential Manager, terminal prompts) block with UI.
     cmd.env("GCM_INTERACTIVE", "never");
@@ -2959,6 +2967,7 @@ pub fn run() {
             git_store_credential,
             git_remove_credential,
             git_has_credential,
+            git_list_credential_scopes,
             git_list_credential_hosts
         ])
         .run(tauri::generate_context!())

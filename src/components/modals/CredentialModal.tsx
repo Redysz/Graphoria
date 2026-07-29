@@ -5,20 +5,41 @@ type CredentialScope = "repo" | "host" | "global";
 type Props = {
   repoPath: string;
   host: string | null;
+  initialScope?: CredentialScope;
   onClose: () => void;
   onSaved: () => void;
 };
 
-export function CredentialModal({ repoPath, host, onClose, onSaved }: Props) {
+export function CredentialModal({ repoPath, host, initialScope, onClose, onSaved }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [scope, setScope] = useState<CredentialScope>("repo");
+  const [scope, setScope] = useState<CredentialScope>(initialScope ?? "repo");
+  const [applyToGit, setApplyToGit] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [busyRemove, setBusyRemove] = useState(false);
   const [error, setError] = useState("");
+  const [hasCredential, setHasCredential] = useState(false);
 
   useEffect(() => {
     setError("");
-  }, [repoPath]);
+    setUsername("");
+    setPassword("");
+    setScope(initialScope ?? "repo");
+    setApplyToGit(true);
+    setHasCredential(false);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { gitHasCredential } = await import("../../api/git");
+        const present = await gitHasCredential(repoPath);
+        if (!cancelled) setHasCredential(present);
+      } catch {
+        if (!cancelled) setHasCredential(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [repoPath, initialScope]);
 
   const canSave = username.trim() && password.trim() && host;
 
@@ -33,12 +54,29 @@ export function CredentialModal({ repoPath, host, onClose, onSaved }: Props) {
         username: username.trim(),
         password: password.trim(),
         scope,
+        applyToGit,
       });
       onSaved();
     } catch (e) {
       setError(typeof e === "string" ? e : JSON.stringify(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusyRemove(true);
+    setError("");
+    try {
+      const { gitRemoveCredential } = await import("../../api/git");
+      await gitRemoveCredential({ repoPath, scope: "repo" });
+      await gitRemoveCredential({ repoPath, scope: "host" });
+      await gitRemoveCredential({ repoPath, scope: "global" });
+      setHasCredential(false);
+    } catch (e) {
+      setError(typeof e === "string" ? e : JSON.stringify(e));
+    } finally {
+      setBusyRemove(false);
     }
   }
 
@@ -125,19 +163,39 @@ export function CredentialModal({ repoPath, host, onClose, onSaved }: Props) {
               </label>
             </div>
 
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+              <input
+                type="checkbox"
+                checked={applyToGit}
+                onChange={(e) => setApplyToGit(e.target.checked)}
+                disabled={busy}
+              />
+              Also use this token for command-line git
+            </label>
+
             <div style={{ opacity: 0.7, fontSize: 12 }}>
               Credentials are stored in plain text by git&apos;s <code>credential-store</code> helper. Use
-              repository scope whenever possible.
+              repository scope whenever possible. If the checkbox is unchecked, Graphoria will use the token
+              only inside this app.
             </div>
           </div>
         </div>
         <div className="modalFooter">
-          <button type="button" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="button" onClick={() => void save()} disabled={!canSave || busy}>
-            {busy ? "Saving…" : "Save credentials"}
-          </button>
+          {hasCredential ? (
+            <button type="button" onClick={() => void remove()} disabled={busyRemove || busy} style={{ color: "#ff6b6b" }}>
+              {busyRemove ? "Removing…" : "Remove saved"}
+            </button>
+          ) : (
+            <span />
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onClose} disabled={busy || busyRemove}>
+              Cancel
+            </button>
+            <button type="button" onClick={() => void save()} disabled={!canSave || busy || busyRemove}>
+              {busy ? "Saving…" : "Save credentials"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

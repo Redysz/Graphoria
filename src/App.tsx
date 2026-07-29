@@ -144,6 +144,7 @@ import { FilePreviewModal } from "./components/modals/FilePreviewModal";
 import { ChangesModal } from "./components/modals/ChangesModal";
 import { RemoteModal } from "./components/modals/RemoteModal";
 import { CredentialModal } from "./components/modals/CredentialModal";
+import { CredentialsManagerModal } from "./components/modals/CredentialsManagerModal";
 import { PushModal } from "./components/modals/PushModal";
 import { StashModal } from "./components/modals/StashModal";
 import { StashViewModal } from "./components/modals/StashViewModal";
@@ -446,7 +447,9 @@ function App() {
 
   const [credentialModalOpen, setCredentialModalOpen] = useState(false);
   const [credentialHost, setCredentialHost] = useState<string | null>(null);
+  const [credentialInitialScope, setCredentialInitialScope] = useState<"repo" | "host" | "global">("repo");
   const pendingGitActionRef = useRef<'fetch' | 'pull' | 'push' | null>(null);
+  const [credentialsManagerOpen, setCredentialsManagerOpen] = useState(false);
 
   const [pushModalOpen, setPushModalOpen] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -4271,9 +4274,11 @@ function App() {
     setRemoteModalOpen(true);
   }
 
-  async function openCredentialDialog(action?: 'fetch' | 'pull' | 'push') {
+  async function openCredentialDialog(action?: 'fetch' | 'pull' | 'push', initialScope: "repo" | "host" | "global" = "repo") {
     if (!activeRepoPath) return;
     pendingGitActionRef.current = action ?? null;
+    setCredentialInitialScope(initialScope);
+    setCredentialsManagerOpen(false);
     setCredentialHost(null);
     setCredentialModalOpen(true);
     try {
@@ -4283,6 +4288,13 @@ function App() {
     } catch {
       setCredentialHost(null);
     }
+  }
+
+  async function openCredentialsManager() {
+    if (!activeRepoPath) return;
+    setCredentialModalOpen(false);
+    setCredentialHost(null);
+    setCredentialsManagerOpen(true);
   }
 
   function isCredentialError(e: unknown): boolean {
@@ -4711,6 +4723,7 @@ function App() {
               setGitignoreModifierOpen={setGitignoreModifierOpen}
               openCommitSearch={openCommitSearch}
               openCleanOldBranchesDialog={openCleanOldBranchesDialog}
+              openCredentialDialog={openCredentialsManager}
               confirmClearAllStashes={async () => {
                 const ok = await confirmDialog({
                   title: "Clear all stashes",
@@ -5943,6 +5956,7 @@ function App() {
         <CredentialModal
           repoPath={activeRepoPath}
           host={credentialHost}
+          initialScope={credentialInitialScope}
           onClose={() => {
             pendingGitActionRef.current = null;
             setCredentialModalOpen(false);
@@ -5955,6 +5969,15 @@ function App() {
             else if (action === 'pull') void startPull('merge');
             else if (action === 'push') void runPush();
           }}
+        />
+      ) : null}
+
+      {credentialsManagerOpen ? (
+        <CredentialsManagerModal
+          repoPath={activeRepoPath}
+          host={credentialHost}
+          onClose={() => setCredentialsManagerOpen(false)}
+          onEdit={(scope) => void openCredentialDialog(undefined, scope)}
         />
       ) : null}
 

@@ -129,6 +129,30 @@ fn store_helper_value(store_path: &Path) -> Result<String, String> {
     Ok(format!("store --file={path_unix}"))
 }
 
+/// Matches credential helper entries that Graphoria created (its store files always live under a
+/// path containing "graphoria"). Used to clean up our own entries idempotently without touching
+/// other helpers the user may rely on (e.g. Git Credential Manager).
+const OUR_STORE_HELPER_RE: &str = "^store --file=.*[Gg]raphoria";
+
+/// Adds our credential-store helper to the given git config key so that command-line git uses the
+/// stored token. A leading empty value is added first to reset any helpers configured earlier
+/// (such as Git Credential Manager, which is what triggers the Atlassian sign-in popup), so that
+/// our store takes over instead of prompting. Idempotent: previous Graphoria entries are removed
+/// first, and any other helpers are preserved.
+fn set_graphoria_helper(repo_path: &str, scope_flag: &str, key: &str, helper: &str) {
+    let _ = run_git(repo_path, &["config", scope_flag, "--unset-all", key, OUR_STORE_HELPER_RE]);
+    let _ = run_git(repo_path, &["config", scope_flag, "--unset-all", key, "^$"]);
+    let _ = run_git(repo_path, &["config", scope_flag, "--add", key, ""]);
+    let _ = run_git(repo_path, &["config", scope_flag, "--add", key, helper]);
+}
+
+/// Removes the credential-store helper (and the empty reset entry) that Graphoria added for the
+/// given git config key, leaving any other helpers intact.
+fn unset_graphoria_helper(repo_path: &str, scope_flag: &str, key: &str) {
+    let _ = run_git(repo_path, &["config", scope_flag, "--unset-all", key, OUR_STORE_HELPER_RE]);
+    let _ = run_git(repo_path, &["config", scope_flag, "--unset-all", key, "^$"]);
+}
+
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create credentials directory: {e}"))?;
@@ -204,6 +228,7 @@ pub(crate) fn git_store_credential(
     username: String,
     password: String,
     scope: String,
+    apply_to_git: bool,
 ) -> Result<(), String> {
     let repo_path = normalize_repo_path(&repo_path);
     let mut username = username.trim().to_string();
@@ -239,17 +264,69 @@ pub(crate) fn git_store_credential(
     let store_path = store_file_path(&repo_path, &host, &scope)?;
     ensure_parent_dir(&store_path)?;
 
-    // Set the credential helper so git credential approve writes to our store.
-    let (config_key, config_scope) = store_config_key(&scope, &host);
     let helper = store_helper_value(&store_path)?;
 
-    let _ = run_git(&repo_path, &["config", config_scope.as_str(), "--replace-all", config_key.as_str(), helper.as_str()]);
+    // Set the credential helper in git config only when the user wants command-line git to use it too.
+    if apply_to_git {
+        // Scope-specific config: repo-local, per-host (global) or the generic global helper.
+        let (config_key, config_scope) = store_config_key(&scope, &host);
+        set_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str(), &helper);
 
-    // Approve the credential in the chosen store.
+        // Always set a repo-local credential.helper as well so that a terminal opened inside this
+        // repository uses our store first, regardless of global helpers like Git Credential Manager.
+        set_graphoria_helper(&repo_path, "--local", "credential.helper", &helper);
+    }
+
+    // Write the credential into Graphoria's own store file for the chosen scope. The explicit
+    // helpers (empty reset + our store) make sure the token is written to our file only, regardless
+    // of whatever helper git is otherwise configured to use.
+    let helper_arg = format!("credential.helper={helper}");
     let stdin = format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n");
-    run_git_with_stdin(&repo_path, &["credential", "approve"], &stdin)?;
+    run_git_with_stdin(
+        &repo_path,
+        &["-c", "credential.helper=", "-c", helper_arg.as_str(), "credential", "approve"],
+        &stdin,
+    )?;
 
     Ok(())
+}
+
+/// Returns `-c credential.helper=...` arguments for every Graphoria credential store that exists
+/// for this repository, ordered from most specific (repo) to least specific (global).
+/// This lets Graphoria use the stored credentials without having to write to git's config.
+pub(crate) fn graphoria_credential_helper_args(repo_path: &str) -> Vec<String> {
+    let repo_path = normalize_repo_path(repo_path);
+    let host = remote_origin_host(&repo_path).ok().flatten();
+
+    let mut out = Vec::new();
+
+    if let Ok(path) = store_file_path(&repo_path, "", "repo") {
+        if path.exists() {
+            if let Ok(helper) = store_helper_value(&path) {
+                out.push(format!("credential.helper={helper}"));
+            }
+        }
+    }
+
+    if let Some(h) = host.as_ref() {
+        if let Ok(path) = store_file_path(&repo_path, h, "host") {
+            if path.exists() {
+                if let Ok(helper) = store_helper_value(&path) {
+                    out.push(format!("credential.helper={helper}"));
+                }
+            }
+        }
+    }
+
+    if let Ok(path) = store_file_path(&repo_path, host.as_deref().unwrap_or(""), "global") {
+        if path.exists() {
+            if let Ok(helper) = store_helper_value(&path) {
+                out.push(format!("credential.helper={helper}"));
+            }
+        }
+    }
+
+    out
 }
 
 #[tauri::command]
@@ -273,14 +350,11 @@ pub(crate) fn git_remove_credential(repo_path: String, scope: String) -> Result<
         let _ = fs::remove_file(&store_path);
     }
 
+    // Remove only the entries Graphoria added, both from the scope-specific key and from the
+    // repo-local helper, leaving any other helpers (e.g. Git Credential Manager) untouched.
     let (config_key, config_scope) = store_config_key(&scope, &host);
-    if scope == "global" {
-        // For global scope we only remove the helper value if it points to our file.
-        // Do not blindly --unset-all because the user may have other credential helpers.
-        let _ = run_git(&repo_path, &["config", config_scope.as_str(), "--unset", config_key.as_str()]);
-    } else {
-        let _ = run_git(&repo_path, &["config", config_scope.as_str(), "--unset-all", config_key.as_str()]);
-    }
+    unset_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str());
+    unset_graphoria_helper(&repo_path, "--local", "credential.helper");
 
     Ok(())
 }
@@ -301,6 +375,25 @@ pub(crate) fn git_has_credential(repo_path: String) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+#[tauri::command]
+pub(crate) fn git_list_credential_scopes(repo_path: String) -> Result<Vec<String>, String> {
+    let repo_path = normalize_repo_path(&repo_path);
+    let host = match remote_origin_host(&repo_path)? {
+        Some(h) => h,
+        None => String::new(),
+    };
+
+    let mut out = Vec::new();
+    for scope in ["repo", "host", "global"] {
+        if let Ok(path) = store_file_path(&repo_path, &host, scope) {
+            if path.exists() {
+                out.push(scope.to_string());
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[tauri::command]
