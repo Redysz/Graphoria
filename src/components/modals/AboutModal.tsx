@@ -9,7 +9,7 @@ type SystemInfo = {
   tauri_version: string;
 };
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 
 function GraphBackground() {
   return (
