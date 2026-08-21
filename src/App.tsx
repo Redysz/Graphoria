@@ -208,6 +208,21 @@ function parseErrorForUi(raw: string): ParsedUiError {
   return { summary, details, hasDetails: true };
 }
 
+function isNotFullyMergedError(raw: string): boolean {
+  return /is not fully merged/i.test(raw ?? "");
+}
+
+function compactGitError(raw: string): string {
+  return (raw ?? "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.toLowerCase().startsWith("hint:"))
+    .join(" ")
+    .replace(/\s*hint:.*$/i, "")
+    .trim();
+}
+
 function App() {
   const [repos, setRepos] = useState<string[]>([]);
   const [activeRepoPath, setActiveRepoPath] = useState<string>("");
@@ -3105,7 +3120,26 @@ function App() {
       await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: false });
       await loadRepo(activeRepoPath);
     } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
+      const raw = typeof e === "string" ? e : JSON.stringify(e);
+      if (!isNotFullyMergedError(raw)) {
+        setError(raw);
+        return;
+      }
+
+      const forceOk = await confirmDialog({
+        title: "Delete unmerged branch?",
+        message: `Branch ${b} is not fully merged.\n\nDeleting it will discard commits that exist only on this branch. Are you sure?`,
+        okLabel: "Yes, force delete",
+        cancelLabel: "No",
+      });
+      if (!forceOk) return;
+
+      try {
+        await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: true });
+        await loadRepo(activeRepoPath);
+      } catch (e2) {
+        setError(typeof e2 === "string" ? e2 : JSON.stringify(e2));
+      }
     } finally {
       setLoading(false);
     }
@@ -3161,11 +3195,42 @@ function App() {
     setCleanOldBranchesError("");
     try {
       const failures: Array<{ branch: string; error: string }> = [];
+      const unmerged: string[] = [];
       for (const b of toDelete) {
         try {
           await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: false });
         } catch (e) {
-          failures.push({ branch: b, error: typeof e === "string" ? e : JSON.stringify(e) });
+          const raw = typeof e === "string" ? e : JSON.stringify(e);
+          if (isNotFullyMergedError(raw)) unmerged.push(b);
+          else failures.push({ branch: b, error: compactGitError(raw) });
+        }
+      }
+
+      if (unmerged.length > 0) {
+        const list = unmerged.slice(0, 15).join("\n");
+        const forceOk = await confirmDialog({
+          title: "Delete unmerged branches?",
+          message:
+            `${unmerged.length} branch(es) are not fully merged, so they were not deleted:\n\n` +
+            (unmerged.length > 15 ? `${list}\n…` : list) +
+            `\n\nDeleting them will discard commits that exist only on these branches. Are you sure?`,
+          okLabel: "Yes, force delete",
+          cancelLabel: "No",
+        });
+
+        if (forceOk) {
+          for (const b of unmerged) {
+            try {
+              await gitDeleteBranch({ repoPath: activeRepoPath, branch: b, force: true });
+            } catch (e) {
+              const raw = typeof e === "string" ? e : JSON.stringify(e);
+              failures.push({ branch: b, error: compactGitError(raw) });
+            }
+          }
+        } else {
+          for (const b of unmerged) {
+            failures.push({ branch: b, error: "skipped: branch is not fully merged" });
+          }
         }
       }
 
