@@ -342,9 +342,9 @@
   border: 0;
   background: transparent;
   padding: 0;
+  padding-right: 86px;
   color: inherit;
   text-align: left;
-  transition: padding-right 0.12s ease-out;
 }
 
 .stashLabel {
@@ -422,11 +422,6 @@
 .branchRow:focus-within .branchActions {
   opacity: 1;
   pointer-events: auto;
-}
-
-.branchRow:hover .branchMain,
-.branchRow:focus-within .branchMain {
-  padding-right: 86px;
 }
 
 .tagRow:hover .tagActions,

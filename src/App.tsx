@@ -6,7 +6,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -26,10 +25,9 @@ import {
 } from "./shortcuts";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { copyText } from "./utils/clipboard";
-import { fnv1a32 } from "./utils/hash";
 import { requestGravatar, getGravatarUrl, subscribeGravatarCache, clearGravatarCache } from "./utils/gravatarCache";
-import { authorInitials, shortHash, truncate } from "./utils/text";
-import { CommitLaneSvg } from "./features/commits/CommitLaneSvg";
+import { shortHash, truncate } from "./utils/text";
+import { CommitRow } from "./features/commits/CommitRow";
 import {
   computeCommitLaneRows,
   computeCompactLaneByHashForGraph,
@@ -221,6 +219,18 @@ function compactGitError(raw: string): string {
     .join(" ")
     .replace(/\s*hint:.*$/i, "")
     .trim();
+}
+
+// Shared empty fallbacks: returning a fresh literal from a render would give memoized children a
+// new prop identity on every render and silently disable their memoization.
+const EMPTY_STASHES: GitStashEntry[] = [];
+const EMPTY_STRINGS: string[] = [];
+
+// Pure helper, kept at module scope so callbacks depending on it can list complete dependencies.
+function normalizeBranchName(name: string) {
+  let t = name.trim();
+  if (t.startsWith("* ")) t = t.slice(2).trim();
+  return t;
 }
 
 function App() {
@@ -716,14 +726,19 @@ function App() {
     return !!worktreeValidationError && error === worktreeValidationError.message;
   }, [error, worktreeValidationError]);
 
-  function setError(msg: string) {
-    const m = msg ?? "";
-    if (activeRepoPath) {
-      setErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
-      return;
-    }
-    setGlobalError(m);
-  }
+  // Memoized because it is threaded into hooks whose own callbacks (loadRepo, applyStashByRef, ...)
+  // end up as props of memoized components; a fresh function here would invalidate all of them.
+  const setError = useCallback(
+    (msg: string) => {
+      const m = msg ?? "";
+      if (activeRepoPath) {
+        setErrorByRepo((prev) => ({ ...prev, [activeRepoPath]: m }));
+        return;
+      }
+      setGlobalError(m);
+    },
+    [activeRepoPath],
+  );
 
   useEffect(() => {
     if (!error.trim()) {
@@ -1067,14 +1082,42 @@ function App() {
     document.documentElement.style.setProperty("--app-font-size", `${fontSizePx}px`);
   }, [theme, modalClosePosition, fontFamily, fontSizePx]);
 
+  // Repositories already loaded under the current history settings, so that merely reordering or
+  // adding a tab no longer reloads every open repository.
+  const loadedReposRef = useRef<{ key: string; paths: Set<string> }>({ key: "", paths: new Set() });
+
   useEffect(() => {
     if (!activeRepoPath) return;
-    void loadRepo(activeRepoPath);
-    for (const p of repos) {
-      if (!p || p === activeRepoPath) continue;
-      void loadRepo(p, undefined, false);
+
+    const settingsKey = `${commitsOnlyHead}|${commitsHistoryOrder}`;
+    if (loadedReposRef.current.key !== settingsKey) {
+      loadedReposRef.current = { key: settingsKey, paths: new Set() };
     }
-  }, [commitsOnlyHead, commitsHistoryOrder, repos]);
+    const loaded = loadedReposRef.current.paths;
+
+    let cancelled = false;
+
+    void (async () => {
+      if (!loaded.has(activeRepoPath)) {
+        loaded.add(activeRepoPath);
+        if (!(await loadRepo(activeRepoPath))) loaded.delete(activeRepoPath);
+      }
+
+      // The other repositories only feed their tab indicators, so they are loaded one at a time and
+      // only once the active one is done. Loading them all at once was what made switching tabs
+      // during a refresh feel unresponsive.
+      for (const p of repos) {
+        if (cancelled) return;
+        if (!p || loaded.has(p)) continue;
+        loaded.add(p);
+        if (!(await loadRepo(p, undefined, false))) loaded.delete(p);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [commitsOnlyHead, commitsHistoryOrder, repos, activeRepoPath]);
 
   useEffect(() => {
     if (!terminalMenuOpen) return;
@@ -1437,61 +1480,6 @@ function App() {
     return m;
   }, [commitLaneLayout.rows]);
 
-  function parseRefs(
-    refs: string,
-    remoteNames: string[],
-  ): Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> {
-    const parts = refs
-      .split(",")
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-
-    const out: Array<{ kind: "head" | "branch" | "tag" | "remote"; label: string }> = [];
-
-    const remotePrefixes = (remoteNames ?? [])
-      .map((r) => r.trim())
-      .filter((r) => r.length > 0);
-
-    const isRemoteRef = (label: string) => {
-      const t = label.trim();
-      if (!t) return false;
-      return remotePrefixes.some((r) => t.startsWith(`${r}/`));
-    };
-
-    for (const part of parts) {
-      if (part.startsWith("tag: ")) {
-        const label = part.slice("tag: ".length).trim();
-        if (label) out.push({ kind: "tag", label });
-        continue;
-      }
-
-      if (part.includes(" -> ")) {
-        const [leftRaw, rightRaw] = part.split(" -> ", 2);
-        const left = leftRaw.trim();
-        const right = rightRaw.trim();
-        if (left === "HEAD") {
-          out.push({ kind: "head", label: "HEAD" });
-        } else if (left.endsWith("/HEAD")) {
-          out.push({ kind: "remote", label: left });
-        } else if (left) {
-          out.push({ kind: isRemoteRef(left) ? "remote" : "branch", label: left });
-        }
-        if (right) {
-          out.push({ kind: isRemoteRef(right) ? "remote" : "branch", label: right });
-        }
-        continue;
-      }
-
-      if (part === "HEAD") {
-        out.push({ kind: "head", label: "HEAD" });
-        continue;
-      }
-
-      out.push({ kind: isRemoteRef(part) ? "remote" : "branch", label: part });
-    }
-
-    return out;
-  }
 
   const commitLanePalette = useMemo(() => getCyPalette(theme), [theme]);
   const commitLaneNodeBg = commitLanePalette.nodeBg;
@@ -1548,7 +1536,27 @@ function App() {
     return [...a, ...b];
   }, [tagsToPush?.movedTags, tagsToPush?.newTags]);
   const indicatorsUpdating = indicatorsUpdatingByRepo[activeRepoPath] ?? false;
-  const stashes = stashesByRepo[activeRepoPath] ?? [];
+  const stashes = stashesByRepo[activeRepoPath] ?? EMPTY_STASHES;
+
+  const commitRowRemotes = overview?.remotes ?? EMPTY_STRINGS;
+
+  // The commit list renders up to 2000 memoized rows, so the handlers they receive must keep a
+  // stable identity across renders. They reach the current implementation through a ref instead of
+  // being listed as dependencies, which would defeat the memoization on every render of App.
+  const commitRowActionsRef = useRef({ openCommitDetailsModal, openCommitContextMenu });
+  commitRowActionsRef.current = { openCommitDetailsModal, openCommitContextMenu };
+
+  const handleCommitRowSelect = useCallback((hash: string) => {
+    setSelectedHash(hash);
+  }, []);
+
+  const handleCommitRowOpenDetails = useCallback((hash: string) => {
+    commitRowActionsRef.current.openCommitDetailsModal(hash, "changes");
+  }, []);
+
+  const handleCommitRowContextMenu = useCallback((hash: string, x: number, y: number) => {
+    commitRowActionsRef.current.openCommitContextMenu(hash, x, y);
+  }, []);
 
   const {
     stashModalOpen,
@@ -1601,11 +1609,24 @@ function App() {
     viewMode,
     showStashesOnGraph: graphSettings.showStashesOnGraph,
     diffTool,
-    loadRepo: async (repoPath) => loadRepo(repoPath),
+    // Passing loadRepo directly (instead of wrapping it in a fresh arrow) keeps the callbacks the
+    // controller memoizes from getting a new identity on every render.
+    loadRepo,
     setLoading,
     setError,
     setStatusSummaryByRepo,
   });
+
+  async function confirmDeleteStashImpl(stash: GitStashEntry) {
+    const ok = await confirmDialog({
+      title: "Delete stash",
+      message: `Delete stash ${stash.message?.trim() ? stash.message.trim() : stash.reference}?`,
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    await dropStashByRef(stash.reference);
+  }
 
   const {
     filePreviewOpen,
@@ -2011,12 +2032,6 @@ function App() {
     };
   }, [createBranchOpen, activeRepoPath, createBranchAt]);
 
-  function normalizeBranchName(name: string) {
-    let t = name.trim();
-    if (t.startsWith("* ")) t = t.slice(2).trim();
-    return t;
-  }
-
   function isSelectableTargetBranch(name: string) {
     const t = normalizeBranchName(name);
     if (!t) return false;
@@ -2192,7 +2207,7 @@ function App() {
     });
   }
 
-  function openBranchContextMenu(branch: string, x: number, y: number) {
+  const openBranchContextMenu = useCallback((branch: string, x: number, y: number) => {
     const menuW = 260;
     const menuH = 150;
     const maxX = Math.max(0, window.innerWidth - menuW);
@@ -2202,7 +2217,7 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
-  }
+  }, []);
 
   function openWorkingFileContextMenu(mode: "commit" | "stash", path: string, status: string, x: number, y: number) {
     const menuW = 320;
@@ -2809,13 +2824,13 @@ function App() {
     }
   }
 
-  function openRenameBranchDialog(oldName: string) {
+  const openRenameBranchDialog = useCallback((oldName: string) => {
     setRenameBranchError("");
     setRenameBranchBusy(false);
     setRenameBranchOld(oldName);
     setRenameBranchNew(oldName);
     setRenameBranchOpen(true);
-  }
+  }, []);
 
   async function openSwitchBranchDialog() {
     if (!activeRepoPath) return;
@@ -3101,7 +3116,7 @@ function App() {
     }
   }
 
-  async function deleteBranch(branch: string) {
+  async function deleteBranchImpl(branch: string) {
     if (!activeRepoPath) return;
     const b = branch.trim();
     if (!b) return;
@@ -3347,7 +3362,7 @@ function App() {
     });
   }
 
-  function openTagContextMenu(tag: string, x: number, y: number) {
+  const openTagContextMenu = useCallback((tag: string, x: number, y: number) => {
     const menuW = 260;
     const menuH = 270;
     const maxX = Math.max(0, window.innerWidth - menuW);
@@ -3357,18 +3372,18 @@ function App() {
       x: Math.min(Math.max(0, x), maxX),
       y: Math.min(Math.max(0, y), maxY),
     });
-  }
+  }, []);
 
-  function openRenameTagDialog(oldName: string) {
+  const openRenameTagDialog = useCallback((oldName: string) => {
     setRenameTagError("");
     setRenameTagBusy(false);
     setRenameTagOld(oldName);
     setRenameTagNew(oldName);
     setRenameTagOnRemote(false);
     setRenameTagOpen(true);
-  }
+  }, []);
 
-  async function deleteLocalTag(tag: string) {
+  async function deleteLocalTagImpl(tag: string) {
     if (!activeRepoPath) return;
     const t = tag.trim();
     if (!t) return;
@@ -3443,7 +3458,7 @@ function App() {
     }
   }
 
-  async function checkoutBranch(branch: string) {
+  async function checkoutBranchImpl(branch: string) {
     if (!activeRepoPath) return;
     const b = branch.trim();
     if (!b) return;
@@ -3715,7 +3730,7 @@ function App() {
     }
   }
 
-  async function focusTagOnGraph(tag: string) {
+  async function focusTagOnGraphImpl(tag: string) {
     const hash = await resolveReferenceToHash(tag);
     if (!hash) return;
     setSelectedHash(hash);
@@ -4129,6 +4144,45 @@ function App() {
     setAheadBehindByRepo,
     setTagsToPushByRepo,
   });
+
+  // The Sidebar is memoized, so every handler it receives must keep a stable identity. These
+  // actions read helpers that are themselves recreated on every render (setError, confirmDialog,
+  // loadRepo, refreshIndicators, requestAutoCenter, resolveReferenceToHash, dropStashByRef), so
+  // listing them as dependencies would hand the Sidebar new props on every render of App. They
+  // reach the current implementation through a ref instead.
+  const sidebarActionsRef = useRef({
+    deleteBranchImpl,
+    deleteLocalTagImpl,
+    checkoutBranchImpl,
+    focusTagOnGraphImpl,
+    confirmDeleteStashImpl,
+  });
+  sidebarActionsRef.current = {
+    deleteBranchImpl,
+    deleteLocalTagImpl,
+    checkoutBranchImpl,
+    focusTagOnGraphImpl,
+    confirmDeleteStashImpl,
+  };
+
+  const deleteBranch = useCallback((branch: string) => sidebarActionsRef.current.deleteBranchImpl(branch), []);
+  const deleteLocalTag = useCallback((tag: string) => sidebarActionsRef.current.deleteLocalTagImpl(tag), []);
+  const checkoutBranch = useCallback((branch: string) => sidebarActionsRef.current.checkoutBranchImpl(branch), []);
+  const focusTagOnGraph = useCallback((tag: string) => sidebarActionsRef.current.focusTagOnGraphImpl(tag), []);
+  const confirmDeleteStash = useCallback(
+    (stash: GitStashEntry) => sidebarActionsRef.current.confirmDeleteStashImpl(stash),
+    [],
+  );
+
+  const isActiveBranch = useCallback(
+    (branch: string) => normalizeBranchName(branch) === normalizeBranchName(activeBranchName),
+    [activeBranchName],
+  );
+
+  const expandTags = useCallback(() => {
+    if (!activeRepoPath) return;
+    setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
+  }, [activeRepoPath]);
 
   useEffect(() => {
     if (!activeRepoPath) return;
@@ -4913,7 +4967,7 @@ function App() {
             tagsExpanded={tagsExpanded}
             activeRepoPath={activeRepoPath}
             loading={loading}
-            isActiveBranch={(b) => normalizeBranchName(b) === normalizeBranchName(activeBranchName)}
+            isActiveBranch={isActiveBranch}
             openBranchContextMenu={openBranchContextMenu}
             checkoutBranch={checkoutBranch}
             openRenameBranchDialog={openRenameBranchDialog}
@@ -4922,23 +4976,11 @@ function App() {
             focusTagOnGraph={focusTagOnGraph}
             openRenameTagDialog={openRenameTagDialog}
             deleteLocalTag={deleteLocalTag}
-            expandTags={() => {
-              if (!activeRepoPath) return;
-              setTagsExpandedByRepo((prev) => ({ ...prev, [activeRepoPath]: true }));
-            }}
+            expandTags={expandTags}
             stashes={stashes}
             openStashView={openStashView}
             applyStashByRef={applyStashByRef}
-            confirmDeleteStash={async (s) => {
-              const ok = await confirmDialog({
-                title: "Delete stash",
-                message: `Delete stash ${s.message?.trim() ? s.message.trim() : s.reference}?`,
-                okLabel: "Delete",
-                cancelLabel: "Cancel",
-              });
-              if (!ok) return;
-              await dropStashByRef(s.reference);
-            }}
+            confirmDeleteStash={confirmDeleteStash}
           />
 
         <div
@@ -5118,97 +5160,30 @@ function App() {
                     ) : null}
 
                     <div className="commitsList">
-                      {commitsForList.map((c) => (
-                        <button
-                          key={c.hash}
-                          data-commit-hash={c.hash}
-                          type="button"
-                          onClick={() => setSelectedHash(c.hash)}
-                          onDoubleClick={() => openCommitDetailsModal(c.hash, "changes")}
-                          onContextMenu={(e) => {
-                            if (!activeRepoPath || loading) return;
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openCommitContextMenu(c.hash, e.clientX, e.clientY);
-                          }}
-                          className={c.hash === selectedHash ? "commitRow commitRowSelected" : "commitRow"}
-                        >
-                          <div className="commitRowGrid">
-                            <div
-                              className="commitGraphCell"
-                              style={{
-                                width:
-                                  commitLaneLayout.maxLanes > 0
-                                    ? Math.max(28, 20 + Math.min(commitLaneLayout.maxLanes, 10) * 12 + 56)
-                                    : 28,
-                              }}
-                            >
-                              {commitLaneLayout.rows.length ? (
-                                <CommitLaneSvg
-                                  row={commitLaneRowByHash.get(c.hash) ?? {
-                                    hash: c.hash,
-                                    lane: 0,
-                                    activeTop: [],
-                                    activeBottom: [],
-                                    parentLanes: [],
-                                    joinLanes: [],
-                                  }}
-                                  maxLanes={commitLaneLayout.maxLanes}
-                                  theme={theme}
-                                  selected={c.hash === selectedHash}
-                                  isHead={c.is_head}
-                                  showMergeStub={commitsHistoryOrder === "first_parent" && c.parents.length > 1}
-                                  mergeParentCount={c.parents.length}
-                                  nodeBg={commitLaneNodeBg}
-                                  palette={commitLanePalette}
-                                  refMarkers={parseRefs(c.refs, overview?.remotes ?? [])}
-                                />
-                              ) : null}
-                            </div>
-                            <div
-                              className="commitAvatar"
-                              style={
-                                {
-                                  ["--avatar-c1" as any]: `hsl(${fnv1a32(c.author) % 360} 72% ${theme === "dark" ? 58 : 46}%)`,
-                                  ["--avatar-c2" as any]: `hsl(${(fnv1a32(c.author + "::2") + 28) % 360} 72% ${theme === "dark" ? 48 : 38}%)`,
-                                } as CSSProperties
-                              }
-                              title={c.author}
-                            >
-                              {(() => {
-                                const email = (c.author_email ?? "").trim().toLowerCase();
-                                if (showOnlineAvatars && email) requestGravatar(email);
-                                const loadedUrl = showOnlineAvatars && email ? getGravatarUrl(email) : null;
-                                return (
-                                  <>
-                                    <span className="commitAvatarText">{authorInitials(c.author)}</span>
-                                    {loadedUrl ? (
-                                      <img
-                                        className="commitAvatarImg"
-                                        src={loadedUrl}
-                                        alt={c.author}
-                                        decoding="async"
-                                        referrerPolicy="no-referrer"
-                                        draggable={false}
-                                      />
-                                    ) : null}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                            <div className="commitRowMain">
-                              <div className="commitRowTop">
-                                <span className="commitHash">{shortHash(c.hash)}</span>
-                                <span className="commitSubject">{truncate(c.subject, 100)}</span>
-                                {c.is_head ? <span className="commitHead">(HEAD)</span> : null}
-                              </div>
-                              <div className="commitMeta">
-                                {c.author} — {c.date}
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
+                      {commitsForList.map((c) => {
+                        const email = (c.author_email ?? "").trim().toLowerCase();
+                        if (showOnlineAvatars && email) requestGravatar(email);
+                        return (
+                          <CommitRow
+                            key={c.hash}
+                            commit={c}
+                            selected={c.hash === selectedHash}
+                            laneRow={commitLaneRowByHash.get(c.hash)}
+                            hasLanes={commitLaneLayout.rows.length > 0}
+                            maxLanes={commitLaneLayout.maxLanes}
+                            theme={theme}
+                            palette={commitLanePalette}
+                            nodeBg={commitLaneNodeBg}
+                            firstParentOrder={commitsHistoryOrder === "first_parent"}
+                            remotes={commitRowRemotes}
+                            avatarUrl={showOnlineAvatars && email ? getGravatarUrl(email) : null}
+                            interactionsEnabled={Boolean(activeRepoPath) && !loading}
+                            onSelect={handleCommitRowSelect}
+                            onOpenDetails={handleCommitRowOpenDetails}
+                            onContextMenu={handleCommitRowContextMenu}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 )}

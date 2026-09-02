@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
@@ -32,6 +32,7 @@ pub(crate) fn new_command(program: &str) -> Command {
     cmd
 }
 
+use tauri::async_runtime::RwLock as AsyncRwLock;
 use tauri::Manager;
 
 mod commands;
@@ -315,8 +316,33 @@ fn git_log_subjects_for_range(repo_path: &str, range: &str, max_count: u32) -> R
 static SESSION_SAFE_DIRECTORIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static REPO_GIT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
+/// Instants at which [`ensure_is_git_worktree`] last succeeded, keyed by normalized repo path.
+///
+/// Validation spawns two git processes and almost every command starts with it, so a single refresh
+/// of one repository used to pay for it a dozen times over. Results are only cached on success and
+/// only briefly, so a repository that disappears is still noticed quickly.
+static WORKTREE_OK_CACHE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+const WORKTREE_OK_TTL: Duration = Duration::from_secs(10);
+
 fn session_safe_directories() -> &'static Mutex<HashSet<String>> {
     SESSION_SAFE_DIRECTORIES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn worktree_ok_cache() -> &'static Mutex<HashMap<String, Instant>> {
+    WORKTREE_OK_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Forgets the cached worktree validation for a repository, or for all of them when `None`.
+pub(crate) fn invalidate_worktree_cache(repo_path: Option<&str>) {
+    if let Ok(mut guard) = worktree_ok_cache().lock() {
+        match repo_path {
+            Some(p) => {
+                guard.remove(&normalize_repo_path(p));
+            }
+            None => guard.clear(),
+        }
+    }
 }
 
 fn repo_git_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
@@ -339,6 +365,73 @@ fn with_repo_git_lock<T>(repo_path: &str, f: impl FnOnce() -> Result<T, String>)
 
     let _guard = lock.lock().map_err(|_| String::from("Failed to lock repo operation mutex."))?;
     f()
+}
+
+/// Per-repository queues used by [`repo_read`] and [`repo_write`].
+///
+/// These are async locks: waiting for one parks the awaiting task instead of blocking a thread, so a
+/// long-running operation on one repository never stalls work on any other repository.
+static REPO_QUEUES: OnceLock<Mutex<HashMap<String, Arc<AsyncRwLock<()>>>>> = OnceLock::new();
+
+fn repo_queue(repo_path: &str) -> Arc<AsyncRwLock<()>> {
+    let key = normalize_repo_path(repo_path);
+    let map = REPO_QUEUES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = match map.lock() {
+        Ok(g) => g,
+        // The map only ever holds `Arc`s, so a poisoned lock cannot leave it in a torn state.
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard
+        .entry(key)
+        .or_insert_with(|| Arc::new(AsyncRwLock::new(())))
+        .clone()
+}
+
+/// Runs a blocking closure on the runtime's dedicated blocking pool.
+///
+/// Tauri executes commands that are not declared `async` on the main thread, which is the very
+/// thread that pumps the window's event loop. Any git invocation there freezes the entire interface
+/// until the process exits. Declaring a command `async` and routing its body through this helper
+/// keeps the main thread free, so the UI stays responsive while git works in the background.
+///
+/// Note that `#[tauri::command(async)]` alone would not be enough: it runs the body on an async
+/// worker thread, and blocking those starves every other task on the runtime.
+pub(crate) async fn run_blocking<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("Background task failed: {e}"))?
+}
+
+/// Runs a read-only git operation for `repo_path` off the main thread.
+///
+/// Reads of the same repository run concurrently with each other, but wait for any in-flight
+/// [`repo_write`] so they never observe a repository midway through a mutation.
+pub(crate) async fn repo_read<T, F>(repo_path: impl AsRef<str>, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let queue = repo_queue(repo_path.as_ref());
+    let _guard = queue.read().await;
+    run_blocking(f).await
+}
+
+/// Runs a mutating git operation for `repo_path` off the main thread.
+///
+/// Takes the repository's queue exclusively, so mutations of one repository are serialized (git
+/// itself would otherwise fail on a contended index lock) while other repositories are unaffected.
+pub(crate) async fn repo_write<T, F>(repo_path: impl AsRef<str>, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let queue = repo_queue(repo_path.as_ref());
+    let _guard = queue.write().await;
+    run_blocking(f).await
 }
 
 fn is_repo_session_safe(repo_path: &str) -> bool {
@@ -372,12 +465,13 @@ fn git_command_in_repo(repo_path: &str) -> Command {
 }
 
 #[tauri::command]
-fn git_set_user_identity(
+async fn git_set_user_identity(
     repo_path: Option<String>,
     scope: String,
     user_name: String,
     user_email: String,
 ) -> Result<(), String> {
+    run_blocking(move || {
     let scope = scope.trim().to_lowercase();
     let user_name = user_name.trim().to_string();
     let user_email = user_email.trim().to_string();
@@ -436,6 +530,8 @@ fn git_set_user_identity(
     }
 
     Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -532,17 +628,21 @@ fn delete_working_path(repo_path: &str, rel: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn git_delete_working_path(repo_path: String, path: String) -> Result<(), String> {
+async fn git_delete_working_path(repo_path: String, path: String) -> Result<(), String> {
+    repo_write(repo_path.clone(), move || {
     ensure_is_git_worktree(&repo_path)?;
     let path = path.trim().to_string();
     if path.is_empty() {
         return Err(String::from("path is empty"));
     }
     delete_working_path(&repo_path, path.as_str())
+    })
+    .await
 }
 
 #[tauri::command]
-fn git_discard_working_path(repo_path: String, path: String, is_untracked: Option<bool>) -> Result<(), String> {
+async fn git_discard_working_path(repo_path: String, path: String, is_untracked: Option<bool>) -> Result<(), String> {
+    repo_write(repo_path.clone(), move || {
     ensure_is_git_worktree(&repo_path)?;
     let path = path.trim().to_string();
     if path.is_empty() {
@@ -586,10 +686,13 @@ fn git_discard_working_path(repo_path: String, path: String, is_untracked: Optio
         String::from("Failed to discard changes for path.")
     };
     Err(msg)
+    })
+    .await
 }
 
 #[tauri::command]
-fn git_add_to_gitignore(repo_path: String, pattern: String) -> Result<(), String> {
+async fn git_add_to_gitignore(repo_path: String, pattern: String) -> Result<(), String> {
+    repo_write(repo_path.clone(), move || {
     ensure_is_git_worktree(&repo_path)?;
 
     let pattern = pattern.trim().replace('\\', "/");
@@ -624,6 +727,8 @@ fn git_add_to_gitignore(repo_path: String, pattern: String) -> Result<(), String
 
     fs::write(gitignore_path.as_path(), content).map_err(|e| format!("Failed to write .gitignore: {e}"))?;
     Ok(())
+    })
+    .await
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1406,6 +1511,27 @@ fn format_worktree_validation_error(summary: &str, details: &str) -> String {
 }
 
 fn ensure_is_git_worktree(repo_path: &str) -> Result<(), String> {
+    let key = normalize_repo_path(repo_path);
+
+    if let Ok(guard) = worktree_ok_cache().lock() {
+        if let Some(validated_at) = guard.get(&key) {
+            if validated_at.elapsed() < WORKTREE_OK_TTL {
+                return Ok(());
+            }
+        }
+    }
+
+    // Only successful validations are cached; failures must keep producing their detailed message.
+    ensure_is_git_worktree_uncached(repo_path)?;
+
+    if let Ok(mut guard) = worktree_ok_cache().lock() {
+        guard.insert(key, Instant::now());
+    }
+
+    Ok(())
+}
+
+pub(crate) fn ensure_is_git_worktree_uncached(repo_path: &str) -> Result<(), String> {
     let check = git_command_in_repo(repo_path)
         .args(["rev-parse", "--is-inside-work-tree"])
         .output()
@@ -1609,7 +1735,12 @@ fn list_commits_impl_v2(
 }
 
 #[tauri::command]
-fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<String, String> {
+async fn git_commit(repo_path: String, message: String, paths: Vec<String>) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_commit_impl(repo_path, message, paths)).await
+}
+
+fn git_commit_impl(repo_path: String, message: String, paths: Vec<String>) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     if message.trim().is_empty() {
@@ -1672,7 +1803,12 @@ struct GitPatchEntry {
 }
 
 #[tauri::command]
-fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
+async fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_commit_patch_impl(repo_path, message, patches)).await
+}
+
+fn git_commit_patch_impl(repo_path: String, message: String, patches: Vec<GitPatchEntry>) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let message = message.trim().to_string();
@@ -1834,7 +1970,21 @@ fn git_commit_patch(repo_path: String, message: String, patches: Vec<GitPatchEnt
 }
 
 #[tauri::command]
-fn git_push(
+async fn git_push(
+    repo_path: String,
+    remote_name: Option<String>,
+    branch: Option<String>,
+    force: Option<bool>,
+    with_lease: Option<bool>,
+) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || {
+        git_push_impl(repo_path, remote_name, branch, force, with_lease)
+    })
+    .await
+}
+
+fn git_push_impl(
     repo_path: String,
     remote_name: Option<String>,
     branch: Option<String>,
@@ -1869,7 +2019,12 @@ fn git_push(
 }
 
 #[tauri::command]
-fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+async fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_pull_impl(repo_path, remote_name)).await
+}
+
+fn git_pull_impl(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     with_repo_git_lock(&repo_path, || {
@@ -1930,7 +2085,12 @@ fn git_pull(repo_path: String, remote_name: Option<String>) -> Result<PullResult
 }
 
 #[tauri::command]
-fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+async fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_pull_rebase_impl(repo_path, remote_name)).await
+}
+
+fn git_pull_rebase_impl(repo_path: String, remote_name: Option<String>) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     with_repo_git_lock(&repo_path, || {
@@ -1991,7 +2151,12 @@ fn git_pull_rebase(repo_path: String, remote_name: Option<String>) -> Result<Pul
 }
 
 #[tauri::command]
-fn git_merge_continue(repo_path: String) -> Result<String, String> {
+async fn git_merge_continue(repo_path: String) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_merge_continue_impl(repo_path)).await
+}
+
+fn git_merge_continue_impl(repo_path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let (ok, stdout, stderr) = run_git_status(&repo_path, &["merge", "--continue"])?;
@@ -2008,19 +2173,34 @@ fn git_merge_continue(repo_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn git_merge_abort(repo_path: String) -> Result<String, String> {
+async fn git_merge_abort(repo_path: String) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_merge_abort_impl(repo_path)).await
+}
+
+fn git_merge_abort_impl(repo_path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
     run_git(&repo_path, &["merge", "--abort"])
 }
 
 #[tauri::command]
-fn git_rebase_continue(repo_path: String) -> Result<String, String> {
+async fn git_rebase_continue(repo_path: String) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_rebase_continue_impl(repo_path)).await
+}
+
+fn git_rebase_continue_impl(repo_path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
     run_git(&repo_path, &["rebase", "--continue"])
 }
 
 #[tauri::command]
-fn git_rebase_abort(repo_path: String) -> Result<String, String> {
+async fn git_rebase_abort(repo_path: String) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_rebase_abort_impl(repo_path)).await
+}
+
+fn git_rebase_abort_impl(repo_path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
     run_git(&repo_path, &["rebase", "--abort"])
 }
@@ -2073,7 +2253,12 @@ fn find_branch_fork_point(repo_path: &str) -> Option<String> {
 }
 
 #[tauri::command]
-fn git_rebase_onto(repo_path: String, target: String) -> Result<PullResult, String> {
+async fn git_rebase_onto(repo_path: String, target: String) -> Result<PullResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_rebase_onto_impl(repo_path, target)).await
+}
+
+fn git_rebase_onto_impl(repo_path: String, target: String) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     with_repo_git_lock(&repo_path, || {
@@ -2198,7 +2383,16 @@ fn git_rebase_onto(repo_path: String, target: String) -> Result<PullResult, Stri
 }
 
 #[tauri::command]
-fn git_pull_predict(
+async fn git_pull_predict(
+    repo_path: String,
+    remote_name: Option<String>,
+    rebase: Option<bool>,
+) -> Result<PullPredictResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_pull_predict_impl(repo_path, remote_name, rebase)).await
+}
+
+fn git_pull_predict_impl(
     repo_path: String,
     remote_name: Option<String>,
     rebase: Option<bool>,
@@ -2255,7 +2449,20 @@ fn git_pull_predict(
 }
 
 #[tauri::command]
-fn git_pull_predict_graph(
+async fn git_pull_predict_graph(
+    repo_path: String,
+    remote_name: Option<String>,
+    rebase: Option<bool>,
+    max_commits: Option<u32>,
+) -> Result<PullPredictGraphResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || {
+        git_pull_predict_graph_impl(repo_path, remote_name, rebase, max_commits)
+    })
+    .await
+}
+
+fn git_pull_predict_graph_impl(
     repo_path: String,
     remote_name: Option<String>,
     rebase: Option<bool>,
@@ -2413,7 +2620,19 @@ fn git_pull_predict_graph(
 }
 
 #[tauri::command]
-fn git_pull_predict_conflict_preview(repo_path: String, upstream: String, path: String) -> Result<String, String> {
+async fn git_pull_predict_conflict_preview(
+    repo_path: String,
+    upstream: String,
+    path: String,
+) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || {
+        git_pull_predict_conflict_preview_impl(repo_path, upstream, path)
+    })
+    .await
+}
+
+fn git_pull_predict_conflict_preview_impl(repo_path: String, upstream: String, path: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let upstream = upstream.trim().to_string();
@@ -2493,7 +2712,12 @@ async fn git_fetch(repo_path: String, remote_name: Option<String>) -> Result<Str
 }
 
 #[tauri::command]
-fn git_commit_summary(repo_path: String, commit: String) -> Result<GitCommitSummary, String> {
+async fn git_commit_summary(repo_path: String, commit: String) -> Result<GitCommitSummary, String> {
+    let repo = repo_path.clone();
+    repo_read(repo, move || git_commit_summary_impl(repo_path, commit)).await
+}
+
+fn git_commit_summary_impl(repo_path: String, commit: String) -> Result<GitCommitSummary, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let commit = commit.trim().to_string();
@@ -2526,7 +2750,12 @@ fn git_commit_summary(repo_path: String, commit: String) -> Result<GitCommitSumm
 }
 
 #[tauri::command]
-fn git_commit_all(repo_path: String, message: String) -> Result<String, String> {
+async fn git_commit_all(repo_path: String, message: String) -> Result<String, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_commit_all_impl(repo_path, message)).await
+}
+
+fn git_commit_all_impl(repo_path: String, message: String) -> Result<String, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let message = message.trim().to_string();
@@ -2549,7 +2778,12 @@ fn git_commit_all(repo_path: String, message: String) -> Result<String, String> 
 }
 
 #[tauri::command]
-fn git_merge_branch(repo_path: String, branch: String) -> Result<PullResult, String> {
+async fn git_merge_branch(repo_path: String, branch: String) -> Result<PullResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || git_merge_branch_impl(repo_path, branch)).await
+}
+
+fn git_merge_branch_impl(repo_path: String, branch: String) -> Result<PullResult, String> {
     ensure_is_git_worktree(&repo_path)?;
 
     let branch = branch.trim().to_string();
@@ -2607,7 +2841,43 @@ fn git_merge_branch(repo_path: String, branch: String) -> Result<PullResult, Str
 }
 
 #[tauri::command]
-fn git_merge_branch_advanced(
+async fn git_merge_branch_advanced(
+    repo_path: String,
+    branch: String,
+    ff_mode: Option<String>,
+    no_commit: Option<bool>,
+    squash: Option<bool>,
+    allow_unrelated_histories: Option<bool>,
+    autostash: Option<bool>,
+    signoff: Option<bool>,
+    no_verify: Option<bool>,
+    strategy: Option<String>,
+    conflict_preference: Option<String>,
+    log_messages: Option<u32>,
+    message: Option<String>,
+) -> Result<PullResult, String> {
+    let repo = repo_path.clone();
+    repo_write(repo, move || {
+        git_merge_branch_advanced_impl(
+            repo_path,
+            branch,
+            ff_mode,
+            no_commit,
+            squash,
+            allow_unrelated_histories,
+            autostash,
+            signoff,
+            no_verify,
+            strategy,
+            conflict_preference,
+            log_messages,
+            message,
+        )
+    })
+    .await
+}
+
+fn git_merge_branch_advanced_impl(
     repo_path: String,
     branch: String,
     ff_mode: Option<String>,
@@ -2769,7 +3039,19 @@ struct SystemInfo {
 }
 
 #[tauri::command]
-fn get_system_info() -> SystemInfo {
+async fn get_system_info() -> SystemInfo {
+    // Reading the OS version shells out, so it must not run on the main thread.
+    tauri::async_runtime::spawn_blocking(get_system_info_impl)
+        .await
+        .unwrap_or_else(|_| SystemInfo {
+            os_name: std::env::consts::OS.to_string(),
+            os_version: String::from("unknown"),
+            arch: std::env::consts::ARCH.to_string(),
+            tauri_version: tauri::VERSION.to_string(),
+        })
+}
+
+fn get_system_info_impl() -> SystemInfo {
     SystemInfo {
         os_name: std::env::consts::OS.to_string(),
         os_version: {
@@ -3030,7 +3312,7 @@ mod tests {
 
     fn commit_via_graphoria(repo_dir: &Path, rel_path: &str, content: &str, message: &str) -> String {
         write_file(repo_dir, rel_path, content);
-        git_commit(
+        git_commit_impl(
             repo_dir.to_string_lossy().to_string(),
             message.to_string(),
             vec![rel_path.to_string()],
@@ -3039,7 +3321,7 @@ mod tests {
     }
 
     fn push_via_graphoria(repo_dir: &Path, remote: &str, branch: &str) {
-        git_push(
+        git_push_impl(
             repo_dir.to_string_lossy().to_string(),
             Some(remote.to_string()),
             Some(branch.to_string()),
@@ -3205,7 +3487,7 @@ mod tests {
         git_trust_repo_session(repo_b.to_string_lossy().to_string()).unwrap();
         let before = run_git(repo_b.to_string_lossy().as_ref(), &["rev-parse", "HEAD"]).unwrap();
 
-        let result = git_pull(repo_b.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        let result = git_pull_impl(repo_b.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
         assert_eq!(result.status, "ok");
         assert_eq!(result.operation, "merge");
 
@@ -3228,7 +3510,7 @@ mod tests {
         let alice_head = head_hash(&env.alice);
 
         trust_repo(&env.bob);
-        let result = git_pull(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        let result = git_pull_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
         assert_eq!(result.status, "ok");
         assert_eq!(result.operation, "merge");
 
@@ -3255,7 +3537,7 @@ mod tests {
         let alice_head = head_hash(&env.alice);
 
         trust_repo(&env.bob);
-        let result = git_pull_rebase(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        let result = git_pull_rebase_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
         assert_eq!(result.status, "ok");
         assert_eq!(result.operation, "rebase");
 
@@ -3280,7 +3562,7 @@ mod tests {
         push_via_graphoria(&env.alice, "origin", env.branch.as_str());
 
         trust_repo(&env.bob);
-        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
+        let pred = git_pull_predict_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
         assert!(pred.behind > 0);
         assert!(pred.conflict_files.is_empty());
     }
@@ -3300,7 +3582,7 @@ mod tests {
         push_via_graphoria(&env.alice, "origin", env.branch.as_str());
 
         trust_repo(&env.bob);
-        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
+        let pred = git_pull_predict_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(false)).unwrap();
         assert!(pred.behind > 0);
         assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
     }
@@ -3320,7 +3602,7 @@ mod tests {
         push_via_graphoria(&env.alice, "origin", env.branch.as_str());
 
         trust_repo(&env.bob);
-        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        let pred = git_pull_predict_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
         assert!(pred.behind > 0);
         assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
     }
@@ -3334,11 +3616,11 @@ mod tests {
         push_via_graphoria(&env.alice, "origin", env.branch.as_str());
 
         trust_repo(&env.bob);
-        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        let pred = git_pull_predict_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
         assert!(pred.behind > 0);
         assert!(pred.conflict_files.is_empty());
 
-        let result = git_pull_rebase(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        let result = git_pull_rebase_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
         assert_eq!(result.status, "ok");
         assert_eq!(result.operation, "rebase");
         let parents = head_parents(&env.bob);
@@ -3360,11 +3642,11 @@ mod tests {
         push_via_graphoria(&env.alice, "origin", env.branch.as_str());
 
         trust_repo(&env.bob);
-        let pred = git_pull_predict(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
+        let pred = git_pull_predict_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin")), Some(true)).unwrap();
         assert!(pred.behind > 0);
         assert!(pred.conflict_files.iter().any(|p| p == "conflict.txt"));
 
-        let result = git_pull(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
+        let result = git_pull_impl(env.bob.to_string_lossy().to_string(), Some(String::from("origin"))).unwrap();
         assert_eq!(result.operation, "merge");
         assert_eq!(result.status, "conflicts");
         assert!(result.conflict_files.iter().any(|p| p == "conflict.txt"));
@@ -3418,7 +3700,7 @@ mod tests {
         let repo_str = repo.to_string_lossy().to_string();
         // Frontend passes both new and old paths for a rename entry; this used to fail with
         // "pathspec '<old>' did not match any files".
-        let head = git_commit(
+        let head = git_commit_impl(
             repo_str,
             "rename htmlSanitizer".to_string(),
             vec![new_path.to_string(), old_path.to_string()],
