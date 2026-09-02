@@ -44,6 +44,260 @@ export type UseCyGraphParams = {
   closeRefBadgeContextMenu: () => void;
 };
 
+type CyElements = { nodes: any[]; edges: any[] };
+
+function buildCyStyle(theme: ThemeName, nodeCornerRadius: number): any[] {
+  const palette = getCyPalette(theme);
+  return [
+    {
+      selector: "node",
+      style: {
+        "background-color": palette.nodeBg,
+        "border-color": palette.nodeBorder,
+        "border-width": "1px",
+        shape: "round-rectangle",
+        "corner-radius": `${Math.max(0, nodeCornerRadius)}px`,
+        label: "data(label)",
+        color: palette.nodeText,
+        "text-outline-width": "0px",
+        "font-size": "12px",
+        "font-weight": "bold",
+        "text-wrap": "wrap",
+        "text-max-width": "220px",
+        "text-valign": "center",
+        "text-halign": "center",
+        width: "260px",
+        height: "56px",
+      },
+    },
+    {
+      selector: "node.head",
+      style: {
+        "border-color": palette.nodeHeadBorder,
+        "border-width": "2px",
+      },
+    },
+    {
+      selector: "node.selected",
+      style: {
+        "border-color": palette.nodeSelectedBorder,
+        "border-width": "3px",
+        "background-color": palette.nodeSelectedBg,
+      },
+    },
+    {
+      selector: "node.placeholder",
+      style: {
+        "background-color": palette.placeholderBg,
+        "border-color": palette.placeholderBorder,
+        "border-width": "1px",
+        color: palette.placeholderText,
+      },
+    },
+    {
+      selector: "edge",
+      style: {
+        width: "3px",
+        "line-color": palette.edgeLine,
+        "target-arrow-color": palette.edgeArrow,
+        "target-arrow-shape": "triangle",
+        "target-arrow-fill": "filled",
+        "arrow-scale": 1.25,
+        "curve-style": "bezier",
+      },
+    },
+    {
+      selector: "node.refBadge",
+      style: {
+        shape: "round-rectangle",
+        width: "label",
+        height: "24px",
+        padding: "6px",
+        "background-color": palette.refBadgeBg,
+        "border-color": palette.refBadgeBorder,
+        "border-width": "1px",
+        label: "data(label)",
+        color: palette.refBadgeText,
+        "font-size": "12px",
+        "font-weight": "bold",
+        "text-valign": "center",
+        "text-halign": "center",
+        "text-wrap": "none",
+      },
+    },
+    {
+      selector: "node.refBadge.ref-head",
+      style: {
+        "background-color": palette.refHeadBg,
+        "border-color": palette.refHeadBorder,
+      },
+    },
+    {
+      selector: "node.refBadge.ref-tag",
+      style: {
+        "background-color": palette.refTagBg,
+        "border-color": palette.refTagBorder,
+      },
+    },
+    {
+      selector: "node.refBadge.ref-tag-unsynced",
+      style: {
+        "border-style": "dashed",
+        "border-width": "2px",
+      },
+    },
+    {
+      selector: "node.refBadge.ref-branch",
+      style: {
+        "background-color": palette.refBranchBg,
+        "border-color": palette.refBranchBorder,
+      },
+    },
+    {
+      selector: "node.refBadge.ref-remote",
+      style: {
+        "background-color": theme === "dark" ? "rgba(235, 246, 255, 0.98)" : palette.refRemoteBg,
+        "border-color": palette.refRemoteBorder,
+        color: palette.refRemoteText,
+        opacity: theme === "dark" ? 0.6 : 0.4,
+      },
+    },
+    {
+      selector: "edge.refEdge",
+      style: {
+        width: "2px",
+        "line-style": "dotted",
+        "line-color": palette.refEdgeLine,
+        "target-arrow-shape": "none",
+        "curve-style": "straight",
+      },
+    },
+    {
+      selector: "node.stashBadge",
+      style: {
+        shape: "round-rectangle",
+        width: "label",
+        height: "22px",
+        padding: "6px",
+        "border-width": "2px",
+        label: "data(label)",
+        "font-size": "12px",
+        "font-weight": "bold",
+        "text-valign": "center",
+        "text-halign": "center",
+        "text-wrap": "none",
+      },
+    },
+    {
+      selector: "edge.stashEdge",
+      style: {
+        width: "2px",
+        "line-style": "dotted",
+        "target-arrow-shape": "none",
+        "curve-style": "straight",
+        label: "data(label)",
+        "font-size": "11px",
+        "text-rotation": "autorotate",
+        color: theme === "dark" ? "rgba(242, 244, 248, 0.85)" : undefined,
+        "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.80)" : "rgba(255, 255, 255, 0.70)",
+        "text-background-opacity": 1,
+        "text-background-padding": "2px",
+        "text-background-shape": "roundrectangle",
+      },
+    },
+  ];
+}
+
+// Klasy nadawane w runtime (nie pochodzą z danych) nie mogą być zdejmowane przez diff elementów.
+const RUNTIME_NODE_CLASSES = new Set(["selected"]);
+
+function isDecorationElement(ele: any): boolean {
+  return (
+    ele.hasClass("refBadge") ||
+    ele.hasClass("stashBadge") ||
+    ele.hasClass("refEdge") ||
+    ele.hasClass("stashEdge")
+  );
+}
+
+function syncElementClasses(ele: any, classes: unknown) {
+  const desired = new Set(
+    String(classes ?? "")
+      .split(/\s+/)
+      .filter((c) => c.length > 0)
+  );
+
+  for (const existing of ele.classes() as string[]) {
+    if (RUNTIME_NODE_CLASSES.has(existing)) continue;
+    if (!desired.has(existing)) ele.removeClass(existing);
+  }
+  for (const cls of desired) {
+    if (!ele.hasClass(cls)) ele.addClass(cls);
+  }
+}
+
+function syncElementData(ele: any, data: Record<string, any>) {
+  for (const key of Object.keys(data)) {
+    if (key === "id") continue;
+    if (ele.data(key) !== data[key]) ele.data(key, data[key]);
+  }
+  for (const key of Object.keys(ele.data() ?? {})) {
+    if (key === "id") continue;
+    if (!(key in data)) ele.removeData(key);
+  }
+}
+
+// Różnicowy update grafu: bez niszczenia instancji cytoscape (layout to "preset",
+// więc pozycje ustawiamy ręcznie na węzłach).
+function syncElements(cy: Core, elements: CyElements) {
+  cy.batch(() => {
+    const nextNodeIds = new Set<string>(elements.nodes.map((n) => String(n?.data?.id ?? "")));
+    const nextEdgeIds = new Set<string>(elements.edges.map((e) => String(e?.data?.id ?? "")));
+
+    const removedNodes = cy.nodes().filter((n) => !isDecorationElement(n) && !nextNodeIds.has(n.id()));
+    const removedEdges = cy.edges().filter((e) => !isDecorationElement(e) && !nextEdgeIds.has(e.id()));
+    if (removedNodes.length > 0) removedNodes.remove();
+    if (removedEdges.length > 0) removedEdges.remove();
+
+    const nodesToAdd: any[] = [];
+    for (const el of elements.nodes) {
+      const id = String(el?.data?.id ?? "");
+      if (!id) continue;
+      const node = cy.$id(id);
+      if (node.length === 0) {
+        nodesToAdd.push(el);
+        continue;
+      }
+
+      syncElementData(node, el.data ?? {});
+      syncElementClasses(node, el.classes);
+
+      const pos = el.position;
+      if (pos) {
+        const current = node.position();
+        if (Math.abs(current.x - Number(pos.x)) > 0.5 || Math.abs(current.y - Number(pos.y)) > 0.5) {
+          node.position({ x: Number(pos.x), y: Number(pos.y) });
+        }
+      }
+    }
+    if (nodesToAdd.length > 0) cy.add(nodesToAdd as any);
+
+    const edgesToAdd: any[] = [];
+    for (const el of elements.edges) {
+      const id = String(el?.data?.id ?? "");
+      if (!id) continue;
+      const edge = cy.$id(id);
+      if (edge.length === 0) {
+        edgesToAdd.push(el);
+        continue;
+      }
+      syncElementData(edge, el.data ?? {});
+      syncElementClasses(edge, el.classes);
+    }
+    if (edgesToAdd.length > 0) cy.add(edgesToAdd as any);
+  });
+}
+
 export function useCyGraph({
   viewMode,
   activeRepoPath,
@@ -77,6 +331,40 @@ export function useCyGraph({
   const initializingByRepoRef = useRef<Record<string, boolean | undefined>>({});
   const viewportRafRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ hash: string; atMs: number } | null>(null);
+  const lastAppliedElementsRef = useRef<CyElements | null>(null);
+
+  // Handlery zdarzeń rejestrujemy tylko raz (instancja cytoscape nie jest już
+  // odtwarzana przy zmianie danych), więc callbacki czytamy przez ref, aby
+  // zawsze wywołać ich najświeższe wersje bez ponownej rejestracji.
+  const handlersRef = useRef({
+    setSelectedHash,
+    onCommitDoubleClick,
+    openCommitContextMenu,
+    openStashContextMenu,
+    openRefBadgeContextMenu,
+    openTagContextMenu,
+    closeCommitContextMenu,
+    closeStashContextMenu,
+    closeBranchContextMenu,
+    closeTagContextMenu,
+    closeRefBadgeContextMenu,
+  });
+
+  useEffect(() => {
+    handlersRef.current = {
+      setSelectedHash,
+      onCommitDoubleClick,
+      openCommitContextMenu,
+      openStashContextMenu,
+      openRefBadgeContextMenu,
+      openTagContextMenu,
+      closeCommitContextMenu,
+      closeStashContextMenu,
+      closeBranchContextMenu,
+      closeTagContextMenu,
+      closeRefBadgeContextMenu,
+    };
+  });
 
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [autoCenterToken, setAutoCenterToken] = useState(0);
@@ -532,6 +820,18 @@ export function useCyGraph({
     cy.zoom({ level: next, renderedPosition: renderedCenter });
   }
 
+  // Zmiana motywu / promienia narożników aktualizuje tylko arkusz stylów.
+  // Efekt jest zadeklarowany przed efektami badge'y i awatarów, aby po podmianie
+  // arkusza style nakładane bezpośrednio na elementy zostały ponownie zaaplikowane.
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.style(buildCyStyle(theme, graphSettings.nodeCornerRadius) as any);
+    applyRefBadges(cy);
+    applyAvatars(cy);
+  }, [graphSettings.nodeCornerRadius, theme, viewMode]);
+
   useEffect(() => {
     if (viewMode !== "graph") return;
     const cy = cyRef.current;
@@ -581,7 +881,6 @@ export function useCyGraph({
 
     cyRef.current?.destroy();
 
-    const palette = getCyPalette(theme);
     cyRef.current = cytoscape({
       container: graphRef.current,
       elements: [...elements.nodes, ...elements.edges],
@@ -589,165 +888,9 @@ export function useCyGraph({
       maxZoom: 5,
       wheelSensitivity: isMacOS ? 0.14 : 0.6,
       layout: { name: "preset" } as any,
-      style: [
-        {
-          selector: "node",
-          style: {
-            "background-color": palette.nodeBg,
-            "border-color": palette.nodeBorder,
-            "border-width": "1px",
-            shape: "round-rectangle",
-            "corner-radius": `${Math.max(0, graphSettings.nodeCornerRadius)}px`,
-            label: "data(label)",
-            color: palette.nodeText,
-            "text-outline-width": "0px",
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-wrap": "wrap",
-            "text-max-width": "220px",
-            "text-valign": "center",
-            "text-halign": "center",
-            width: "260px",
-            height: "56px",
-          },
-        },
-        {
-          selector: "node.head",
-          style: {
-            "border-color": palette.nodeHeadBorder,
-            "border-width": "2px",
-          },
-        },
-        {
-          selector: "node.selected",
-          style: {
-            "border-color": palette.nodeSelectedBorder,
-            "border-width": "3px",
-            "background-color": palette.nodeSelectedBg,
-          },
-        },
-        {
-          selector: "node.placeholder",
-          style: {
-            "background-color": palette.placeholderBg,
-            "border-color": palette.placeholderBorder,
-            "border-width": "1px",
-            color: palette.placeholderText,
-          },
-        },
-        {
-          selector: "edge",
-          style: {
-            width: "3px",
-            "line-color": palette.edgeLine,
-            "target-arrow-color": palette.edgeArrow,
-            "target-arrow-shape": "triangle",
-            "target-arrow-fill": "filled",
-            "arrow-scale": 1.25,
-            "curve-style": "bezier",
-          },
-        },
-        {
-          selector: "node.refBadge",
-          style: {
-            shape: "round-rectangle",
-            width: "label",
-            height: "24px",
-            padding: "6px",
-            "background-color": palette.refBadgeBg,
-            "border-color": palette.refBadgeBorder,
-            "border-width": "1px",
-            label: "data(label)",
-            color: palette.refBadgeText,
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-wrap": "none",
-          },
-        },
-        {
-          selector: "node.refBadge.ref-head",
-          style: {
-            "background-color": palette.refHeadBg,
-            "border-color": palette.refHeadBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-tag",
-          style: {
-            "background-color": palette.refTagBg,
-            "border-color": palette.refTagBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-tag-unsynced",
-          style: {
-            "border-style": "dashed",
-            "border-width": "2px",
-          },
-        },
-        {
-          selector: "node.refBadge.ref-branch",
-          style: {
-            "background-color": palette.refBranchBg,
-            "border-color": palette.refBranchBorder,
-          },
-        },
-        {
-          selector: "node.refBadge.ref-remote",
-          style: {
-            "background-color": theme === "dark" ? "rgba(235, 246, 255, 0.98)" : palette.refRemoteBg,
-            "border-color": palette.refRemoteBorder,
-            color: palette.refRemoteText,
-            opacity: theme === "dark" ? 0.6 : 0.4,
-          },
-        },
-        {
-          selector: "edge.refEdge",
-          style: {
-            width: "2px",
-            "line-style": "dotted",
-            "line-color": palette.refEdgeLine,
-            "target-arrow-shape": "none",
-            "curve-style": "straight",
-          },
-        },
-        {
-          selector: "node.stashBadge",
-          style: {
-            shape: "round-rectangle",
-            width: "label",
-            height: "22px",
-            padding: "6px",
-            "border-width": "2px",
-            label: "data(label)",
-            "font-size": "12px",
-            "font-weight": "bold",
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-wrap": "none",
-          },
-        },
-        {
-          selector: "edge.stashEdge",
-          style: {
-            width: "2px",
-            "line-style": "dotted",
-            "target-arrow-shape": "none",
-            "curve-style": "straight",
-            label: "data(label)",
-            "font-size": "11px",
-            "text-rotation": "autorotate",
-            color: theme === "dark" ? "rgba(242, 244, 248, 0.85)" : undefined,
-            "text-background-color": theme === "dark" ? "rgba(15, 15, 15, 0.80)" : "rgba(255, 255, 255, 0.70)",
-            "text-background-opacity": 1,
-            "text-background-padding": "2px",
-            "text-background-shape": "roundrectangle",
-          },
-        },
-      ],
+      style: buildCyStyle(theme, graphSettings.nodeCornerRadius) as any,
     });
+    lastAppliedElementsRef.current = elements;
 
     const cy = cyRef.current;
     if (!cy) return;
@@ -774,11 +917,11 @@ export function useCyGraph({
       const now = Date.now();
       const lastTap = lastTapRef.current;
 
-      setSelectedHash(hash);
+      handlersRef.current.setSelectedHash(hash);
 
       if (lastTap && lastTap.hash === hash && now - lastTap.atMs <= 300) {
         lastTapRef.current = null;
-        onCommitDoubleClick(hash);
+        handlersRef.current.onCommitDoubleClick(hash);
         return;
       }
 
@@ -793,17 +936,17 @@ export function useCyGraph({
         const label = (((evt.target as any).data?.("label") as string) || "").trim();
         if (!label) return;
 
-        closeCommitContextMenu();
-        closeStashContextMenu();
-        closeBranchContextMenu();
-        closeTagContextMenu();
+        handlersRef.current.closeCommitContextMenu();
+        handlersRef.current.closeStashContextMenu();
+        handlersRef.current.closeBranchContextMenu();
+        handlersRef.current.closeTagContextMenu();
 
         if (kind === "remote" || kind === "branch") {
-          closeRefBadgeContextMenu();
-          openRefBadgeContextMenu(kind as "remote" | "branch", label, oe.clientX, oe.clientY);
+          handlersRef.current.closeRefBadgeContextMenu();
+          handlersRef.current.openRefBadgeContextMenu(kind as "remote" | "branch", label, oe.clientX, oe.clientY);
         } else if (kind === "tag") {
-          closeRefBadgeContextMenu();
-          openTagContextMenu(label, oe.clientX, oe.clientY);
+          handlersRef.current.closeRefBadgeContextMenu();
+          handlersRef.current.openTagContextMenu(label, oe.clientX, oe.clientY);
         }
         return;
       }
@@ -813,30 +956,30 @@ export function useCyGraph({
         const stashRef = ((evt.target as any).data?.("stashRef") as string) || "";
         const stashMessage = ((evt.target as any).data?.("stashMessage") as string) || "";
         if (!stashRef.trim()) return;
-        closeCommitContextMenu();
-        closeTagContextMenu();
-        openStashContextMenu(stashRef, stashMessage, oe.clientX, oe.clientY);
+        handlersRef.current.closeCommitContextMenu();
+        handlersRef.current.closeTagContextMenu();
+        handlersRef.current.openStashContextMenu(stashRef, stashMessage, oe.clientX, oe.clientY);
         return;
       }
       const hash = evt.target.id();
       const oe = (evt as any).originalEvent as MouseEvent | undefined;
       if (!oe) return;
-      setSelectedHash(hash);
-      openCommitContextMenu(hash, oe.clientX, oe.clientY);
+      handlersRef.current.setSelectedHash(hash);
+      handlersRef.current.openCommitContextMenu(hash, oe.clientX, oe.clientY);
     });
 
     cy.on("tap", (evt) => {
       if ((evt.target as any).hasClass?.("stashEdge")) return;
-      if (evt.target === cy) setSelectedHash("");
+      if (evt.target === cy) handlersRef.current.setSelectedHash("");
     });
 
     cy.on("cxttap", (evt) => {
       if (evt.target === cy) {
-        closeCommitContextMenu();
-        closeStashContextMenu();
-        closeBranchContextMenu();
-        closeTagContextMenu();
-        closeRefBadgeContextMenu();
+        handlersRef.current.closeCommitContextMenu();
+        handlersRef.current.closeStashContextMenu();
+        handlersRef.current.closeBranchContextMenu();
+        handlersRef.current.closeTagContextMenu();
+        handlersRef.current.closeRefBadgeContextMenu();
       }
     });
 
@@ -886,18 +1029,49 @@ export function useCyGraph({
       }
       cyRef.current?.destroy();
       cyRef.current = null;
+      lastAppliedElementsRef.current = null;
     };
-  }, [
-    activeRepoPath,
-    elements.edges,
-    elements.nodes,
-    graphSettings.nodeCornerRadius,
-    graphSettings.padding,
-    headHash,
-    isMacOS,
-    theme,
-    viewMode,
-  ]);
+    // Instancja tworzona jest raz na kontener (kontener jest przemontowywany przy
+    // zmianie repozytorium), a nie przy każdej zmianie danych/motywu.
+  }, [activeRepoPath, isMacOS, viewMode]);
+
+  // Zmiana danych: różnicowy update istniejącej instancji, bez ruszania pan/zoom.
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    const applied = lastAppliedElementsRef.current;
+    if (applied && applied.nodes === elements.nodes && applied.edges === elements.edges) return;
+    lastAppliedElementsRef.current = elements;
+
+    syncElements(cy, elements);
+    applyRefBadges(cy);
+    applyAvatars(cy);
+
+    // Instancja może zostać utworzona jeszcze przed dotarciem commitów, więc po
+    // pierwszym wypełnieniu danymi ponawiamy próbę wstępnego wycentrowania.
+    if (activeRepoPath && pendingAutoCenterByRepoRef.current[activeRepoPath]) {
+      setAutoCenterToken((t) => t + 1);
+    }
+  }, [activeRepoPath, elements.edges, elements.nodes, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "graph") return;
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    cy.batch(() => {
+      for (const n of cy.nodes(".head").toArray()) {
+        if (n.id() !== headHash) n.removeClass("head");
+      }
+      if (!headHash) return;
+      const node = cy.$id(headHash);
+      if (node.length === 0) return;
+      if (node.hasClass("refBadge") || node.hasClass("stashBadge")) return;
+      node.addClass("head");
+    });
+  }, [headHash, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "graph") return;

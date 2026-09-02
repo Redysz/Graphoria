@@ -1,8 +1,10 @@
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CredentialHostInfo {
@@ -127,6 +129,7 @@ pub(crate) fn clear_session_credentials() {
     if let Ok(dir) = app_data_dir() {
         let _ = fs::remove_dir_all(dir.join("credentials").join("session"));
     }
+    invalidate_credential_helper_cache(None);
 }
 
 fn store_config_key(scope: &str, host: &str) -> (String, String) {
@@ -229,100 +232,150 @@ fn extract_username_from_url(url: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub(crate) fn git_get_remote_host(repo_path: String) -> Result<String, String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    match remote_origin_host(&repo_path)? {
-        Some(h) => Ok(h),
-        None => Err(String::from("Could not determine remote host from origin URL.")),
-    }
+pub(crate) async fn git_get_remote_host(repo_path: String) -> Result<String, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        match remote_origin_host(&repo_path)? {
+            Some(h) => Ok(h),
+            None => Err(String::from("Could not determine remote host from origin URL.")),
+        }
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_store_credential(
+pub(crate) async fn git_store_credential(
     repo_path: String,
     username: String,
     password: String,
     scope: String,
     apply_to_git: bool,
 ) -> Result<(), String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let mut username = username.trim().to_string();
-    let password = password.trim().to_string();
-    let scope = scope.trim().to_lowercase();
+    crate::repo_write(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let mut username = username.trim().to_string();
+        let password = password.trim().to_string();
+        let scope = scope.trim().to_lowercase();
 
-    let url = match run_git(&repo_path, &["remote", "get-url", "origin"]) {
-        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => return Err(String::from("Could not read remote origin URL.")),
-    };
+        let url = match run_git(&repo_path, &["remote", "get-url", "origin"]) {
+            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => return Err(String::from("Could not read remote origin URL.")),
+        };
 
-    if username.is_empty() {
-        if let Some(u) = extract_username_from_url(&url) {
-            username = u;
+        if username.is_empty() {
+            if let Some(u) = extract_username_from_url(&url) {
+                username = u;
+            }
+        }
+
+        if username.is_empty() {
+            return Err(String::from("Username is empty."));
+        }
+        if password.is_empty() {
+            return Err(String::from("Password/token is empty."));
+        }
+        if scope != "repo" && scope != "host" && scope != "global" && scope != "session" {
+            return Err(String::from("Invalid scope. Expected repo, host, global or session."));
+        }
+
+        let host = match extract_host_from_url(&url) {
+            Some(h) => h,
+            None => return Err(String::from("Could not determine remote host from origin URL.")),
+        };
+
+        let store_path = store_file_path(&repo_path, &host, &scope)?;
+        ensure_parent_dir(&store_path)?;
+
+        let helper = store_helper_value(&store_path)?;
+
+        // Set the credential helper in git config only when the user wants command-line git to use it too.
+        // Never write config for the ephemeral "session" store.
+        if apply_to_git && scope != "session" {
+            // Scope-specific config: repo-local, per-host (global) or the generic global helper.
+            let (config_key, config_scope) = store_config_key(&scope, &host);
+            set_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str(), &helper);
+
+            // Always set a repo-local credential.helper as well so that a terminal opened inside this
+            // repository uses our store first, regardless of global helpers like Git Credential Manager.
+            set_graphoria_helper(&repo_path, "--local", "credential.helper", &helper);
+        }
+
+        // Write the credential into Graphoria's own store file for the chosen scope. The explicit
+        // helpers (empty reset + our store) make sure the token is written to our file only, regardless
+        // of whatever helper git is otherwise configured to use.
+        let helper_arg = format!("credential.helper={helper}");
+
+        // First erase any credential we previously stored for this host. `git credential-store` returns
+        // the *first* matching line for a host, so a stale/incorrect entry (e.g. a wrong username) would
+        // keep being sent even after the user re-enters the correct one. Erasing by host only clears our
+        // own store file (thanks to the explicit helpers) without touching other helpers like GCM.
+        let reject_stdin = format!("protocol=https\nhost={host}\n");
+        let _ = run_git_with_stdin(
+            &repo_path,
+            &["-c", "credential.helper=", "-c", helper_arg.as_str(), "credential", "reject"],
+            &reject_stdin,
+        );
+
+        let stdin = format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n");
+        run_git_with_stdin(
+            &repo_path,
+            &["-c", "credential.helper=", "-c", helper_arg.as_str(), "credential", "approve"],
+            &stdin,
+        )?;
+
+        // The "host" and "global" stores are shared between repositories, so clear every entry.
+        invalidate_credential_helper_cache(None);
+
+        Ok(())
+    })
+    .await
+}
+
+/// Cached results of [`graphoria_credential_helper_args`], keyed by normalized repo path.
+///
+/// Building the arguments spawns `git remote get-url origin` and probes up to four store files on
+/// disk. Because every single git invocation goes through `git_command_in_repo`, doing this eagerly
+/// doubled the number of spawned git processes for the whole application, which is expensive on
+/// Windows (~33 ms per spawn). The result only changes when a credential store or the origin remote
+/// changes, and both happen through Graphoria itself, so the cache is invalidated explicitly.
+static HELPER_ARGS_CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+
+fn helper_args_cache() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    HELPER_ARGS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drops cached credential-helper arguments for one repository, or for all of them when `None`.
+/// Must be called whenever a credential store is written/removed or the origin remote changes.
+pub(crate) fn invalidate_credential_helper_cache(repo_path: Option<&str>) {
+    if let Ok(mut guard) = helper_args_cache().lock() {
+        match repo_path {
+            Some(p) => {
+                guard.remove(&normalize_repo_path(p));
+            }
+            None => guard.clear(),
         }
     }
-
-    if username.is_empty() {
-        return Err(String::from("Username is empty."));
-    }
-    if password.is_empty() {
-        return Err(String::from("Password/token is empty."));
-    }
-    if scope != "repo" && scope != "host" && scope != "global" && scope != "session" {
-        return Err(String::from("Invalid scope. Expected repo, host, global or session."));
-    }
-
-    let host = match extract_host_from_url(&url) {
-        Some(h) => h,
-        None => return Err(String::from("Could not determine remote host from origin URL.")),
-    };
-
-    let store_path = store_file_path(&repo_path, &host, &scope)?;
-    ensure_parent_dir(&store_path)?;
-
-    let helper = store_helper_value(&store_path)?;
-
-    // Set the credential helper in git config only when the user wants command-line git to use it too.
-    // Never write config for the ephemeral "session" store.
-    if apply_to_git && scope != "session" {
-        // Scope-specific config: repo-local, per-host (global) or the generic global helper.
-        let (config_key, config_scope) = store_config_key(&scope, &host);
-        set_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str(), &helper);
-
-        // Always set a repo-local credential.helper as well so that a terminal opened inside this
-        // repository uses our store first, regardless of global helpers like Git Credential Manager.
-        set_graphoria_helper(&repo_path, "--local", "credential.helper", &helper);
-    }
-
-    // Write the credential into Graphoria's own store file for the chosen scope. The explicit
-    // helpers (empty reset + our store) make sure the token is written to our file only, regardless
-    // of whatever helper git is otherwise configured to use.
-    let helper_arg = format!("credential.helper={helper}");
-
-    // First erase any credential we previously stored for this host. `git credential-store` returns
-    // the *first* matching line for a host, so a stale/incorrect entry (e.g. a wrong username) would
-    // keep being sent even after the user re-enters the correct one. Erasing by host only clears our
-    // own store file (thanks to the explicit helpers) without touching other helpers like GCM.
-    let reject_stdin = format!("protocol=https\nhost={host}\n");
-    let _ = run_git_with_stdin(
-        &repo_path,
-        &["-c", "credential.helper=", "-c", helper_arg.as_str(), "credential", "reject"],
-        &reject_stdin,
-    );
-
-    let stdin = format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n");
-    run_git_with_stdin(
-        &repo_path,
-        &["-c", "credential.helper=", "-c", helper_arg.as_str(), "credential", "approve"],
-        &stdin,
-    )?;
-
-    Ok(())
 }
 
 /// Returns `-c credential.helper=...` arguments for every Graphoria credential store that exists
 /// for this repository, ordered from most specific (repo) to least specific (global).
 /// This lets Graphoria use the stored credentials without having to write to git's config.
 pub(crate) fn graphoria_credential_helper_args(repo_path: &str) -> Vec<String> {
+    let key = normalize_repo_path(repo_path);
+    if let Ok(guard) = helper_args_cache().lock() {
+        if let Some(cached) = guard.get(&key) {
+            return cached.clone();
+        }
+    }
+
+    let args = compute_graphoria_credential_helper_args(key.as_str());
+    if let Ok(mut guard) = helper_args_cache().lock() {
+        guard.insert(key, args.clone());
+    }
+    args
+}
+
+fn compute_graphoria_credential_helper_args(repo_path: &str) -> Vec<String> {
     let repo_path = normalize_repo_path(repo_path);
     let host = remote_origin_host(&repo_path).ok().flatten();
 
@@ -370,99 +423,115 @@ pub(crate) fn graphoria_credential_helper_args(repo_path: &str) -> Vec<String> {
 }
 
 #[tauri::command]
-pub(crate) fn git_remove_credential(repo_path: String, scope: String) -> Result<(), String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let scope = scope.trim().to_lowercase();
-    if scope != "repo" && scope != "host" && scope != "global" {
-        return Err(String::from("Invalid scope. Expected repo, host or global."));
-    }
+pub(crate) async fn git_remove_credential(repo_path: String, scope: String) -> Result<(), String> {
+    crate::repo_write(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let scope = scope.trim().to_lowercase();
+        if scope != "repo" && scope != "host" && scope != "global" {
+            return Err(String::from("Invalid scope. Expected repo, host or global."));
+        }
 
-    let host = match remote_origin_host(&repo_path) {
-        Ok(Some(h)) => h,
-        _ => String::new(),
-    };
+        let host = match remote_origin_host(&repo_path) {
+            Ok(Some(h)) => h,
+            _ => String::new(),
+        };
 
-    let store_path = match store_file_path(&repo_path, &host, &scope) {
-        Ok(p) => p,
-        Err(_) => return Ok(()),
-    };
-    if store_path.exists() {
-        let _ = fs::remove_file(&store_path);
-    }
+        let store_path = match store_file_path(&repo_path, &host, &scope) {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        if store_path.exists() {
+            let _ = fs::remove_file(&store_path);
+        }
 
-    // Remove only the entries Graphoria added, both from the scope-specific key and from the
-    // repo-local helper, leaving any other helpers (e.g. Git Credential Manager) untouched.
-    let (config_key, config_scope) = store_config_key(&scope, &host);
-    unset_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str());
-    unset_graphoria_helper(&repo_path, "--local", "credential.helper");
+        // Remove only the entries Graphoria added, both from the scope-specific key and from the
+        // repo-local helper, leaving any other helpers (e.g. Git Credential Manager) untouched.
+        let (config_key, config_scope) = store_config_key(&scope, &host);
+        unset_graphoria_helper(&repo_path, config_scope.as_str(), config_key.as_str());
+        unset_graphoria_helper(&repo_path, "--local", "credential.helper");
 
-    Ok(())
+        // The "host" and "global" stores are shared between repositories, so clear every entry.
+        invalidate_credential_helper_cache(None);
+
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_has_credential(repo_path: String) -> Result<bool, String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let host = match remote_origin_host(&repo_path)? {
-        Some(h) => h,
-        None => return Ok(false),
-    };
+pub(crate) async fn git_has_credential(repo_path: String) -> Result<bool, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let host = match remote_origin_host(&repo_path)? {
+            Some(h) => h,
+            None => return Ok(false),
+        };
 
-    for scope in ["repo", "host", "global"] {
-        if let Ok(path) = store_file_path(&repo_path, &host, scope) {
-            if path.exists() {
-                return Ok(true);
+        for scope in ["repo", "host", "global"] {
+            if let Ok(path) = store_file_path(&repo_path, &host, scope) {
+                if path.exists() {
+                    return Ok(true);
+                }
             }
         }
-    }
-    Ok(false)
+        Ok(false)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_list_credential_scopes(repo_path: String) -> Result<Vec<String>, String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let host = match remote_origin_host(&repo_path)? {
-        Some(h) => h,
-        None => String::new(),
-    };
+pub(crate) async fn git_list_credential_scopes(repo_path: String) -> Result<Vec<String>, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let host = match remote_origin_host(&repo_path)? {
+            Some(h) => h,
+            None => String::new(),
+        };
 
-    let mut out = Vec::new();
-    for scope in ["repo", "host", "global"] {
-        if let Ok(path) = store_file_path(&repo_path, &host, scope) {
-            if path.exists() {
-                out.push(scope.to_string());
+        let mut out = Vec::new();
+        for scope in ["repo", "host", "global"] {
+            if let Ok(path) = store_file_path(&repo_path, &host, scope) {
+                if path.exists() {
+                    out.push(scope.to_string());
+                }
             }
         }
-    }
-    Ok(out)
+        Ok(out)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_list_credential_hosts(_repo_path: String) -> Result<Vec<CredentialHostInfo>, String> {
-    let mut out = Vec::new();
-    let base = match app_data_dir() {
-        Ok(d) => d.join("credentials"),
-        Err(_) => return Ok(out),
-    };
+pub(crate) async fn git_list_credential_hosts(_repo_path: String) -> Result<Vec<CredentialHostInfo>, String> {
+    // Reads only the shared credentials directory, so it is not tied to any repository's queue.
+    crate::run_blocking(move || {
+        let mut out = Vec::new();
+        let base = match app_data_dir() {
+            Ok(d) => d.join("credentials"),
+            Err(_) => return Ok(out),
+        };
 
-    if let Ok(entries) = fs::read_dir(&base) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "credentials" {
-                    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-                    if name != "global" {
-                        out.push(CredentialHostInfo {
-                            host: name.replace('_', "."),
-                            username: String::new(),
-                            scope: String::from("host"),
-                        });
+        if let Ok(entries) = fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(ext) = path.extension() {
+                    if ext == "credentials" {
+                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                        if name != "global" {
+                            out.push(CredentialHostInfo {
+                                host: name.replace('_', "."),
+                                username: String::new(),
+                                scope: String::from("host"),
+                            });
+                        }
                     }
                 }
             }
         }
-    }
 
-    Ok(out)
+        Ok(out)
+    })
+    .await
 }
 
 /// Extracts the username from a `git credential-store` line (`https://user:token@host`).
@@ -504,42 +573,45 @@ fn stored_username_for_host(repo_path: &str, host: &str) -> Option<String> {
 /// `credential.*.username` config, and finally `user.name` (only when it has no whitespace, so a
 /// full display name like "Jan Kowalski" is never suggested as a login). Returns "" when unknown.
 #[tauri::command]
-pub(crate) fn git_get_suggested_username(repo_path: String) -> Result<String, String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let url = run_git(&repo_path, &["remote", "get-url", "origin"]).unwrap_or_default();
-    let url = url.trim();
+pub(crate) async fn git_get_suggested_username(repo_path: String) -> Result<String, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let url = run_git(&repo_path, &["remote", "get-url", "origin"]).unwrap_or_default();
+        let url = url.trim();
 
-    if let Some(u) = extract_username_from_url(url) {
-        return Ok(u);
-    }
-
-    let host = extract_host_from_url(url).unwrap_or_default();
-    if !host.is_empty() {
-        if let Some(u) = stored_username_for_host(&repo_path, &host) {
+        if let Some(u) = extract_username_from_url(url) {
             return Ok(u);
         }
-        let key = format!("credential.https://{host}.username");
-        if let Ok(u) = run_git(&repo_path, &["config", "--get", &key]) {
+
+        let host = extract_host_from_url(url).unwrap_or_default();
+        if !host.is_empty() {
+            if let Some(u) = stored_username_for_host(&repo_path, &host) {
+                return Ok(u);
+            }
+            let key = format!("credential.https://{host}.username");
+            if let Ok(u) = run_git(&repo_path, &["config", "--get", &key]) {
+                if !u.trim().is_empty() {
+                    return Ok(u.trim().to_string());
+                }
+            }
+        }
+
+        if let Ok(u) = run_git(&repo_path, &["config", "--get", "credential.username"]) {
             if !u.trim().is_empty() {
                 return Ok(u.trim().to_string());
             }
         }
-    }
 
-    if let Ok(u) = run_git(&repo_path, &["config", "--get", "credential.username"]) {
-        if !u.trim().is_empty() {
-            return Ok(u.trim().to_string());
+        if let Ok(u) = run_git(&repo_path, &["config", "--get", "user.name"]) {
+            let u = u.trim();
+            if !u.is_empty() && !u.chars().any(char::is_whitespace) {
+                return Ok(u.to_string());
+            }
         }
-    }
 
-    if let Ok(u) = run_git(&repo_path, &["config", "--get", "user.name"]) {
-        let u = u.trim();
-        if !u.is_empty() && !u.chars().any(char::is_whitespace) {
-            return Ok(u.to_string());
-        }
-    }
-
-    Ok(String::new())
+        Ok(String::new())
+    })
+    .await
 }
 
 /// Finds the user's real credential helper (e.g. Git Credential Manager) by scanning the merged git
@@ -563,45 +635,51 @@ fn detect_default_helper(repo_path: &str) -> String {
 /// allowed (unlike Graphoria's normal git invocations). The default helper caches the result, so a
 /// subsequent fetch/pull/push succeeds without prompting again.
 #[tauri::command]
-pub(crate) fn git_open_default_login(repo_path: String, username: Option<String>) -> Result<(), String> {
-    let repo_path = normalize_repo_path(&repo_path);
-    let url = run_git(&repo_path, &["remote", "get-url", "origin"]).unwrap_or_default();
-    let host = match extract_host_from_url(url.trim()) {
-        Some(h) => h,
-        None => return Err(String::from("Could not determine remote host from origin URL.")),
-    };
+pub(crate) async fn git_open_default_login(repo_path: String, username: Option<String>) -> Result<(), String> {
+    // Deliberately not queued per repository: this blocks until the user finishes an interactive
+    // sign-in, and holding the repository's exclusive lock for that long would stall every other
+    // operation on it (including plain reads) for as long as the login window stays open.
+    crate::run_blocking(move || {
+        let repo_path = normalize_repo_path(&repo_path);
+        let url = run_git(&repo_path, &["remote", "get-url", "origin"]).unwrap_or_default();
+        let host = match extract_host_from_url(url.trim()) {
+            Some(h) => h,
+            None => return Err(String::from("Could not determine remote host from origin URL.")),
+        };
 
-    let helper = detect_default_helper(&repo_path);
-    let helper_arg = format!("credential.helper={helper}");
+        let helper = detect_default_helper(&repo_path);
+        let helper_arg = format!("credential.helper={helper}");
 
-    let mut stdin = format!("protocol=https\nhost={host}\n");
-    if let Some(u) = username.as_ref() {
-        let u = u.trim();
-        if !u.is_empty() {
-            stdin.push_str(&format!("username={u}\n"));
+        let mut stdin = format!("protocol=https\nhost={host}\n");
+        if let Some(u) = username.as_ref() {
+            let u = u.trim();
+            if !u.is_empty() {
+                stdin.push_str(&format!("username={u}\n"));
+            }
         }
-    }
-    stdin.push('\n');
+        stdin.push('\n');
 
-    let mut cmd = new_command("git");
-    cmd.args(["-C", repo_path.as_str()])
-        .args(["-c", "credential.helper="])
-        .args(["-c", helper_arg.as_str()])
-        .args(["credential", "fill"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        let mut cmd = new_command("git");
+        cmd.args(["-C", repo_path.as_str()])
+            .args(["-c", "credential.helper="])
+            .args(["-c", helper_arg.as_str()])
+            .args(["credential", "fill"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn git: {e}"))?;
-    if let Some(mut si) = child.stdin.take() {
-        si.write_all(stdin.as_bytes()).map_err(|e| format!("Failed to write to git stdin: {e}"))?;
-    }
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn git: {e}"))?;
+        if let Some(mut si) = child.stdin.take() {
+            si.write_all(stdin.as_bytes()).map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+        }
 
-    let out = child.wait_with_output().map_err(|e| format!("Failed to wait for git: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("Default login was cancelled or failed: {stderr}"));
-    }
+        let out = child.wait_with_output().map_err(|e| format!("Failed to wait for git: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("Default login was cancelled or failed: {stderr}"));
+        }
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }

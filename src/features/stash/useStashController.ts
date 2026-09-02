@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { DiffToolSettings } from "../../appSettingsStore";
 import { useAppSettings } from "../../appSettingsStore";
 import type { GitStatusEntry, GitStatusSummary, GitStashEntry } from "../../types/git";
@@ -354,37 +354,45 @@ export function useStashController(opts: {
     }
   }
 
-  async function openStashView(entry: GitStashEntry) {
-    if (!activeRepoPath) return;
-    setStashViewOpen(true);
-    setStashViewRef(entry.reference);
-    setStashViewMessage(entry.message);
-    setStashViewPatch("");
-    setStashViewError("");
-    setStashViewLoading(true);
-    try {
-      const patch = await gitStashShow({ repoPath: activeRepoPath, stashRef: entry.reference });
-      setStashViewPatch(patch);
-    } catch (e) {
-      setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setStashViewLoading(false);
-    }
-  }
+  // Both handlers below are passed to the memoized Sidebar, so they keep a stable identity instead
+  // of being recreated on every render of the consumer.
+  const openStashView = useCallback(
+    async (entry: GitStashEntry) => {
+      if (!activeRepoPath) return;
+      setStashViewOpen(true);
+      setStashViewRef(entry.reference);
+      setStashViewMessage(entry.message);
+      setStashViewPatch("");
+      setStashViewError("");
+      setStashViewLoading(true);
+      try {
+        const patch = await gitStashShow({ repoPath: activeRepoPath, stashRef: entry.reference });
+        setStashViewPatch(patch);
+      } catch (e) {
+        setStashViewError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setStashViewLoading(false);
+      }
+    },
+    [activeRepoPath],
+  );
 
-  async function applyStashByRef(stashRef: string) {
-    if (!activeRepoPath || !stashRef.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      await gitStashApply({ repoPath: activeRepoPath, stashRef });
-      await loadRepo(activeRepoPath);
-    } catch (e) {
-      setError(typeof e === "string" ? e : JSON.stringify(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const applyStashByRef = useCallback(
+    async (stashRef: string) => {
+      if (!activeRepoPath || !stashRef.trim()) return;
+      setLoading(true);
+      setError("");
+      try {
+        await gitStashApply({ repoPath: activeRepoPath, stashRef });
+        await loadRepo(activeRepoPath);
+      } catch (e) {
+        setError(typeof e === "string" ? e : JSON.stringify(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeRepoPath, loadRepo, setError, setLoading],
+  );
 
   async function applyStashFromView() {
     if (!activeRepoPath || !stashViewRef) return;

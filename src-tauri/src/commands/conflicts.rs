@@ -24,177 +24,189 @@ fn is_am_in_progress(repo_path: &str) -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn git_am_abort(repo_path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !is_am_in_progress(&repo_path) {
-        return Err(String::from("No git am in progress."));
-    }
-    crate::run_git(&repo_path, &["am", "--abort"])
-}
-
-#[tauri::command]
-pub(crate) fn git_am_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !is_am_in_progress(&repo_path) {
-        return Err(String::from("No git am in progress."));
-    }
-
-    // `git am` uses `.git/rebase-apply/msg` for the commit message.
-    let msg = message.trim_end_matches(['\r', '\n']).to_string();
-    let _ = write_git_path_text(&repo_path, "rebase-apply/msg", msg.as_str());
-    let _ = write_git_path_text(&repo_path, "rebase-apply/message", msg.as_str());
-
-    crate::run_git(&repo_path, &["am", "--continue"])
-}
-
-#[tauri::command]
-pub(crate) fn git_conflict_resolve_rename(repo_path: String, path: String, keep_name: String, keep_content: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-    let keep_name = keep_name.trim().to_string();
-    let keep_content = keep_content.trim().to_string();
-
-    if keep_name != "ours" && keep_name != "theirs" {
-        return Err(String::from("keep_name must be 'ours' or 'theirs'"));
-    }
-    if keep_content != "ours" && keep_content != "theirs" {
-        return Err(String::from("keep_content must be 'ours' or 'theirs'"));
-    }
-
-    let ours_path = path.clone();
-    let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
-        let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
-        let theirs_path = renames
-            .get(ours_path.as_str())
-            .cloned()
-            .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
-
-        let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-        let content_bytes = if keep_content == "ours" {
-            crate::git_show_path_bytes_or_empty(&repo_path, ":2", ours_path.as_str())?
-        } else {
-            let b = crate::git_show_path_bytes_or_empty(&repo_path, ":3", ours_path.as_str())?;
-            if !b.is_empty() {
-                b
-            } else {
-                crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), theirs_path.as_str())?
-            }
-        };
-
-        if content_bytes.is_empty() {
-            return Err(String::from("Failed to load selected content for rename conflict."));
+pub(crate) async fn git_am_abort(repo_path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !is_am_in_progress(&repo_path) {
+            return Err(String::from("No git am in progress."));
         }
-        let content_text = bytes_to_text_or_err(content_bytes.as_slice())?;
-
-        let final_path = if keep_name == "ours" {
-            ours_path.clone()
-        } else {
-            theirs_path.clone()
-        };
-        let remove_path = if final_path == ours_path {
-            theirs_path.clone()
-        } else {
-            ours_path.clone()
-        };
-
-        let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-        if let Some(parent) = full_final.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
-        }
-        fs::write(&full_final, content_text.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
-
-        crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
-
-        crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
-
-        let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-        if full_remove.exists() {
-            if full_remove.is_dir() {
-                let _ = fs::remove_dir_all(&full_remove);
-            } else {
-                let _ = fs::remove_file(&full_remove);
-            }
-        }
-
-        Ok(String::from("ok"))
+        crate::run_git(&repo_path, &["am", "--abort"])
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_conflict_resolve_rename_with_content(
+pub(crate) async fn git_am_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !is_am_in_progress(&repo_path) {
+            return Err(String::from("No git am in progress."));
+        }
+
+        // `git am` uses `.git/rebase-apply/msg` for the commit message.
+        let msg = message.trim_end_matches(['\r', '\n']).to_string();
+        let _ = write_git_path_text(&repo_path, "rebase-apply/msg", msg.as_str());
+        let _ = write_git_path_text(&repo_path, "rebase-apply/message", msg.as_str());
+
+        crate::run_git(&repo_path, &["am", "--continue"])
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_conflict_resolve_rename(repo_path: String, path: String, keep_name: String, keep_content: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+        let keep_name = keep_name.trim().to_string();
+        let keep_content = keep_content.trim().to_string();
+
+        if keep_name != "ours" && keep_name != "theirs" {
+            return Err(String::from("keep_name must be 'ours' or 'theirs'"));
+        }
+        if keep_content != "ours" && keep_content != "theirs" {
+            return Err(String::from("keep_content must be 'ours' or 'theirs'"));
+        }
+
+        let ours_path = path.clone();
+        let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        crate::with_repo_git_lock(&repo_path, || {
+            let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
+            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+            let theirs_path = renames
+                .get(ours_path.as_str())
+                .cloned()
+                .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
+
+            let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+            let content_bytes = if keep_content == "ours" {
+                crate::git_show_path_bytes_or_empty(&repo_path, ":2", ours_path.as_str())?
+            } else {
+                let b = crate::git_show_path_bytes_or_empty(&repo_path, ":3", ours_path.as_str())?;
+                if !b.is_empty() {
+                    b
+                } else {
+                    crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), theirs_path.as_str())?
+                }
+            };
+
+            if content_bytes.is_empty() {
+                return Err(String::from("Failed to load selected content for rename conflict."));
+            }
+            let content_text = bytes_to_text_or_err(content_bytes.as_slice())?;
+
+            let final_path = if keep_name == "ours" {
+                ours_path.clone()
+            } else {
+                theirs_path.clone()
+            };
+            let remove_path = if final_path == ours_path {
+                theirs_path.clone()
+            } else {
+                ours_path.clone()
+            };
+
+            let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+            if let Some(parent) = full_final.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+            }
+            fs::write(&full_final, content_text.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+
+            crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
+
+            crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
+
+            let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+            if full_remove.exists() {
+                if full_remove.is_dir() {
+                    let _ = fs::remove_dir_all(&full_remove);
+                } else {
+                    let _ = fs::remove_file(&full_remove);
+                }
+            }
+
+            Ok(String::from("ok"))
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_conflict_resolve_rename_with_content(
     repo_path: String,
     path: String,
     keep_name: String,
     content: String,
 ) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-    let keep_name = keep_name.trim().to_string();
-    if keep_name != "ours" && keep_name != "theirs" {
-        return Err(String::from("keep_name must be 'ours' or 'theirs'"));
-    }
-
-    let ours_path = path.clone();
-    let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
-        let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
-        let theirs_path = renames
-            .get(ours_path.as_str())
-            .cloned()
-            .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
-
-        let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-        let content = content;
-        if content.trim().is_empty() {
-            return Err(String::from("Content is empty."));
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+        let keep_name = keep_name.trim().to_string();
+        if keep_name != "ours" && keep_name != "theirs" {
+            return Err(String::from("keep_name must be 'ours' or 'theirs'"));
         }
 
-        let final_path = if keep_name == "ours" {
-            ours_path.clone()
-        } else {
-            theirs_path.clone()
-        };
-        let remove_path = if final_path == ours_path {
-            theirs_path.clone()
-        } else {
-            ours_path.clone()
-        };
+        let ours_path = path.clone();
+        let _ = crate::safe_repo_join(&repo_path, ours_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
-        let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-        if let Some(parent) = full_final.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
-        }
-        fs::write(&full_final, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+        crate::with_repo_git_lock(&repo_path, || {
+            let theirs_ref = detect_theirs_ref(&repo_path).ok_or_else(|| String::from("Failed to detect their ref (MERGE_HEAD/REBASE_HEAD)."))?;
+            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+            let theirs_path = renames
+                .get(ours_path.as_str())
+                .cloned()
+                .ok_or_else(|| String::from("Failed to detect rename target for this conflict."))?;
 
-        crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
-        crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
+            let _ = crate::safe_repo_join(&repo_path, theirs_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
-        let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-        if full_remove.exists() {
-            if full_remove.is_dir() {
-                let _ = fs::remove_dir_all(&full_remove);
-            } else {
-                let _ = fs::remove_file(&full_remove);
+            let content = content;
+            if content.trim().is_empty() {
+                return Err(String::from("Content is empty."));
             }
-        }
 
-        Ok(String::from("ok"))
+            let final_path = if keep_name == "ours" {
+                ours_path.clone()
+            } else {
+                theirs_path.clone()
+            };
+            let remove_path = if final_path == ours_path {
+                theirs_path.clone()
+            } else {
+                ours_path.clone()
+            };
+
+            let full_final = crate::safe_repo_join(&repo_path, final_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+            if let Some(parent) = full_final.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+            }
+            fs::write(&full_final, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+
+            crate::run_git(&repo_path, &["add", "-A", "--", final_path.as_str()])?;
+            crate::run_git(&repo_path, &["rm", "-f", "--ignore-unmatch", "--", remove_path.as_str()])?;
+
+            let full_remove = crate::safe_repo_join(&repo_path, remove_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+            if full_remove.exists() {
+                if full_remove.is_dir() {
+                    let _ = fs::remove_dir_all(&full_remove);
+                } else {
+                    let _ = fs::remove_file(&full_remove);
+                }
+            }
+
+            Ok(String::from("ok"))
+        })
     })
+    .await
 }
 
 fn detect_theirs_ref(repo_path: &str) -> Option<String> {
@@ -297,297 +309,318 @@ pub(crate) struct GitConflictFileEntry {
 }
 
 #[tauri::command]
-pub(crate) fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_continue_info(repo_path: String) -> Result<GitContinueInfo, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let merge = crate::is_merge_in_progress(&repo_path);
-    let rebase = crate::is_rebase_in_progress(&repo_path);
-    let cherry = crate::is_cherry_pick_in_progress(&repo_path);
-    let am = is_am_in_progress(&repo_path);
-    if !merge && !rebase && !cherry && !am {
-        return Err(String::from("No merge/rebase/cherry-pick/am in progress."));
-    }
+        let merge = crate::is_merge_in_progress(&repo_path);
+        let rebase = crate::is_rebase_in_progress(&repo_path);
+        let cherry = crate::is_cherry_pick_in_progress(&repo_path);
+        let am = is_am_in_progress(&repo_path);
+        if !merge && !rebase && !cherry && !am {
+            return Err(String::from("No merge/rebase/cherry-pick/am in progress."));
+        }
 
-    let operation = if merge {
-        "merge"
-    } else if cherry {
-        "cherry-pick"
-    } else if am {
-        "am"
-    } else {
-        "rebase"
-    };
+        let operation = if merge {
+            "merge"
+        } else if cherry {
+            "cherry-pick"
+        } else if am {
+            "am"
+        } else {
+            "rebase"
+        };
 
-    let mut message = if operation == "merge" {
-        let m = read_git_path_text(&repo_path, "MERGE_MSG")?;
-        if m.trim().is_empty() {
-            String::from("Merge")
-        } else {
-            m
-        }
-    } else if operation == "cherry-pick" {
-        let m = read_git_path_text(&repo_path, "CHERRY_PICK_MSG")?;
-        if m.trim().is_empty() {
-            String::from("Cherry-pick")
-        } else {
-            m
-        }
-    } else if operation == "am" {
-        // `git am` stores message in `rebase-apply/msg`.
-        let m = read_git_path_text(&repo_path, "rebase-apply/msg")?;
-        if m.trim().is_empty() {
-            String::from("Apply patch")
-        } else {
-            m
-        }
-    } else {
-        let m = read_git_path_text(&repo_path, "rebase-merge/message")?;
-        if m.trim().is_empty() {
-            let m2 = read_git_path_text(&repo_path, "rebase-apply/message")?;
-            if m2.trim().is_empty() {
-                String::from("Rebase")
+        let mut message = if operation == "merge" {
+            let m = read_git_path_text(&repo_path, "MERGE_MSG")?;
+            if m.trim().is_empty() {
+                String::from("Merge")
             } else {
-                m2
+                m
+            }
+        } else if operation == "cherry-pick" {
+            let m = read_git_path_text(&repo_path, "CHERRY_PICK_MSG")?;
+            if m.trim().is_empty() {
+                String::from("Cherry-pick")
+            } else {
+                m
+            }
+        } else if operation == "am" {
+            // `git am` stores message in `rebase-apply/msg`.
+            let m = read_git_path_text(&repo_path, "rebase-apply/msg")?;
+            if m.trim().is_empty() {
+                String::from("Apply patch")
+            } else {
+                m
             }
         } else {
-            m
-        }
-    };
-
-    let files = staged_name_status(&repo_path).unwrap_or_default();
-
-    let mut s = message.replace("\r\n", "\n");
-    if !s.ends_with('\n') {
-        s.push('\n');
-    }
-    s.push('\n');
-    s.push_str("# Please enter the commit message for your changes. Lines starting\n");
-    s.push_str("# with '#' will be ignored, and an empty message aborts the commit.\n");
-    s.push_str("#\n");
-
-    if operation == "merge" || operation == "cherry-pick" || operation == "am" {
-        let conflicts = crate::list_unmerged_files(&repo_path);
-        if !conflicts.is_empty() {
-            s.push_str("# Conflicts:\n");
-            for p in conflicts.iter() {
-                s.push_str(format!("#\t{}\n", p).as_str());
+            let m = read_git_path_text(&repo_path, "rebase-merge/message")?;
+            if m.trim().is_empty() {
+                let m2 = read_git_path_text(&repo_path, "rebase-apply/message")?;
+                if m2.trim().is_empty() {
+                    String::from("Rebase")
+                } else {
+                    m2
+                }
+            } else {
+                m
             }
-            s.push_str("#\n");
-        }
-    }
+        };
 
-    if let Ok(status_text) = git_status_text(&repo_path) {
-        for line in status_text.replace("\r\n", "\n").lines() {
-            s.push_str("# ");
-            s.push_str(line);
+        let files = staged_name_status(&repo_path).unwrap_or_default();
+
+        let mut s = message.replace("\r\n", "\n");
+        if !s.ends_with('\n') {
             s.push('\n');
         }
-    }
-
-    if !files.is_empty() {
+        s.push('\n');
+        s.push_str("# Please enter the commit message for your changes. Lines starting\n");
+        s.push_str("# with '#' will be ignored, and an empty message aborts the commit.\n");
         s.push_str("#\n");
-        s.push_str("# Staged changes:\n");
-        for f in files.iter() {
-            s.push_str(format!("# {} {}\n", f.status, f.path).as_str());
+
+        if operation == "merge" || operation == "cherry-pick" || operation == "am" {
+            let conflicts = crate::list_unmerged_files(&repo_path);
+            if !conflicts.is_empty() {
+                s.push_str("# Conflicts:\n");
+                for p in conflicts.iter() {
+                    s.push_str(format!("#\t{}\n", p).as_str());
+                }
+                s.push_str("#\n");
+            }
         }
-    }
 
-    message = s;
-    Ok(GitContinueInfo {
-        operation: operation.to_string(),
-        message,
-        files,
+        if let Ok(status_text) = git_status_text(&repo_path) {
+            for line in status_text.replace("\r\n", "\n").lines() {
+                s.push_str("# ");
+                s.push_str(line);
+                s.push('\n');
+            }
+        }
+
+        if !files.is_empty() {
+            s.push_str("#\n");
+            s.push_str("# Staged changes:\n");
+            for f in files.iter() {
+                s.push_str(format!("# {} {}\n", f.status, f.path).as_str());
+            }
+        }
+
+        message = s;
+        Ok(GitContinueInfo {
+            operation: operation.to_string(),
+            message,
+            files,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_cherry_pick_abort(repo_path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !crate::is_cherry_pick_in_progress(&repo_path) {
-        return Err(String::from("No cherry-pick in progress."));
-    }
-    crate::run_git(&repo_path, &["cherry-pick", "--abort"])
+pub(crate) async fn git_cherry_pick_abort(repo_path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !crate::is_cherry_pick_in_progress(&repo_path) {
+            return Err(String::from("No cherry-pick in progress."));
+        }
+        crate::run_git(&repo_path, &["cherry-pick", "--abort"])
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_cherry_pick_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !crate::is_cherry_pick_in_progress(&repo_path) {
-        return Err(String::from("No cherry-pick in progress."));
-    }
+pub(crate) async fn git_cherry_pick_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !crate::is_cherry_pick_in_progress(&repo_path) {
+            return Err(String::from("No cherry-pick in progress."));
+        }
 
-    // Keep message in sync with what Git may use during cherry-pick continue.
-    // Depending on Git version/flow this can be CHERRY_PICK_MSG, MERGE_MSG,
-    // or sequencer/message.
-    write_git_path_text(&repo_path, "CHERRY_PICK_MSG", message.as_str())?;
-    let _ = write_git_path_text(&repo_path, "MERGE_MSG", message.as_str());
-    let _ = write_git_path_text(&repo_path, "sequencer/message", message.as_str());
+        // Keep message in sync with what Git may use during cherry-pick continue.
+        // Depending on Git version/flow this can be CHERRY_PICK_MSG, MERGE_MSG,
+        // or sequencer/message.
+        write_git_path_text(&repo_path, "CHERRY_PICK_MSG", message.as_str())?;
+        let _ = write_git_path_text(&repo_path, "MERGE_MSG", message.as_str());
+        let _ = write_git_path_text(&repo_path, "sequencer/message", message.as_str());
 
-    // Continue without launching editor, but allow Git to use CHERRY_PICK_MSG.
-    let mut cmd = crate::git_command_in_repo(&repo_path);
-    no_editor_env(&mut cmd);
-    let out = cmd
-        .args(["cherry-pick", "--continue"])
-        .output()
-        .map_err(|e| format!("Failed to spawn git cherry-pick --continue: {e}"))?;
+        // Continue without launching editor, but allow Git to use CHERRY_PICK_MSG.
+        let mut cmd = crate::git_command_in_repo(&repo_path);
+        no_editor_env(&mut cmd);
+        let out = cmd
+            .args(["cherry-pick", "--continue"])
+            .output()
+            .map_err(|e| format!("Failed to spawn git cherry-pick --continue: {e}"))?;
 
-    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-    if out.status.success() {
-        Ok(if !stdout.is_empty() { stdout } else { stderr })
-    } else {
-        Err(if !stderr.is_empty() { stderr } else { stdout })
-    }
+        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        if out.status.success() {
+            Ok(if !stdout.is_empty() { stdout } else { stderr })
+        } else {
+            Err(if !stderr.is_empty() { stderr } else { stdout })
+        }
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_continue_file_diff(repo_path: String, path: String, unified: u32) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_continue_file_diff(repo_path: String, path: String, unified: u32) -> Result<String, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-    crate::ensure_rel_path_safe(path.as_str())?;
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+        crate::ensure_rel_path_safe(path.as_str())?;
 
-    let u = unified.min(50);
-    let unified_arg = format!("--unified={u}");
-    crate::run_git_stdout_raw(
-        &repo_path,
-        &["diff", "--cached", "--no-color", unified_arg.as_str(), "--", path.as_str()],
-    )
+        let u = unified.min(50);
+        let unified_arg = format!("--unified={u}");
+        crate::run_git_stdout_raw(
+            &repo_path,
+            &["diff", "--cached", "--no-color", unified_arg.as_str(), "--", path.as_str()],
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_continue_rename_diff(
+pub(crate) async fn git_continue_rename_diff(
     repo_path: String,
     old_path: String,
     new_path: String,
     unified: u32,
 ) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let old_path = old_path.trim().to_string();
-    let new_path = new_path.trim().to_string();
-    if old_path.is_empty() || new_path.is_empty() {
-        return Err(String::from("old_path/new_path is empty"));
-    }
-    crate::ensure_rel_path_safe(old_path.as_str())?;
-    crate::ensure_rel_path_safe(new_path.as_str())?;
+        let old_path = old_path.trim().to_string();
+        let new_path = new_path.trim().to_string();
+        if old_path.is_empty() || new_path.is_empty() {
+            return Err(String::from("old_path/new_path is empty"));
+        }
+        crate::ensure_rel_path_safe(old_path.as_str())?;
+        crate::ensure_rel_path_safe(new_path.as_str())?;
 
-    let u = unified.min(50);
-    let unified_arg = format!("--unified={u}");
-    crate::run_git_stdout_raw(
-        &repo_path,
-        &[
-            "diff",
-            "--cached",
-            "--no-color",
-            "-M",
-            unified_arg.as_str(),
-            "--",
-            old_path.as_str(),
-            new_path.as_str(),
-        ],
-    )
+        let u = unified.min(50);
+        let unified_arg = format!("--unified={u}");
+        crate::run_git_stdout_raw(
+            &repo_path,
+            &[
+                "diff",
+                "--cached",
+                "--no-color",
+                "-M",
+                unified_arg.as_str(),
+                "--",
+                old_path.as_str(),
+                new_path.as_str(),
+            ],
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_merge_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !crate::is_merge_in_progress(&repo_path) {
-        return Err(String::from("No merge in progress."));
-    }
+pub(crate) async fn git_merge_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !crate::is_merge_in_progress(&repo_path) {
+            return Err(String::from("No merge in progress."));
+        }
 
-    let mut msg = message.replace("\r\n", "\n");
-    if !msg.ends_with('\n') {
-        msg.push('\n');
-    }
+        let mut msg = message.replace("\r\n", "\n");
+        if !msg.ends_with('\n') {
+            msg.push('\n');
+        }
 
-    let mut child = crate::git_command_in_repo(&repo_path)
-        .args(["commit", "-F", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
+        let mut child = crate::git_command_in_repo(&repo_path)
+            .args(["commit", "-F", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn git commit: {e}"))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(msg.as_bytes())
-            .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
-    }
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(msg.as_bytes())
+                .map_err(|e| format!("Failed to write to git stdin: {e}"))?;
+        }
 
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("Failed to wait for git: {e}"))?;
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("Failed to wait for git: {e}"))?;
 
-    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-    if out.status.success() {
-        Ok(if !stdout.is_empty() { stdout } else { stderr })
-    } else {
-        Err(if !stderr.is_empty() { stderr } else { stdout })
-    }
-}
-
-#[tauri::command]
-pub(crate) fn git_rebase_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    if !crate::is_rebase_in_progress(&repo_path) {
-        return Err(String::from("No rebase in progress."));
-    }
-
-    let merge_dir = resolve_git_path(&repo_path, "rebase-merge")?;
-    let apply_dir = resolve_git_path(&repo_path, "rebase-apply")?;
-
-    if merge_dir.as_ref().is_some_and(|p| p.exists()) {
-        write_git_path_text(&repo_path, "rebase-merge/message", message.as_str())?;
-    } else if apply_dir.as_ref().is_some_and(|p| p.exists()) {
-        write_git_path_text(&repo_path, "rebase-apply/message", message.as_str())?;
-    } else {
-        // Fallback: try writing both (Git will read whichever applies).
-        let _ = write_git_path_text(&repo_path, "rebase-merge/message", message.as_str());
-        let _ = write_git_path_text(&repo_path, "rebase-apply/message", message.as_str());
-    }
-
-    let mut cmd = crate::git_command_in_repo(&repo_path);
-    no_editor_env(&mut cmd);
-    let out = cmd
-        .args(["rebase", "--continue", "--no-edit"])
-        .output()
-        .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
-
-    if out.status.success() {
         let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
         let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-        return Ok(if !stdout.is_empty() { stdout } else { stderr });
-    }
+        if out.status.success() {
+            Ok(if !stdout.is_empty() { stdout } else { stderr })
+        } else {
+            Err(if !stderr.is_empty() { stderr } else { stdout })
+        }
+    })
+    .await
+}
 
-    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-    let msg = if !stderr.is_empty() { stderr.clone() } else { stdout.clone() };
+#[tauri::command]
+pub(crate) async fn git_rebase_continue_with_message(repo_path: String, message: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        if !crate::is_rebase_in_progress(&repo_path) {
+            return Err(String::from("No rebase in progress."));
+        }
 
-    // Older Git versions may not support `--no-edit` for `rebase --continue`.
-    // Retry without it.
-    if msg.to_lowercase().contains("unknown option") || msg.to_lowercase().contains("no-edit") {
-        let mut cmd2 = crate::git_command_in_repo(&repo_path);
-        no_editor_env(&mut cmd2);
-        let out2 = cmd2
-            .args(["rebase", "--continue"])
+        let merge_dir = resolve_git_path(&repo_path, "rebase-merge")?;
+        let apply_dir = resolve_git_path(&repo_path, "rebase-apply")?;
+
+        if merge_dir.as_ref().is_some_and(|p| p.exists()) {
+            write_git_path_text(&repo_path, "rebase-merge/message", message.as_str())?;
+        } else if apply_dir.as_ref().is_some_and(|p| p.exists()) {
+            write_git_path_text(&repo_path, "rebase-apply/message", message.as_str())?;
+        } else {
+            // Fallback: try writing both (Git will read whichever applies).
+            let _ = write_git_path_text(&repo_path, "rebase-merge/message", message.as_str());
+            let _ = write_git_path_text(&repo_path, "rebase-apply/message", message.as_str());
+        }
+
+        let mut cmd = crate::git_command_in_repo(&repo_path);
+        no_editor_env(&mut cmd);
+        let out = cmd
+            .args(["rebase", "--continue", "--no-edit"])
             .output()
             .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
 
-        let stdout2 = String::from_utf8_lossy(&out2.stdout).trim_end().to_string();
-        let stderr2 = String::from_utf8_lossy(&out2.stderr).trim_end().to_string();
-        if out2.status.success() {
-            Ok(if !stdout2.is_empty() { stdout2 } else { stderr2 })
-        } else {
-            Err(if !stderr2.is_empty() { stderr2 } else { stdout2 })
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+            return Ok(if !stdout.is_empty() { stdout } else { stderr });
         }
-    } else {
-        Err(msg)
-    }
+
+        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        let msg = if !stderr.is_empty() { stderr.clone() } else { stdout.clone() };
+
+        // Older Git versions may not support `--no-edit` for `rebase --continue`.
+        // Retry without it.
+        if msg.to_lowercase().contains("unknown option") || msg.to_lowercase().contains("no-edit") {
+            let mut cmd2 = crate::git_command_in_repo(&repo_path);
+            no_editor_env(&mut cmd2);
+            let out2 = cmd2
+                .args(["rebase", "--continue"])
+                .output()
+                .map_err(|e| format!("Failed to spawn git rebase --continue: {e}"))?;
+
+            let stdout2 = String::from_utf8_lossy(&out2.stdout).trim_end().to_string();
+            let stderr2 = String::from_utf8_lossy(&out2.stderr).trim_end().to_string();
+            if out2.status.success() {
+                Ok(if !stdout2.is_empty() { stdout2 } else { stderr2 })
+            } else {
+                Err(if !stderr2.is_empty() { stderr2 } else { stdout2 })
+            }
+        } else {
+            Err(msg)
+        }
+    })
+    .await
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -866,295 +899,316 @@ fn no_editor_env(cmd: &mut std::process::Command) {
 }
 
 #[tauri::command]
-pub(crate) fn git_conflict_state(repo_path: String) -> Result<GitConflictState, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_conflict_state(repo_path: String) -> Result<GitConflictState, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    crate::with_repo_git_lock(&repo_path, || {
-        let merge_in_progress = crate::is_merge_in_progress(&repo_path);
-        let rebase_in_progress = crate::is_rebase_in_progress(&repo_path);
-        let cherry_in_progress = crate::is_cherry_pick_in_progress(&repo_path);
-        let am_in_progress = is_am_in_progress(&repo_path);
+        crate::with_repo_git_lock(&repo_path, || {
+            let merge_in_progress = crate::is_merge_in_progress(&repo_path);
+            let rebase_in_progress = crate::is_rebase_in_progress(&repo_path);
+            let cherry_in_progress = crate::is_cherry_pick_in_progress(&repo_path);
+            let am_in_progress = is_am_in_progress(&repo_path);
 
-        let operation = if am_in_progress {
-            String::from("am")
-        } else if rebase_in_progress {
-            String::from("rebase")
-        } else if merge_in_progress {
-            String::from("merge")
-        } else if cherry_in_progress {
-            String::from("cherry-pick")
-        } else {
-            String::new()
-        };
+            let operation = if am_in_progress {
+                String::from("am")
+            } else if rebase_in_progress {
+                String::from("rebase")
+            } else if merge_in_progress {
+                String::from("merge")
+            } else if cherry_in_progress {
+                String::from("cherry-pick")
+            } else {
+                String::new()
+            };
 
-        let in_progress = merge_in_progress || rebase_in_progress || cherry_in_progress || am_in_progress;
+            let in_progress = merge_in_progress || rebase_in_progress || cherry_in_progress || am_in_progress;
 
-        let files = crate::list_unmerged_files(&repo_path);
+            let files = crate::list_unmerged_files(&repo_path);
 
-        let status_out = crate::git_command_in_repo(&repo_path)
-            .args(["status", "--porcelain", "-z", "--untracked-files=no"])
-            .output()
-            .map_err(|e| format!("Failed to spawn git status: {e}"))?;
+            let status_out = crate::git_command_in_repo(&repo_path)
+                .args(["status", "--porcelain", "-z", "--untracked-files=no"])
+                .output()
+                .map_err(|e| format!("Failed to spawn git status: {e}"))?;
 
-        let status_map = if status_out.status.success() {
-            parse_status_porcelain_z(status_out.stdout.as_slice())
-        } else {
-            HashMap::new()
-        };
+            let status_map = if status_out.status.success() {
+                parse_status_porcelain_z(status_out.stdout.as_slice())
+            } else {
+                HashMap::new()
+            };
 
-        let ls_out = crate::git_command_in_repo(&repo_path)
-            .args(["ls-files", "-u", "-z"])
-            .output()
-            .map_err(|e| format!("Failed to spawn git ls-files: {e}"))?;
+            let ls_out = crate::git_command_in_repo(&repo_path)
+                .args(["ls-files", "-u", "-z"])
+                .output()
+                .map_err(|e| format!("Failed to spawn git ls-files: {e}"))?;
 
-        let stages_map = if ls_out.status.success() {
-            parse_ls_files_unmerged_z(ls_out.stdout.as_slice())
-        } else {
-            HashMap::new()
-        };
+            let stages_map = if ls_out.status.success() {
+                parse_ls_files_unmerged_z(ls_out.stdout.as_slice())
+            } else {
+                HashMap::new()
+            };
 
-        let mut entries: Vec<GitConflictFileEntry> = Vec::new();
-        for p in files.iter() {
-            let status = status_map.get(p).cloned().unwrap_or_else(|| String::from("U"));
-            let stages = stages_map.get(p).cloned().unwrap_or_default();
-            entries.push(GitConflictFileEntry {
-                status,
-                path: p.clone(),
-                stages,
-            });
-        }
+            let mut entries: Vec<GitConflictFileEntry> = Vec::new();
+            for p in files.iter() {
+                let status = status_map.get(p).cloned().unwrap_or_else(|| String::from("U"));
+                let stages = stages_map.get(p).cloned().unwrap_or_default();
+                entries.push(GitConflictFileEntry {
+                    status,
+                    path: p.clone(),
+                    stages,
+                });
+            }
 
-        Ok(GitConflictState {
-            in_progress,
-            operation,
-            files: entries,
+            Ok(GitConflictState {
+                in_progress,
+                operation,
+                files: entries,
+            })
         })
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_conflict_file_versions(repo_path: String, path: String) -> Result<GitConflictFileVersions, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_conflict_file_versions(repo_path: String, path: String) -> Result<GitConflictFileVersions, String> {
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
 
-    let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+        let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
 
-    crate::with_repo_git_lock(&repo_path, || {
-        let base_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":1", path.as_str())?;
-        let ours_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":2", path.as_str())?;
-        let theirs_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":3", path.as_str())?;
+        crate::with_repo_git_lock(&repo_path, || {
+            let base_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":1", path.as_str())?;
+            let ours_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":2", path.as_str())?;
+            let theirs_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":3", path.as_str())?;
 
-        let working_bytes = match fs::read(&full) {
-            Ok(b) => Some(b),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(format!("Failed to read file: {e}")),
-        };
+            let working_bytes = match fs::read(&full) {
+                Ok(b) => Some(b),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(format!("Failed to read file: {e}")),
+            };
 
-        let base = if base_bytes.is_empty() {
-            None
-        } else {
-            Some(bytes_to_text_or_err(base_bytes.as_slice())?)
-        };
-        let ours = if ours_bytes.is_empty() {
-            None
-        } else {
-            Some(bytes_to_text_or_err(ours_bytes.as_slice())?)
-        };
-        let theirs = if theirs_bytes.is_empty() {
-            None
-        } else {
-            Some(bytes_to_text_or_err(theirs_bytes.as_slice())?)
-        };
-        let working = match working_bytes {
-            None => None,
-            Some(b) => Some(bytes_to_text_or_err(b.as_slice())?),
-        };
+            let base = if base_bytes.is_empty() {
+                None
+            } else {
+                Some(bytes_to_text_or_err(base_bytes.as_slice())?)
+            };
+            let ours = if ours_bytes.is_empty() {
+                None
+            } else {
+                Some(bytes_to_text_or_err(ours_bytes.as_slice())?)
+            };
+            let theirs = if theirs_bytes.is_empty() {
+                None
+            } else {
+                Some(bytes_to_text_or_err(theirs_bytes.as_slice())?)
+            };
+            let working = match working_bytes {
+                None => None,
+                Some(b) => Some(bytes_to_text_or_err(b.as_slice())?),
+            };
 
-        let mut ours_deleted = ours.is_none() && !git_file_exists_at_rev(&repo_path, "HEAD", path.as_str());
+            let mut ours_deleted = ours.is_none() && !git_file_exists_at_rev(&repo_path, "HEAD", path.as_str());
 
-        let mut theirs_path: Option<String> = None;
-        let mut resolved_theirs = theirs;
-        let mut theirs_deleted = resolved_theirs.is_none();
-        let mut conflict_kind = String::from("text");
+            let mut theirs_path: Option<String> = None;
+            let mut resolved_theirs = theirs;
+            let mut theirs_deleted = resolved_theirs.is_none();
+            let mut conflict_kind = String::from("text");
 
-        if resolved_theirs.is_none() {
+            if resolved_theirs.is_none() {
+                if let Some(theirs_ref) = detect_theirs_ref(&repo_path) {
+                    let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+                    if let Some(new_path) = renames.get(path.as_str()) {
+                        let theirs_alt_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
+                        if !theirs_alt_bytes.is_empty() {
+                            resolved_theirs = Some(bytes_to_text_or_err(theirs_alt_bytes.as_slice())?);
+                            theirs_path = Some(new_path.to_string());
+                            theirs_deleted = false;
+                            conflict_kind = String::from("rename");
+                        }
+                    }
+
+                    if conflict_kind != "rename" {
+                        theirs_deleted = !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str());
+                        if theirs_deleted {
+                            conflict_kind = String::from("modify_delete");
+                        }
+                    }
+                }
+            }
+
+            let stage_ours_missing = ours.is_none();
+            let stage_theirs_missing = resolved_theirs.is_none();
+            if conflict_kind != "rename" && (stage_ours_missing ^ stage_theirs_missing) {
+                conflict_kind = String::from("modify_delete");
+                ours_deleted = stage_ours_missing;
+                theirs_deleted = stage_theirs_missing;
+            }
+
+            if ours_deleted {
+                conflict_kind = String::from("modify_delete");
+            }
+
+            Ok(GitConflictFileVersions {
+                base,
+                ours,
+                theirs: resolved_theirs,
+                working,
+                ours_path: Some(path.to_string()),
+                theirs_path,
+                ours_deleted,
+                theirs_deleted,
+                conflict_kind,
+            })
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_conflict_take_ours(repo_path: String, path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+
+        let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        crate::with_repo_git_lock(&repo_path, || {
+            let ours_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":2", path.as_str())?;
+            if ours_bytes.is_empty() {
+                crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                return Ok(String::from("ok"));
+            }
+
+            let theirs_ref = detect_theirs_ref(&repo_path);
+            if let Some(theirs_ref) = theirs_ref {
+                let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
+                if let Some(new_path) = renames.get(path.as_str()) {
+                    crate::run_git(&repo_path, &["rm", "-f", "--", new_path.as_str()])?;
+                }
+            }
+
+            crate::run_git(&repo_path, &["checkout", "--ours", "--", path.as_str()])?;
+            crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
+            Ok(String::from("ok"))
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_rebase_skip(repo_path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        crate::run_git(&repo_path, &["rebase", "--skip"])
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_conflict_take_theirs(repo_path: String, path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
+        }
+
+        let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        crate::with_repo_git_lock(&repo_path, || {
+            let theirs_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":3", path.as_str())?;
+            if !theirs_bytes.is_empty() {
+                crate::run_git(&repo_path, &["checkout", "--theirs", "--", path.as_str()])?;
+                crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
+                return Ok(String::from("ok"));
+            }
+
             if let Some(theirs_ref) = detect_theirs_ref(&repo_path) {
                 let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
                 if let Some(new_path) = renames.get(path.as_str()) {
-                    let theirs_alt_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
-                    if !theirs_alt_bytes.is_empty() {
-                        resolved_theirs = Some(bytes_to_text_or_err(theirs_alt_bytes.as_slice())?);
-                        theirs_path = Some(new_path.to_string());
-                        theirs_deleted = false;
-                        conflict_kind = String::from("rename");
+                    let full_new = crate::safe_repo_join(&repo_path, new_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+                    if let Some(parent) = full_new.parent() {
+                        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
                     }
-                }
 
-                if conflict_kind != "rename" {
-                    theirs_deleted = !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str());
-                    if theirs_deleted {
-                        conflict_kind = String::from("modify_delete");
+                    let theirs_new_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
+                    if theirs_new_bytes.is_empty() {
+                        crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                        return Ok(String::from("ok"));
                     }
-                }
-            }
-        }
 
-        let stage_ours_missing = ours.is_none();
-        let stage_theirs_missing = resolved_theirs.is_none();
-        if conflict_kind != "rename" && (stage_ours_missing ^ stage_theirs_missing) {
-            conflict_kind = String::from("modify_delete");
-            ours_deleted = stage_ours_missing;
-            theirs_deleted = stage_theirs_missing;
-        }
-
-        if ours_deleted {
-            conflict_kind = String::from("modify_delete");
-        }
-
-        Ok(GitConflictFileVersions {
-            base,
-            ours,
-            theirs: resolved_theirs,
-            working,
-            ours_path: Some(path.to_string()),
-            theirs_path,
-            ours_deleted,
-            theirs_deleted,
-            conflict_kind,
-        })
-    })
-}
-
-#[tauri::command]
-pub(crate) fn git_conflict_take_ours(repo_path: String, path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-
-    let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let ours_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":2", path.as_str())?;
-        if ours_bytes.is_empty() {
-            crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
-            return Ok(String::from("ok"));
-        }
-
-        let theirs_ref = detect_theirs_ref(&repo_path);
-        if let Some(theirs_ref) = theirs_ref {
-            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
-            if let Some(new_path) = renames.get(path.as_str()) {
-                crate::run_git(&repo_path, &["rm", "-f", "--", new_path.as_str()])?;
-            }
-        }
-
-        crate::run_git(&repo_path, &["checkout", "--ours", "--", path.as_str()])?;
-        crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
-        Ok(String::from("ok"))
-    })
-}
-
-#[tauri::command]
-pub(crate) fn git_rebase_skip(repo_path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    crate::run_git(&repo_path, &["rebase", "--skip"])
-}
-
-#[tauri::command]
-pub(crate) fn git_conflict_take_theirs(repo_path: String, path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-
-    let _ = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let theirs_bytes = crate::git_show_path_bytes_or_empty(&repo_path, ":3", path.as_str())?;
-        if !theirs_bytes.is_empty() {
-            crate::run_git(&repo_path, &["checkout", "--theirs", "--", path.as_str()])?;
-            crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
-            return Ok(String::from("ok"));
-        }
-
-        if let Some(theirs_ref) = detect_theirs_ref(&repo_path) {
-            let renames = detect_renames_against_theirs(&repo_path, theirs_ref.as_str());
-            if let Some(new_path) = renames.get(path.as_str()) {
-                let full_new = crate::safe_repo_join(&repo_path, new_path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-                if let Some(parent) = full_new.parent() {
-                    fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
-                }
-
-                let theirs_new_bytes = crate::git_show_path_bytes_or_empty(&repo_path, theirs_ref.as_str(), new_path.as_str())?;
-                if theirs_new_bytes.is_empty() {
+                    fs::write(&full_new, theirs_new_bytes.as_slice()).map_err(|e| format!("Failed to write file: {e}"))?;
+                    crate::run_git(&repo_path, &["add", "-A", "--", new_path.as_str()])?;
                     crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
                     return Ok(String::from("ok"));
                 }
 
-                fs::write(&full_new, theirs_new_bytes.as_slice()).map_err(|e| format!("Failed to write file: {e}"))?;
-                crate::run_git(&repo_path, &["add", "-A", "--", new_path.as_str()])?;
-                crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
-                return Ok(String::from("ok"));
+                if !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str()) {
+                    crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+                    return Ok(String::from("ok"));
+                }
             }
 
-            if !git_file_exists_at_rev(&repo_path, theirs_ref.as_str(), path.as_str()) {
-                crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
-                return Ok(String::from("ok"));
-            }
-        }
-
-        crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
-        Ok(String::from("ok"))
+            crate::run_git(&repo_path, &["rm", "-f", "--", path.as_str()])?;
+            Ok(String::from("ok"))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_conflict_apply_and_stage(repo_path: String, path: String, content: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_conflict_apply_and_stage(repo_path: String, path: String, content: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-
-    let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
         }
-        fs::write(&full, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
-        crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
-        Ok(String::from("ok"))
+
+        let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        crate::with_repo_git_lock(&repo_path, || {
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+            }
+            fs::write(&full, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+            crate::run_git(&repo_path, &["add", "--", path.as_str()])?;
+            Ok(String::from("ok"))
+        })
     })
+    .await
 }
 
 #[tauri::command]
 #[allow(dead_code)]
-pub(crate) fn git_conflict_apply(repo_path: String, path: String, content: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_conflict_apply(repo_path: String, path: String, content: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Err(String::from("path is empty"));
-    }
-
-    let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
-
-    crate::with_repo_git_lock(&repo_path, || {
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return Err(String::from("path is empty"));
         }
-        fs::write(&full, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
-        Ok(String::from("ok"))
+
+        let full = crate::safe_repo_join(&repo_path, path.as_str()).map_err(|e| format!("Invalid path: {e}"))?;
+
+        crate::with_repo_git_lock(&repo_path, || {
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directories: {e}"))?;
+            }
+            fs::write(&full, content.as_bytes()).map_err(|e| format!("Failed to write file: {e}"))?;
+            Ok(String::from("ok"))
+        })
     })
+    .await
 }

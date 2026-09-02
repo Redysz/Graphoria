@@ -1,6 +1,7 @@
+import { memo, useCallback, useMemo, type MouseEvent } from "react";
 import type { RepoOverview, GitStashEntry } from "../types/git";
 
-export function Sidebar(props: {
+function SidebarImpl(props: {
   visible: boolean;
 
   overview: RepoOverview | undefined;
@@ -47,31 +48,53 @@ export function Sidebar(props: {
     confirmDeleteStash,
   } = props;
 
+  const branches = useMemo(() => (overview?.branches ?? []).slice(0, 30), [overview?.branches]);
+  const remotes = useMemo(() => (overview?.remotes ?? []).slice(0, 30), [overview?.remotes]);
+  const allTags = useMemo(() => overview?.tags ?? [], [overview?.tags]);
+  const tags = useMemo(() => (tagsExpanded ? allTags : allTags.slice(0, 10)), [allTags, tagsExpanded]);
+
+  const hiddenStyle = useMemo(
+    () => ({ overflow: "hidden" as const, borderRight: "none", pointerEvents: "none" as const }),
+    [],
+  );
+
+  const onBranchContextMenu = useCallback(
+    (branchName: string, e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openBranchContextMenu(branchName, e.clientX, e.clientY);
+    },
+    [openBranchContextMenu],
+  );
+
+  const onTagContextMenu = useCallback(
+    (tagName: string, e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openTagContextMenu(tagName, e.clientX, e.clientY);
+    },
+    [openTagContextMenu],
+  );
+
+  const onExpandTags = useCallback(() => {
+    if (!activeRepoPath) return;
+    expandTags();
+  }, [activeRepoPath, expandTags]);
+
+  const actionsDisabled = !activeRepoPath || loading;
+
   return (
-    <aside
-      className="sidebar"
-      style={
-        visible
-          ? undefined
-          : {
-              overflow: "hidden",
-              borderRight: "none",
-              pointerEvents: "none",
-            }
-      }
-    >
+    <aside className="sidebar" style={visible ? undefined : hiddenStyle}>
       <div className="sidebarSection">
         <div className="sidebarTitle">Branches</div>
         <div className="sidebarList">
-          {(overview?.branches ?? []).slice(0, 30).map((b) => (
+          {branches.map((b) => (
             <div key={b} className="sidebarItem branchRow" title={b}>
               <button
                 type="button"
                 className="branchMain"
                 onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openBranchContextMenu(b, e.clientX, e.clientY);
+                  onBranchContextMenu(b, e);
                 }}
               >
                 <span className="branchLabel" style={isActiveBranch(b) ? { fontWeight: 900 } : undefined}>
@@ -85,7 +108,7 @@ export function Sidebar(props: {
                   className="branchActionBtn"
                   onClick={() => void checkoutBranch(b)}
                   title="Checkout (Switch) to this branch"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   C
                 </button>
@@ -94,7 +117,7 @@ export function Sidebar(props: {
                   className="branchActionBtn"
                   onClick={() => void openRenameBranchDialog(b)}
                   title="Rename branch"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   R
                 </button>
@@ -103,7 +126,7 @@ export function Sidebar(props: {
                   className="branchActionBtn"
                   onClick={() => void deleteBranch(b)}
                   title="Delete branch"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   D
                 </button>
@@ -116,7 +139,7 @@ export function Sidebar(props: {
       <div className="sidebarSection">
         <div className="sidebarTitle">Remotes</div>
         <div className="sidebarList">
-          {(overview?.remotes ?? []).slice(0, 30).map((r) => (
+          {remotes.map((r) => (
             <div key={r} className="sidebarItem">
               {r}
             </div>
@@ -127,18 +150,16 @@ export function Sidebar(props: {
       <div className="sidebarSection">
         <div className="sidebarTitle">Tags</div>
         <div className="sidebarList">
-          {(tagsExpanded ? overview?.tags ?? [] : (overview?.tags ?? []).slice(0, 10)).map((t) => (
+          {tags.map((t) => (
             <div key={t} className="sidebarItem tagRow" title={t}>
               <button
                 type="button"
                 className="tagMain"
                 onClick={() => void focusTagOnGraph(t)}
                 onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openTagContextMenu(t, e.clientX, e.clientY);
+                  onTagContextMenu(t, e);
                 }}
-                disabled={!activeRepoPath || loading}
+                disabled={actionsDisabled}
               >
                 <span className="tagLabel">{t}</span>
               </button>
@@ -149,7 +170,7 @@ export function Sidebar(props: {
                   className="tagActionBtn"
                   onClick={() => void focusTagOnGraph(t)}
                   title="Focus on graph"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   F
                 </button>
@@ -158,7 +179,7 @@ export function Sidebar(props: {
                   className="tagActionBtn"
                   onClick={() => void openRenameTagDialog(t)}
                   title="Rename tag"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   R
                 </button>
@@ -167,20 +188,17 @@ export function Sidebar(props: {
                   className="tagActionBtn"
                   onClick={() => void deleteLocalTag(t)}
                   title="Delete local tag"
-                  disabled={!activeRepoPath || loading}
+                  disabled={actionsDisabled}
                 >
                   D
                 </button>
               </span>
             </div>
           ))}
-          {!tagsExpanded && (overview?.tags ?? []).length > 10 ? (
+          {!tagsExpanded && allTags.length > 10 ? (
             <button
               type="button"
-              onClick={() => {
-                if (!activeRepoPath) return;
-                expandTags();
-              }}
+              onClick={onExpandTags}
               style={{
                 width: "100%",
                 textAlign: "left",
@@ -241,3 +259,5 @@ export function Sidebar(props: {
     </aside>
   );
 }
+
+export const Sidebar = memo(SidebarImpl);

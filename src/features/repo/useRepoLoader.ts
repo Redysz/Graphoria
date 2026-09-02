@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { parseGitDubiousOwnershipError } from "../../utils/gitTrust";
 import type { GitCommit, GitStatusSummary, GitStashEntry, RepoOverview } from "../../types/git";
 import type { GitHistoryOrder } from "../../appSettingsStore";
@@ -67,10 +67,19 @@ export function useRepoLoader(opts: {
     [graphoriaIgnore.globalText, graphoriaIgnore.repoTextByPath],
   );
 
+  // Refreshes for the same repository can overlap (tab switches, auto-refresh, an operation
+  // finishing). Each run takes a ticket, and only the newest ticket for a path is allowed to write
+  // state, so a slow earlier response can no longer overwrite fresher data.
+  const loadGenerationRef = useRef<Map<string, number>>(new Map());
+
   const loadRepo = useCallback(
     async (nextRepoPath?: string, forceFullHistory?: boolean, updateSelection?: boolean): Promise<boolean> => {
       const path = nextRepoPath ?? activeRepoPath;
       if (!path) return false;
+
+      const generation = (loadGenerationRef.current.get(path) ?? 0) + 1;
+      loadGenerationRef.current.set(path, generation);
+      const isCurrent = () => loadGenerationRef.current.get(path) === generation;
 
       const shouldUpdateSelection = updateSelection !== false;
 
@@ -86,6 +95,8 @@ export function useRepoLoader(opts: {
           : listCommits({ repoPath: path, maxCount: 2001, onlyHead: commitsOnlyHead, historyOrder: commitsHistoryOrder });
 
         const cs = await commitsPromise;
+
+        if (!isCurrent()) return false;
 
         if (fullHistory) {
           setCommitsHasMoreByRepo((prev) => ({ ...prev, [path]: false }));
@@ -104,6 +115,7 @@ export function useRepoLoader(opts: {
         }
 
         void Promise.allSettled([repoOverview(path), computeStatusSummary(path)]).then(([ovRes, statusSummaryRes]) => {
+          if (!isCurrent()) return;
           if (ovRes.status === "fulfilled") {
             setOverviewByRepo((prev) => ({ ...prev, [path]: ovRes.value }));
           }
@@ -114,6 +126,7 @@ export function useRepoLoader(opts: {
 
         void gitStashList(path)
           .then((stashes) => {
+            if (!isCurrent()) return;
             setStashesByRepo((prev) => ({ ...prev, [path]: stashes }));
           })
           .catch(() => undefined);
@@ -123,6 +136,8 @@ export function useRepoLoader(opts: {
         }
         return true;
       } catch (e) {
+        if (!isCurrent()) return false;
+
         setOverviewByRepo((prev) => ({ ...prev, [path]: undefined }));
         setCommitsByRepo((prev) => ({ ...prev, [path]: [] }));
         setCommitsHasMoreByRepo((prev) => ({ ...prev, [path]: undefined }));

@@ -33,131 +33,134 @@ pub(crate) struct GitPatchPredictGraphResult {
 }
 
 #[tauri::command]
-pub(crate) fn git_predict_patch_graph(
+pub(crate) async fn git_predict_patch_graph(
     repo_path: String,
     patch_path: String,
     method: String,
     max_commits: Option<u32>,
 ) -> Result<GitPatchPredictGraphResult, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let patch_path = patch_path.trim().to_string();
-    if patch_path.is_empty() {
-        return Err(String::from("patch_path is empty"));
-    }
+        let patch_path = patch_path.trim().to_string();
+        if patch_path.is_empty() {
+            return Err(String::from("patch_path is empty"));
+        }
 
-    let method = method.trim().to_lowercase();
-    if method != "apply" && method != "am" {
-        return Err(String::from("method must be 'apply' or 'am'"));
-    }
+        let method = method.trim().to_lowercase();
+        if method != "apply" && method != "am" {
+            return Err(String::from("method must be 'apply' or 'am'"));
+        }
 
-    crate::with_repo_git_lock(&repo_path, || {
-        let max_commits = max_commits.unwrap_or(60).max(10).min(200);
+        crate::with_repo_git_lock(&repo_path, || {
+            let max_commits = max_commits.unwrap_or(60).max(10).min(200);
 
-        let bytes = fs::read(&patch_path).map_err(|e| format!("Failed to read patch file: {e}"))?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        let touched_files = parse_touched_files_from_patch_text(text.as_str());
-        let subjects = parse_patch_subjects(text.as_str(), 12);
+            let bytes = fs::read(&patch_path).map_err(|e| format!("Failed to read patch file: {e}"))?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let touched_files = parse_touched_files_from_patch_text(text.as_str());
+            let subjects = parse_patch_subjects(text.as_str(), 12);
 
-        let diff_part = if method == "am" {
-            extract_diff_part_for_apply_check(text.as_str())
-        } else {
-            text
-        };
+            let diff_part = if method == "am" {
+                extract_diff_part_for_apply_check(text.as_str())
+            } else {
+                text
+            };
 
-        let args: [&str; 4] = ["apply", "--check", "--", "-"];
-        let res = crate::run_git_with_stdin(&repo_path, &args, diff_part.as_str());
+            let args: [&str; 4] = ["apply", "--check", "--", "-"];
+            let res = crate::run_git_with_stdin(&repo_path, &args, diff_part.as_str());
 
-        let (ok, message) = match res {
-            Ok(msg) => (true, if msg.trim().is_empty() { String::from("ok") } else { msg }),
-            Err(e) => (false, e),
-        };
-        let conflict_files = if ok {
-            Vec::new()
-        } else {
-            parse_conflict_files_from_apply_check_message(message.as_str())
-        };
+            let (ok, message) = match res {
+                Ok(msg) => (true, if msg.trim().is_empty() { String::from("ok") } else { msg }),
+                Err(e) => (false, e),
+            };
+            let conflict_files = if ok {
+                Vec::new()
+            } else {
+                parse_conflict_files_from_apply_check_message(message.as_str())
+            };
 
-        let head_name = crate::run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
-            String::from("(detached)")
-        });
-        let head_name = head_name.trim().to_string();
+            let head_name = crate::run_git(&repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| {
+                String::from("(detached)")
+            });
+            let head_name = head_name.trim().to_string();
 
-        let local_head = crate::run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default().trim().to_string();
+            let local_head = crate::run_git(&repo_path, &["rev-parse", "HEAD"]).unwrap_or_default().trim().to_string();
 
-        let mut created_node_ids: Vec<String> = Vec::new();
-        let mut graph_commits: Vec<GitCommit> = Vec::new();
-        let mut predicted_head_id = local_head.clone();
+            let mut created_node_ids: Vec<String> = Vec::new();
+            let mut graph_commits: Vec<GitCommit> = Vec::new();
+            let mut predicted_head_id = local_head.clone();
 
-        if !local_head.trim().is_empty() {
-            if method == "am" {
-                let mut last_parent = local_head.clone();
-                let subs = if subjects.is_empty() {
-                    vec![String::from("Apply patch (am)")]
+            if !local_head.trim().is_empty() {
+                if method == "am" {
+                    let mut last_parent = local_head.clone();
+                    let subs = if subjects.is_empty() {
+                        vec![String::from("Apply patch (am)")]
+                    } else {
+                        subjects
+                    };
+
+                    for (i, subj) in subs.iter().enumerate() {
+                        let id = format!("predict:am:{}", i + 1);
+                        created_node_ids.push(id.clone());
+                        graph_commits.push(GitCommit {
+                            hash: id.clone(),
+                            parents: if last_parent.trim().is_empty() { vec![] } else { vec![last_parent.clone()] },
+                            author: String::from("(predict)"),
+                            author_email: String::new(),
+                            date: String::new(),
+                            subject: subj.clone(),
+                            refs: String::new(),
+                            is_head: false,
+                        });
+                        last_parent = id.clone();
+                        predicted_head_id = id;
+                    }
                 } else {
-                    subjects
-                };
-
-                for (i, subj) in subs.iter().enumerate() {
-                    let id = format!("predict:am:{}", i + 1);
+                    let id = String::from("predict:apply");
                     created_node_ids.push(id.clone());
+                    predicted_head_id = id.clone();
                     graph_commits.push(GitCommit {
-                        hash: id.clone(),
-                        parents: if last_parent.trim().is_empty() { vec![] } else { vec![last_parent.clone()] },
+                        hash: id,
+                        parents: vec![local_head.clone()],
                         author: String::from("(predict)"),
                         author_email: String::new(),
                         date: String::new(),
-                        subject: subj.clone(),
+                        subject: String::from("Apply patch (working tree)"),
                         refs: String::new(),
                         is_head: false,
                     });
-                    last_parent = id.clone();
-                    predicted_head_id = id;
                 }
-            } else {
-                let id = String::from("predict:apply");
-                created_node_ids.push(id.clone());
-                predicted_head_id = id.clone();
-                graph_commits.push(GitCommit {
-                    hash: id,
-                    parents: vec![local_head.clone()],
-                    author: String::from("(predict)"),
-                    author_email: String::new(),
-                    date: String::new(),
-                    subject: String::from("Apply patch (working tree)"),
-                    refs: String::new(),
-                    is_head: false,
-                });
+
+                let remaining = max_commits.saturating_sub(graph_commits.len() as u32);
+                let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], remaining)?;
+                graph_commits.append(&mut commits);
             }
 
-            let remaining = max_commits.saturating_sub(graph_commits.len() as u32);
-            let mut commits = git_log_commits_multi(&repo_path, &[String::from("HEAD")], remaining)?;
-            graph_commits.append(&mut commits);
-        }
-
-        for c in graph_commits.iter_mut() {
-            c.is_head = c.hash == predicted_head_id;
-            if c.is_head {
-                c.refs = if head_name.trim().is_empty() {
-                    String::from("HEAD")
+            for c in graph_commits.iter_mut() {
+                c.is_head = c.hash == predicted_head_id;
+                if c.is_head {
+                    c.refs = if head_name.trim().is_empty() {
+                        String::from("HEAD")
+                    } else {
+                        format!("HEAD -> {}", head_name)
+                    };
                 } else {
-                    format!("HEAD -> {}", head_name)
-                };
-            } else {
-                c.refs = String::new();
+                    c.refs = String::new();
+                }
             }
-        }
 
-        Ok(GitPatchPredictGraphResult {
-            ok,
-            message,
-            conflict_files,
-            touched_files,
-            graph_commits,
-            created_node_ids,
-            head_name,
+            Ok(GitPatchPredictGraphResult {
+                ok,
+                message,
+                conflict_files,
+                touched_files,
+                graph_commits,
+                created_node_ids,
+                head_name,
+            })
         })
     })
+    .await
 }
 
 fn parse_touched_files_from_patch_text(text: &str) -> Vec<String> {
@@ -419,105 +422,114 @@ fn git_log_commits_multi(repo_path: &str, revs: &[String], max_count: u32) -> Re
 }
 
 #[tauri::command]
-pub(crate) fn git_format_patch_to_file(repo_path: String, commit: String, out_path: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_format_patch_to_file(repo_path: String, commit: String, out_path: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let commit = commit.trim().to_string();
-    if commit.is_empty() {
-        return Err(String::from("commit is empty"));
-    }
-
-    let out_path = out_path.trim().to_string();
-    if out_path.is_empty() {
-        return Err(String::from("out_path is empty"));
-    }
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let raw = crate::run_git_stdout_raw(&repo_path, &["format-patch", "-1", "--stdout", commit.as_str()])?;
-        fs::write(&out_path, raw.as_bytes()).map_err(|e| format!("Failed to write patch file: {e}"))?;
-        Ok(String::from("ok"))
-    })
-}
-
-#[tauri::command]
-pub(crate) fn git_predict_patch_file(repo_path: String, patch_path: String, method: String) -> Result<GitPatchPredictResult, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-
-    let patch_path = patch_path.trim().to_string();
-    if patch_path.is_empty() {
-        return Err(String::from("patch_path is empty"));
-    }
-
-    let method = method.trim().to_lowercase();
-    if method != "apply" && method != "am" {
-        return Err(String::from("method must be 'apply' or 'am'"));
-    }
-
-    crate::with_repo_git_lock(&repo_path, || {
-        let bytes = fs::read(&patch_path).map_err(|e| format!("Failed to read patch file: {e}"))?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        let files = parse_touched_files_from_patch_text(text.as_str());
-
-        let diff_part = if method == "am" {
-            extract_diff_part_for_apply_check(text.as_str())
-        } else {
-            text
-        };
-
-        // `git apply --check` returns non-zero when patch doesn't apply.
-        // For `am`, we approximate by checking the diff part using `git apply --check`.
-        let args: [&str; 4] = ["apply", "--check", "--", "-"];
-        let res = crate::run_git_with_stdin(&repo_path, &args, diff_part.as_str());
-
-        match res {
-            Ok(msg) => Ok(GitPatchPredictResult {
-                ok: true,
-                message: if msg.trim().is_empty() { String::from("ok") } else { msg },
-                files,
-            }),
-            Err(e) => Ok(GitPatchPredictResult {
-                ok: false,
-                message: e,
-                files,
-            }),
+        let commit = commit.trim().to_string();
+        if commit.is_empty() {
+            return Err(String::from("commit is empty"));
         }
+
+        let out_path = out_path.trim().to_string();
+        if out_path.is_empty() {
+            return Err(String::from("out_path is empty"));
+        }
+
+        crate::with_repo_git_lock(&repo_path, || {
+            let raw = crate::run_git_stdout_raw(&repo_path, &["format-patch", "-1", "--stdout", commit.as_str()])?;
+            fs::write(&out_path, raw.as_bytes()).map_err(|e| format!("Failed to write patch file: {e}"))?;
+            Ok(String::from("ok"))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn git_apply_patch_file(repo_path: String, patch_path: String, method: String) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+pub(crate) async fn git_predict_patch_file(repo_path: String, patch_path: String, method: String) -> Result<GitPatchPredictResult, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let patch_path = patch_path.trim().to_string();
-    if patch_path.is_empty() {
-        return Err(String::from("patch_path is empty"));
-    }
+        let patch_path = patch_path.trim().to_string();
+        if patch_path.is_empty() {
+            return Err(String::from("patch_path is empty"));
+        }
 
-    let method = method.trim().to_lowercase();
-    if method != "apply" && method != "am" {
-        return Err(String::from("method must be 'apply' or 'am'"));
-    }
+        let method = method.trim().to_lowercase();
+        if method != "apply" && method != "am" {
+            return Err(String::from("method must be 'apply' or 'am'"));
+        }
 
-    crate::with_repo_git_lock(&repo_path, || {
-        if method == "apply" {
-            crate::run_git(&repo_path, &["apply", "--", patch_path.as_str()])
-        } else {
-            let rebase_apply = crate::run_git(&repo_path, &["rev-parse", "--git-path", "rebase-apply"]).unwrap_or_default();
-            let rebase_apply = rebase_apply.trim();
-            if !rebase_apply.is_empty() {
-                let p = std::path::PathBuf::from(rebase_apply);
-                let full = if p.is_absolute() { p } else { std::path::Path::new(&repo_path).join(p) };
-                if full.exists() {
-                    return Err(String::from(
-                        "A previous 'git am' (or rebase) is still in progress. Resolve it first (Continue/Abort in Graphoria), or run: git am --abort (or git rebase --abort).",
-                    ));
-                }
+        crate::with_repo_git_lock(&repo_path, || {
+            let bytes = fs::read(&patch_path).map_err(|e| format!("Failed to read patch file: {e}"))?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let files = parse_touched_files_from_patch_text(text.as_str());
+
+            let diff_part = if method == "am" {
+                extract_diff_part_for_apply_check(text.as_str())
+            } else {
+                text
+            };
+
+            // `git apply --check` returns non-zero when patch doesn't apply.
+            // For `am`, we approximate by checking the diff part using `git apply --check`.
+            let args: [&str; 4] = ["apply", "--check", "--", "-"];
+            let res = crate::run_git_with_stdin(&repo_path, &args, diff_part.as_str());
+
+            match res {
+                Ok(msg) => Ok(GitPatchPredictResult {
+                    ok: true,
+                    message: if msg.trim().is_empty() { String::from("ok") } else { msg },
+                    files,
+                }),
+                Err(e) => Ok(GitPatchPredictResult {
+                    ok: false,
+                    message: e,
+                    files,
+                }),
             }
-            // For `am`, we apply the mbox patch file as-is.
-            // Use 3-way fallback so that when the patch doesn't apply cleanly, Git attempts
-            // to create real merge conflicts (unmerged index entries). This enables Graphoria's
-            // conflict resolver UI and allows choosing the patch version ("theirs").
-            crate::run_git(&repo_path, &["am", "-3", "--", patch_path.as_str()])
-        }
+        })
     })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn git_apply_patch_file(repo_path: String, patch_path: String, method: String) -> Result<String, String> {
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+
+        let patch_path = patch_path.trim().to_string();
+        if patch_path.is_empty() {
+            return Err(String::from("patch_path is empty"));
+        }
+
+        let method = method.trim().to_lowercase();
+        if method != "apply" && method != "am" {
+            return Err(String::from("method must be 'apply' or 'am'"));
+        }
+
+        crate::with_repo_git_lock(&repo_path, || {
+            if method == "apply" {
+                crate::run_git(&repo_path, &["apply", "--", patch_path.as_str()])
+            } else {
+                let rebase_apply = crate::run_git(&repo_path, &["rev-parse", "--git-path", "rebase-apply"]).unwrap_or_default();
+                let rebase_apply = rebase_apply.trim();
+                if !rebase_apply.is_empty() {
+                    let p = std::path::PathBuf::from(rebase_apply);
+                    let full = if p.is_absolute() { p } else { std::path::Path::new(&repo_path).join(p) };
+                    if full.exists() {
+                        return Err(String::from(
+                            "A previous 'git am' (or rebase) is still in progress. Resolve it first (Continue/Abort in Graphoria), or run: git am --abort (or git rebase --abort).",
+                        ));
+                    }
+                }
+                // For `am`, we apply the mbox patch file as-is.
+                // Use 3-way fallback so that when the patch doesn't apply cleanly, Git attempts
+                // to create real merge conflicts (unmerged index entries). This enables Graphoria's
+                // conflict resolver UI and allows choosing the patch version ("theirs").
+                crate::run_git(&repo_path, &["am", "-3", "--", patch_path.as_str()])
+            }
+        })
+    })
+    .await
 }

@@ -215,93 +215,96 @@ fn detect_rebase_state(repo_path: &str) -> InteractiveRebaseResult {
 /// If `base` is empty/None, tries to use @{upstream}; falls back to --root.
 /// Returns commits in oldest-first order (bottom = newest).
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_commits(
+pub(crate) async fn git_interactive_rebase_commits(
     repo_path: String,
     base: Option<String>,
 ) -> Result<Vec<InteractiveRebaseCommitInfo>, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let base_ref = match base.as_deref().map(|s| s.trim()) {
-        Some(b) if !b.is_empty() => b.to_string(),
-        _ => {
-            // Try upstream
-            let upstream = crate::run_git(&repo_path, &["rev-parse", "--abbrev-ref", "@{upstream}"])
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            if upstream.is_empty() {
-                // Use root: list all commits on HEAD
-                String::new()
-            } else {
-                upstream
+        let base_ref = match base.as_deref().map(|s| s.trim()) {
+            Some(b) if !b.is_empty() => b.to_string(),
+            _ => {
+                // Try upstream
+                let upstream = crate::run_git(&repo_path, &["rev-parse", "--abbrev-ref", "@{upstream}"])
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if upstream.is_empty() {
+                    // Use root: list all commits on HEAD
+                    String::new()
+                } else {
+                    upstream
+                }
             }
-        }
-    };
+        };
 
-    let range = if base_ref.is_empty() {
-        String::from("HEAD")
-    } else {
-        format!("{}..HEAD", base_ref)
-    };
+        let range = if base_ref.is_empty() {
+            String::from("HEAD")
+        } else {
+            format!("{}..HEAD", base_ref)
+        };
 
-    // Get commit details
-    let format_str = "%H\x1f%h\x1f%s\x1f%b\x1f%an\x1f%ae\x1f%ad\x1e";
-    let pretty = format!("--pretty=format:{}", format_str);
+        // Get commit details
+        let format_str = "%H\x1f%h\x1f%s\x1f%b\x1f%an\x1f%ae\x1f%ad\x1e";
+        let pretty = format!("--pretty=format:{}", format_str);
 
-    let output = crate::git_command_in_repo(&repo_path)
-        .args(["--no-pager", "log", "--reverse", "--date=iso-strict", &pretty, &range])
-        .output()
-        .map_err(|e| format!("Failed to spawn git log: {e}"))?;
+        let output = crate::git_command_in_repo(&repo_path)
+            .args(["--no-pager", "log", "--reverse", "--date=iso-strict", &pretty, &range])
+            .output()
+            .map_err(|e| format!("Failed to spawn git log: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let lower = stderr.to_lowercase();
-        if lower.contains("unknown revision") || lower.contains("does not have any commits") {
-            return Ok(Vec::new());
-        }
-        return Err(format!("git log failed: {stderr}"));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Determine which commits are pushed (exist on any remote)
-    let pushed_set = get_pushed_commits(&repo_path, &base_ref);
-
-    let mut commits = Vec::new();
-    for record in stdout.split('\x1e') {
-        let record = record.trim();
-        if record.is_empty() {
-            continue;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lower = stderr.to_lowercase();
+            if lower.contains("unknown revision") || lower.contains("does not have any commits") {
+                return Ok(Vec::new());
+            }
+            return Err(format!("git log failed: {stderr}"));
         }
 
-        let parts: Vec<&str> = record.splitn(7, '\x1f').collect();
-        let hash = parts.first().unwrap_or(&"").trim().to_string();
-        let short_hash = parts.get(1).unwrap_or(&"").trim().to_string();
-        let subject = parts.get(2).unwrap_or(&"").trim().to_string();
-        let body = parts.get(3).unwrap_or(&"").trim().to_string();
-        let author_name = parts.get(4).unwrap_or(&"").trim().to_string();
-        let author_email = parts.get(5).unwrap_or(&"").trim().to_string();
-        let author_date = parts.get(6).unwrap_or(&"").trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout);
 
-        if hash.is_empty() {
-            continue;
+        // Determine which commits are pushed (exist on any remote)
+        let pushed_set = get_pushed_commits(&repo_path, &base_ref);
+
+        let mut commits = Vec::new();
+        for record in stdout.split('\x1e') {
+            let record = record.trim();
+            if record.is_empty() {
+                continue;
+            }
+
+            let parts: Vec<&str> = record.splitn(7, '\x1f').collect();
+            let hash = parts.first().unwrap_or(&"").trim().to_string();
+            let short_hash = parts.get(1).unwrap_or(&"").trim().to_string();
+            let subject = parts.get(2).unwrap_or(&"").trim().to_string();
+            let body = parts.get(3).unwrap_or(&"").trim().to_string();
+            let author_name = parts.get(4).unwrap_or(&"").trim().to_string();
+            let author_email = parts.get(5).unwrap_or(&"").trim().to_string();
+            let author_date = parts.get(6).unwrap_or(&"").trim().to_string();
+
+            if hash.is_empty() {
+                continue;
+            }
+
+            let is_pushed = pushed_set.contains(&hash);
+
+            commits.push(InteractiveRebaseCommitInfo {
+                hash,
+                short_hash,
+                subject,
+                body,
+                author_name,
+                author_email,
+                author_date,
+                is_pushed,
+            });
         }
 
-        let is_pushed = pushed_set.contains(&hash);
-
-        commits.push(InteractiveRebaseCommitInfo {
-            hash,
-            short_hash,
-            subject,
-            body,
-            author_name,
-            author_email,
-            author_date,
-            is_pushed,
-        });
-    }
-
-    Ok(commits)
+        Ok(commits)
+    })
+    .await
 }
 
 fn get_pushed_commits(repo_path: &str, base_ref: &str) -> std::collections::HashSet<String> {
@@ -357,191 +360,194 @@ fn get_pushed_commits(repo_path: &str, base_ref: &str) -> std::collections::Hash
 /// auto-amending with the new message. It returns when the rebase either
 /// completes, stops at a real `edit`, or hits conflicts.
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_start(
+pub(crate) async fn git_interactive_rebase_start(
     repo_path: String,
     base: String,
     todo_entries: Vec<InteractiveRebaseTodoEntry>,
 ) -> Result<InteractiveRebaseResult, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    if todo_entries.is_empty() {
-        return Err(String::from("No commits selected for rebase."));
-    }
+        if todo_entries.is_empty() {
+            return Err(String::from("No commits selected for rebase."));
+        }
 
-    // Check that no rebase/merge is already in progress
-    if crate::is_rebase_in_progress(&repo_path) {
-        return Err(String::from("A rebase is already in progress."));
-    }
-    if crate::is_merge_in_progress(&repo_path) {
-        return Err(String::from("A merge is in progress. Resolve it first."));
-    }
+        // Check that no rebase/merge is already in progress
+        if crate::is_rebase_in_progress(&repo_path) {
+            return Err(String::from("A rebase is already in progress."));
+        }
+        if crate::is_merge_in_progress(&repo_path) {
+            return Err(String::from("A merge is in progress. Resolve it first."));
+        }
 
-    crate::with_repo_git_lock(&repo_path, || {
-        // Build the todo content.
-        // Convert `reword` → `edit` so we can auto-amend with the new message.
-        // Keep track of which entries are actually reword/author-change so we can auto-handle them.
-        let mut todo_lines = Vec::new();
-        let mut reword_map: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-            std::collections::HashMap::new();
+        crate::with_repo_git_lock(&repo_path, || {
+            // Build the todo content.
+            // Convert `reword` → `edit` so we can auto-amend with the new message.
+            // Keep track of which entries are actually reword/author-change so we can auto-handle them.
+            let mut todo_lines = Vec::new();
+            let mut reword_map: std::collections::HashMap<String, (Option<String>, Option<String>)> =
+                std::collections::HashMap::new();
 
-        for entry in &todo_entries {
-            let action = entry.action.trim().to_lowercase();
-            let hash = entry.hash.trim();
+            for entry in &todo_entries {
+                let action = entry.action.trim().to_lowercase();
+                let hash = entry.hash.trim();
 
-            if hash.is_empty() {
-                continue;
-            }
-
-            match action.as_str() {
-                "drop" => {
-                    // Omit from todo = drop
+                if hash.is_empty() {
                     continue;
                 }
-                "reword" => {
-                    // Convert to edit so we can amend with new message
-                    let msg = entry.original_message.as_deref().unwrap_or("");
-                    todo_lines.push(format!("edit {} {}", hash, msg));
-                    reword_map.insert(
-                        hash.to_string(),
-                        (entry.new_message.clone(), entry.new_author.clone()),
-                    );
-                }
-                "edit" => {
-                    let msg = entry.original_message.as_deref().unwrap_or("");
-                    todo_lines.push(format!("edit {} {}", hash, msg));
-                    // If author change requested, store it
-                    if entry.new_author.is_some() || entry.new_message.is_some() {
+
+                match action.as_str() {
+                    "drop" => {
+                        // Omit from todo = drop
+                        continue;
+                    }
+                    "reword" => {
+                        // Convert to edit so we can amend with new message
+                        let msg = entry.original_message.as_deref().unwrap_or("");
+                        todo_lines.push(format!("edit {} {}", hash, msg));
                         reword_map.insert(
                             hash.to_string(),
                             (entry.new_message.clone(), entry.new_author.clone()),
                         );
                     }
-                }
-                "squash" => {
-                    let msg = entry.original_message.as_deref().unwrap_or("");
-                    todo_lines.push(format!("fixup {} {}", hash, msg));
-                }
-                "fixup" => {
-                    let msg = entry.original_message.as_deref().unwrap_or("");
-                    todo_lines.push(format!("fixup {} {}", hash, msg));
-                }
-                _ => {
-                    // pick (default)
-                    let msg = entry.original_message.as_deref().unwrap_or("");
-                    todo_lines.push(format!("pick {} {}", hash, msg));
-                    // If only author change requested on a pick
-                    if entry.new_author.is_some() {
-                        todo_lines.pop();
+                    "edit" => {
+                        let msg = entry.original_message.as_deref().unwrap_or("");
                         todo_lines.push(format!("edit {} {}", hash, msg));
-                        reword_map.insert(
-                            hash.to_string(),
-                            (None, entry.new_author.clone()),
-                        );
+                        // If author change requested, store it
+                        if entry.new_author.is_some() || entry.new_message.is_some() {
+                            reword_map.insert(
+                                hash.to_string(),
+                                (entry.new_message.clone(), entry.new_author.clone()),
+                            );
+                        }
+                    }
+                    "squash" => {
+                        let msg = entry.original_message.as_deref().unwrap_or("");
+                        todo_lines.push(format!("fixup {} {}", hash, msg));
+                    }
+                    "fixup" => {
+                        let msg = entry.original_message.as_deref().unwrap_or("");
+                        todo_lines.push(format!("fixup {} {}", hash, msg));
+                    }
+                    _ => {
+                        // pick (default)
+                        let msg = entry.original_message.as_deref().unwrap_or("");
+                        todo_lines.push(format!("pick {} {}", hash, msg));
+                        // If only author change requested on a pick
+                        if entry.new_author.is_some() {
+                            todo_lines.pop();
+                            todo_lines.push(format!("edit {} {}", hash, msg));
+                            reword_map.insert(
+                                hash.to_string(),
+                                (None, entry.new_author.clone()),
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        if todo_lines.is_empty() {
-            // All commits dropped — reset branch to the base commit
-            let out = crate::git_command_in_repo(&repo_path)
-                .args(["reset", "--hard", base.trim()])
-                .output()
-                .map_err(|e| format!("Failed to reset to base: {e}"))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-                return Err(format!("Failed to drop commits: {stderr}"));
+            if todo_lines.is_empty() {
+                // All commits dropped — reset branch to the base commit
+                let out = crate::git_command_in_repo(&repo_path)
+                    .args(["reset", "--hard", base.trim()])
+                    .output()
+                    .map_err(|e| format!("Failed to reset to base: {e}"))?;
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+                    return Err(format!("Failed to drop commits: {stderr}"));
+                }
+                return Ok(InteractiveRebaseResult {
+                    status: String::from("completed"),
+                    message: String::from("All selected commits were dropped."),
+                    current_step: None,
+                    total_steps: None,
+                    stopped_commit_hash: None,
+                    stopped_commit_message: None,
+                    stopped_commit_author_name: None,
+                    stopped_commit_author_email: None,
+                    conflict_files: Vec::new(),
+                });
             }
-            return Ok(InteractiveRebaseResult {
-                status: String::from("completed"),
-                message: String::from("All selected commits were dropped."),
-                current_step: None,
-                total_steps: None,
-                stopped_commit_hash: None,
-                stopped_commit_message: None,
-                stopped_commit_author_name: None,
-                stopped_commit_author_email: None,
-                conflict_files: Vec::new(),
-            });
-        }
 
-        let todo_content = todo_lines.join("\n") + "\n";
+            let todo_content = todo_lines.join("\n") + "\n";
 
-        // Write a shell script that overwrites git's todo file ($1) with our
-        // custom content using a heredoc.  This is more robust on Windows than
-        // the previous `cp` approach because it avoids path-translation and
-        // file-locking edge cases in MSYS2.
-        let temp_dir = std::env::temp_dir().join(format!("graphoria_rebase_{}", std::process::id()));
-        fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+            // Write a shell script that overwrites git's todo file ($1) with our
+            // custom content using a heredoc.  This is more robust on Windows than
+            // the previous `cp` approach because it avoids path-translation and
+            // file-locking edge cases in MSYS2.
+            let temp_dir = std::env::temp_dir().join(format!("graphoria_rebase_{}", std::process::id()));
+            fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
-        let mut script = String::from("#!/bin/sh\ncat > \"$1\" << 'GRAPHORIA_REBASE_TODO_EOF'\n");
-        script.push_str(&todo_content);
-        if !script.ends_with('\n') {
-            script.push('\n');
-        }
-        script.push_str("GRAPHORIA_REBASE_TODO_EOF\n");
+            let mut script = String::from("#!/bin/sh\ncat > \"$1\" << 'GRAPHORIA_REBASE_TODO_EOF'\n");
+            script.push_str(&todo_content);
+            if !script.ends_with('\n') {
+                script.push('\n');
+            }
+            script.push_str("GRAPHORIA_REBASE_TODO_EOF\n");
 
-        let script_file = temp_dir.join("seq_editor.sh");
-        fs::write(&script_file, script.as_bytes())
-            .map_err(|e| format!("Failed to write seq editor script: {e}"))?;
+            let script_file = temp_dir.join("seq_editor.sh");
+            fs::write(&script_file, script.as_bytes())
+                .map_err(|e| format!("Failed to write seq editor script: {e}"))?;
 
-        // Persist reword map to .git/ so continue can use it later
-        save_reword_map(&repo_path, &reword_map);
+            // Persist reword map to .git/ so continue can use it later
+            save_reword_map(&repo_path, &reword_map);
 
-        let script_path_str = script_file.to_string_lossy().replace('\\', "/");
-        let seq_editor = format!("sh '{}'", script_path_str.replace('\'', "'\\''"));
+            let script_path_str = script_file.to_string_lossy().replace('\\', "/");
+            let seq_editor = format!("sh '{}'", script_path_str.replace('\'', "'\\''"));
 
-        eprintln!("[graphoria rebase] base={} todo_lines={} seq_editor={}", base.trim(), todo_lines.len(), &seq_editor);
-        eprintln!("[graphoria rebase] todo:\n{}", &todo_content);
+            eprintln!("[graphoria rebase] base={} todo_lines={} seq_editor={}", base.trim(), todo_lines.len(), &seq_editor);
+            eprintln!("[graphoria rebase] todo:\n{}", &todo_content);
 
-        // Start the rebase
-        let mut cmd = crate::git_command_in_repo(&repo_path);
-        no_editor_env(&mut cmd);
-        cmd.env("GIT_SEQUENCE_EDITOR", &seq_editor);
+            // Start the rebase
+            let mut cmd = crate::git_command_in_repo(&repo_path);
+            no_editor_env(&mut cmd);
+            cmd.env("GIT_SEQUENCE_EDITOR", &seq_editor);
 
-        let out = cmd
-            .args(["rebase", "-i", "--autostash", base.trim()])
-            .output()
-            .map_err(|e| format!("Failed to start interactive rebase: {e}"))?;
+            let out = cmd
+                .args(["rebase", "-i", "--autostash", base.trim()])
+                .output()
+                .map_err(|e| format!("Failed to start interactive rebase: {e}"))?;
 
-        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
 
-        eprintln!("[graphoria rebase] exit={} stdout={:?} stderr={:?}", out.status, &stdout, &stderr);
+            eprintln!("[graphoria rebase] exit={} stdout={:?} stderr={:?}", out.status, &stdout, &stderr);
 
-        // Clean up temp dir
-        let _ = fs::remove_dir_all(&temp_dir);
+            // Clean up temp dir
+            let _ = fs::remove_dir_all(&temp_dir);
 
-        // Some git versions exit 0 even when stopping at an `edit` action.
-        // Always check if the rebase is still in progress before declaring completion.
-        let still_in_progress = rebase_merge_dir(&repo_path).is_some()
-            || crate::is_rebase_in_progress(&repo_path);
+            // Some git versions exit 0 even when stopping at an `edit` action.
+            // Always check if the rebase is still in progress before declaring completion.
+            let still_in_progress = rebase_merge_dir(&repo_path).is_some()
+                || crate::is_rebase_in_progress(&repo_path);
 
-        if out.status.success() && !still_in_progress {
-            cleanup_reword_map(&repo_path);
-            return Ok(InteractiveRebaseResult {
-                status: String::from("completed"),
-                message: if !stdout.is_empty() { stdout } else { stderr },
-                current_step: None,
-                total_steps: None,
-                stopped_commit_hash: None,
-                stopped_commit_message: None,
-                stopped_commit_author_name: None,
-                stopped_commit_author_email: None,
-                conflict_files: Vec::new(),
-            });
-        }
+            if out.status.success() && !still_in_progress {
+                cleanup_reword_map(&repo_path);
+                return Ok(InteractiveRebaseResult {
+                    status: String::from("completed"),
+                    message: if !stdout.is_empty() { stdout } else { stderr },
+                    current_step: None,
+                    total_steps: None,
+                    stopped_commit_hash: None,
+                    stopped_commit_message: None,
+                    stopped_commit_author_name: None,
+                    stopped_commit_author_email: None,
+                    conflict_files: Vec::new(),
+                });
+            }
 
-        // Rebase stopped - could be edit stop or conflicts
-        let state = detect_rebase_state(&repo_path);
+            // Rebase stopped - could be edit stop or conflicts
+            let state = detect_rebase_state(&repo_path);
 
-        if state.status == "stopped_at_edit" {
-            // Try auto-amending if this is a reword entry
-            return auto_amend_reword_loop(&repo_path);
-        }
+            if state.status == "stopped_at_edit" {
+                // Try auto-amending if this is a reword entry
+                return auto_amend_reword_loop(&repo_path);
+            }
 
-        Ok(state)
+            Ok(state)
+        })
     })
+    .await
 }
 
 /// Auto-amend loop: when rebase stops at an `edit`, check if it's a reword
@@ -669,146 +675,155 @@ fn auto_amend_reword_loop(
 
 /// Amend the currently stopped commit during an interactive rebase edit.
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_amend(
+pub(crate) async fn git_interactive_rebase_amend(
     repo_path: String,
     message: Option<String>,
     author: Option<String>,
 ) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    // Verify we're in a rebase
-    let dir = rebase_merge_dir(&repo_path);
-    if dir.is_none() {
-        return Err(String::from("No interactive rebase in progress."));
-    }
+        // Verify we're in a rebase
+        let dir = rebase_merge_dir(&repo_path);
+        if dir.is_none() {
+            return Err(String::from("No interactive rebase in progress."));
+        }
 
-    let mut args: Vec<String> = vec![
-        String::from("commit"),
-        String::from("--amend"),
-        String::from("--no-verify"),
-    ];
+        let mut args: Vec<String> = vec![
+            String::from("commit"),
+            String::from("--amend"),
+            String::from("--no-verify"),
+        ];
 
-    if let Some(ref msg) = message {
-        if !msg.trim().is_empty() {
-            args.push(String::from("-m"));
-            args.push(msg.clone());
+        if let Some(ref msg) = message {
+            if !msg.trim().is_empty() {
+                args.push(String::from("-m"));
+                args.push(msg.clone());
+            } else {
+                args.push(String::from("--no-edit"));
+            }
         } else {
             args.push(String::from("--no-edit"));
         }
-    } else {
-        args.push(String::from("--no-edit"));
-    }
 
-    if let Some(ref a) = author {
-        if !a.trim().is_empty() {
-            args.push(String::from("--author"));
-            args.push(a.clone());
+        if let Some(ref a) = author {
+            if !a.trim().is_empty() {
+                args.push(String::from("--author"));
+                args.push(a.clone());
+            }
         }
-    }
 
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut cmd = crate::git_command_in_repo(&repo_path);
-    no_editor_env(&mut cmd);
-    let out = cmd
-        .args(&args_ref)
-        .output()
-        .map_err(|e| format!("Failed to amend: {e}"))?;
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let mut cmd = crate::git_command_in_repo(&repo_path);
+        no_editor_env(&mut cmd);
+        let out = cmd
+            .args(&args_ref)
+            .output()
+            .map_err(|e| format!("Failed to amend: {e}"))?;
 
-    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
 
-    if out.status.success() {
-        Ok(if !stdout.is_empty() { stdout } else { stderr })
-    } else {
-        Err(if !stderr.is_empty() { stderr } else { stdout })
-    }
+        if out.status.success() {
+            Ok(if !stdout.is_empty() { stdout } else { stderr })
+        } else {
+            Err(if !stderr.is_empty() { stderr } else { stdout })
+        }
+    })
+    .await
 }
 
 /// Continue interactive rebase after an edit stop.
 /// Auto-handles subsequent reword stops.
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_continue(
+pub(crate) async fn git_interactive_rebase_continue(
     repo_path: String,
 ) -> Result<InteractiveRebaseResult, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    crate::with_repo_git_lock(&repo_path, || {
-        let mut cmd = crate::git_command_in_repo(&repo_path);
-        no_editor_env(&mut cmd);
+        crate::with_repo_git_lock(&repo_path, || {
+            let mut cmd = crate::git_command_in_repo(&repo_path);
+            no_editor_env(&mut cmd);
 
-        let out = cmd
-            .args(["rebase", "--continue"])
-            .output()
-            .map_err(|e| format!("Failed to continue rebase: {e}"))?;
+            let out = cmd
+                .args(["rebase", "--continue"])
+                .output()
+                .map_err(|e| format!("Failed to continue rebase: {e}"))?;
 
-        if out.status.success() {
-            let dir = rebase_merge_dir(&repo_path);
-            if dir.is_none() && !crate::is_rebase_in_progress(&repo_path) {
-                cleanup_reword_map(&repo_path);
-                return Ok(InteractiveRebaseResult {
-                    status: String::from("completed"),
-                    message: String::from("Rebase completed successfully."),
-                    current_step: None,
-                    total_steps: None,
-                    stopped_commit_hash: None,
-                    stopped_commit_message: None,
-                    stopped_commit_author_name: None,
-                    stopped_commit_author_email: None,
-                    conflict_files: Vec::new(),
-                });
+            if out.status.success() {
+                let dir = rebase_merge_dir(&repo_path);
+                if dir.is_none() && !crate::is_rebase_in_progress(&repo_path) {
+                    cleanup_reword_map(&repo_path);
+                    return Ok(InteractiveRebaseResult {
+                        status: String::from("completed"),
+                        message: String::from("Rebase completed successfully."),
+                        current_step: None,
+                        total_steps: None,
+                        stopped_commit_hash: None,
+                        stopped_commit_message: None,
+                        stopped_commit_author_name: None,
+                        stopped_commit_author_email: None,
+                        conflict_files: Vec::new(),
+                    });
+                }
             }
-        }
 
-        // Check if stopped at edit - try auto-amending rewords
-        let state = detect_rebase_state(&repo_path);
-        if state.status == "stopped_at_edit" {
-            return auto_amend_reword_loop(&repo_path);
-        }
-        Ok(state)
+            // Check if stopped at edit - try auto-amending rewords
+            let state = detect_rebase_state(&repo_path);
+            if state.status == "stopped_at_edit" {
+                return auto_amend_reword_loop(&repo_path);
+            }
+            Ok(state)
+        })
     })
+    .await
 }
 
 /// Get current interactive rebase status.
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_status(
+pub(crate) async fn git_interactive_rebase_status(
     repo_path: String,
 ) -> Result<InteractiveRebaseStatusInfo, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let dir = rebase_merge_dir(&repo_path);
-    let in_progress = dir.is_some() || crate::is_rebase_in_progress(&repo_path);
+        let dir = rebase_merge_dir(&repo_path);
+        let in_progress = dir.is_some() || crate::is_rebase_in_progress(&repo_path);
 
-    if !in_progress {
-        return Ok(InteractiveRebaseStatusInfo {
-            in_progress: false,
-            current_step: None,
-            total_steps: None,
-            stopped_commit_hash: None,
-            stopped_commit_message: None,
-            conflict_files: Vec::new(),
-        });
-    }
+        if !in_progress {
+            return Ok(InteractiveRebaseStatusInfo {
+                in_progress: false,
+                current_step: None,
+                total_steps: None,
+                stopped_commit_hash: None,
+                stopped_commit_message: None,
+                conflict_files: Vec::new(),
+            });
+        }
 
-    let current_step = read_rebase_file(&repo_path, "msgnum")
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    let total_steps = read_rebase_file(&repo_path, "end")
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    let stopped_sha = read_rebase_file(&repo_path, "stopped-sha")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let stopped_message = read_rebase_file(&repo_path, "message")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let conflict_files = crate::list_unmerged_files(&repo_path);
+        let current_step = read_rebase_file(&repo_path, "msgnum")
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        let total_steps = read_rebase_file(&repo_path, "end")
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        let stopped_sha = read_rebase_file(&repo_path, "stopped-sha")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let stopped_message = read_rebase_file(&repo_path, "message")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let conflict_files = crate::list_unmerged_files(&repo_path);
 
-    Ok(InteractiveRebaseStatusInfo {
-        in_progress,
-        current_step,
-        total_steps,
-        stopped_commit_hash: stopped_sha,
-        stopped_commit_message: stopped_message,
-        conflict_files,
+        Ok(InteractiveRebaseStatusInfo {
+            in_progress,
+            current_step,
+            total_steps,
+            stopped_commit_hash: stopped_sha,
+            stopped_commit_message: stopped_message,
+            conflict_files,
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -824,101 +839,119 @@ pub(crate) struct EditStopFileEntry {
 
 /// List files changed in the currently stopped commit (HEAD vs HEAD^).
 #[tauri::command]
-pub(crate) fn git_interactive_rebase_edit_files(
+pub(crate) async fn git_interactive_rebase_edit_files(
     repo_path: String,
 ) -> Result<Vec<EditStopFileEntry>, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
 
-    let out = crate::git_command_in_repo(&repo_path)
-        .args(["diff-tree", "--no-commit-id", "-r", "--name-status", "HEAD"])
-        .output()
-        .map_err(|e| format!("Failed to list commit files: {e}"))?;
+        let out = crate::git_command_in_repo(&repo_path)
+            .args(["diff-tree", "--no-commit-id", "-r", "--name-status", "HEAD"])
+            .output()
+            .map_err(|e| format!("Failed to list commit files: {e}"))?;
 
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
-        return Err(format!("git diff-tree failed: {stderr}"));
-    }
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
+            return Err(format!("git diff-tree failed: {stderr}"));
+        }
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut entries = Vec::new();
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() { continue; }
-        let parts: Vec<&str> = line.splitn(3, '\t').collect();
-        if parts.len() < 2 { continue; }
-        let status_raw = parts[0].to_string();
-        // For renames/copies: status is like R100, path is "old\tnew"
-        let (status, path, old_path) = if status_raw.starts_with('R') || status_raw.starts_with('C') {
-            let old = parts.get(1).unwrap_or(&"").to_string();
-            let new = parts.get(2).unwrap_or(&"").to_string();
-            (status_raw.chars().next().unwrap_or('R').to_string(), new, Some(old))
-        } else {
-            (status_raw, parts[1].to_string(), None)
-        };
-        entries.push(EditStopFileEntry { status, path, old_path });
-    }
-    Ok(entries)
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut entries = Vec::new();
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() < 2 { continue; }
+            let status_raw = parts[0].to_string();
+            // For renames/copies: status is like R100, path is "old\tnew"
+            let (status, path, old_path) = if status_raw.starts_with('R') || status_raw.starts_with('C') {
+                let old = parts.get(1).unwrap_or(&"").to_string();
+                let new = parts.get(2).unwrap_or(&"").to_string();
+                (status_raw.chars().next().unwrap_or('R').to_string(), new, Some(old))
+            } else {
+                (status_raw, parts[1].to_string(), None)
+            };
+            entries.push(EditStopFileEntry { status, path, old_path });
+        }
+        Ok(entries)
+    })
+    .await
 }
 
 /// Read a file from the working tree.
 #[tauri::command]
-pub(crate) fn git_read_working_file(
+pub(crate) async fn git_read_working_file(
     repo_path: String,
     path: String,
 ) -> Result<String, String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    let full = std::path::Path::new(&repo_path).join(&path);
-    std::fs::read_to_string(&full)
-        .map_err(|e| format!("Failed to read {}: {e}", path))
+    crate::repo_read(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        let full = std::path::Path::new(&repo_path).join(&path);
+        std::fs::read_to_string(&full)
+            .map_err(|e| format!("Failed to read {}: {e}", path))
+    })
+    .await
 }
 
 /// Write content to a file in the working tree.
 #[tauri::command]
-pub(crate) fn git_write_working_file(
+pub(crate) async fn git_write_working_file(
     repo_path: String,
     path: String,
     content: String,
 ) -> Result<(), String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    let full = std::path::Path::new(&repo_path).join(&path);
-    // Ensure parent dir exists
-    if let Some(parent) = full.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    std::fs::write(&full, content.as_bytes())
-        .map_err(|e| format!("Failed to write {}: {e}", path))
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        let full = std::path::Path::new(&repo_path).join(&path);
+        // Ensure parent dir exists
+        if let Some(parent) = full.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&full, content.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {e}", path))
+    })
+    .await
 }
 
 /// Rename a file in the working tree using git mv.
 #[tauri::command]
-pub(crate) fn git_rename_working_file(
+pub(crate) async fn git_rename_working_file(
     repo_path: String,
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    crate::run_git(&repo_path, &["mv", &old_path, &new_path])?;
-    Ok(())
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        crate::run_git(&repo_path, &["mv", &old_path, &new_path])?;
+        Ok(())
+    })
+    .await
 }
 
 /// Delete a file from the working tree using git rm.
 #[tauri::command]
-pub(crate) fn git_delete_working_file(
+pub(crate) async fn git_delete_working_file(
     repo_path: String,
     path: String,
 ) -> Result<(), String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    crate::run_git(&repo_path, &["rm", "-f", &path])?;
-    Ok(())
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        crate::run_git(&repo_path, &["rm", "-f", &path])?;
+        Ok(())
+    })
+    .await
 }
 
 /// Discard changes to a file during edit stop (restore from HEAD).
 #[tauri::command]
-pub(crate) fn git_restore_working_file(
+pub(crate) async fn git_restore_working_file(
     repo_path: String,
     path: String,
 ) -> Result<(), String> {
-    crate::ensure_is_git_worktree(&repo_path)?;
-    crate::run_git(&repo_path, &["checkout", "HEAD", "--", &path])?;
-    Ok(())
+    crate::repo_write(repo_path.clone(), move || {
+        crate::ensure_is_git_worktree(&repo_path)?;
+        crate::run_git(&repo_path, &["checkout", "HEAD", "--", &path])?;
+        Ok(())
+    })
+    .await
 }
