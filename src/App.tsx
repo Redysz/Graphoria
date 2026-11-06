@@ -135,6 +135,7 @@ import { CreateBranchModal } from "./components/modals/CreateBranchModal";
 import { CreateTagModal } from "./components/modals/CreateTagModal";
 import { CherryPickModal } from "./components/modals/CherryPickModal";
 import { InteractiveRebaseModal } from "./components/modals/InteractiveRebaseModal";
+import { EditCommitModal } from "./components/modals/EditCommitModal";
 import { GitLogModal } from "./components/modals/GitLogModal";
 import { PatchModal } from "./components/modals/PatchModal";
 import { PatchPredictModal } from "./components/modals/PatchPredictModal";
@@ -591,6 +592,7 @@ function App() {
   const [cherryPickCommitSummary, setCherryPickCommitSummary] = useState<GitCommitSummary | null>(null);
 
   const [interactiveRebaseOpen, setInteractiveRebaseOpen] = useState(false);
+  const [editCommitHash, setEditCommitHash] = useState("");
 
   const [gitLogOpen, setGitLogOpen] = useState(false);
 
@@ -1866,6 +1868,7 @@ function App() {
     !!createTagOpen ||
     !!renameBranchOpen ||
     !!renameTagOpen ||
+    !!editCommitHash ||
     !!switchBranchOpen ||
     !!pullConflictOpen ||
     !!pullPredictOpen ||
@@ -5268,6 +5271,10 @@ function App() {
           setCommitContextMenu(null);
           void rebaseCurrentBranchHere(hash);
         }}
+        onEditCommit={(hash) => {
+          setCommitContextMenu(null);
+          setEditCommitHash(hash);
+        }}
       />
 
       <WorkingFileContextMenu
@@ -5347,6 +5354,28 @@ function App() {
             setPullConflictFiles(files);
             setPullConflictMessage("");
             setPullConflictOpen(true);
+          }}
+        />
+      ) : null}
+
+      {editCommitHash && activeRepoPath ? (
+        <EditCommitModal
+          repoPath={activeRepoPath}
+          hash={editCommitHash}
+          onClose={() => setEditCommitHash("")}
+          onDone={async (res, info) => {
+            setEditCommitHash("");
+            if (info.hash === selectedHash) setSelectedHash(res.new_hash);
+            await loadRepo(activeRepoPath);
+            await refreshIndicators(activeRepoPath);
+            if (info.pushed_to.length > 0) {
+              await confirmDialog({
+                title: "Commit edited",
+                message: `The commit was rewritten locally (${info.pushed_to.join(", ")} still has the old version).\n\nTo publish it, push the branch with force (use "force with lease").`,
+                okLabel: "OK",
+                cancelLabel: "Close",
+              });
+            }
           }}
         />
       ) : null}

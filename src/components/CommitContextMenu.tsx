@@ -37,6 +37,7 @@ export function CommitContextMenu(props: {
   onResetHardAndCheckoutBranch: (branch: string) => void;
 
   onRebaseHere: (hash: string) => void;
+  onEditCommit: (hash: string) => void;
 }) {
   const {
     menu,
@@ -62,6 +63,7 @@ export function CommitContextMenu(props: {
     onCheckoutBranch,
     onResetHardAndCheckoutBranch,
     onRebaseHere,
+    onEditCommit,
   } = props;
 
   useContextMenuFit(menuRef, menu);
@@ -102,6 +104,15 @@ export function CommitContextMenu(props: {
 
       <button type="button" disabled={!activeRepoPath || loading || isHead} onClick={() => onCherryPick(menu.hash)}>
         Cherry-pick…
+      </button>
+
+      <button
+        type="button"
+        disabled={!activeRepoPath || loading}
+        title="Change message or author. Rewrites this commit and the ones after it."
+        onClick={() => onEditCommit(menu.hash)}
+      >
+        Edit commit…
       </button>
 
       <button type="button" disabled={!activeRepoPath || loading} onClick={() => onExportPatch(menu.hash)}>

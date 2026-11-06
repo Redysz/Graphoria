@@ -162,6 +162,8 @@ use commands::interactive_rebase::{
     git_restore_working_file,
 };
 
+use commands::commit_edit::{git_commit_edit_info, git_edit_commit};
+
 use commands::startup::{get_open_on_startup, set_open_on_startup};
 
 use commands::gitlog::git_log_search;
@@ -3244,6 +3246,8 @@ pub fn run() {
             git_interactive_rebase_continue,
             git_interactive_rebase_status,
             git_interactive_rebase_edit_files,
+            git_commit_edit_info,
+            git_edit_commit,
             git_read_working_file,
             git_write_working_file,
             git_rename_working_file,
