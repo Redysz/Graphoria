@@ -58,6 +58,7 @@ export type GitSettings = {
   diffTool: DiffToolSettings;
 
   fetchAfterOpenRepo: boolean;
+  refreshOnTabSwitch: boolean;
   autoFetchMinutes: number;
   autoRefreshMinutes: number;
 };
@@ -245,6 +246,7 @@ export const defaultGitSettings: GitSettings = {
   },
 
   fetchAfterOpenRepo: true,
+  refreshOnTabSwitch: true,
   autoFetchMinutes: 0,
   autoRefreshMinutes: 0,
 };
@@ -441,6 +443,9 @@ export const useAppSettings = create<AppSettingsState>()(
         }
         if (typeof s.git.fetchAfterOpenRepo !== "boolean") {
           s.git.fetchAfterOpenRepo = defaultGitSettings.fetchAfterOpenRepo;
+        }
+        if (typeof s.git.refreshOnTabSwitch !== "boolean") {
+          s.git.refreshOnTabSwitch = defaultGitSettings.refreshOnTabSwitch;
         }
         if (!Number.isFinite(s.git.autoFetchMinutes) || s.git.autoFetchMinutes < 0) {
           s.git.autoFetchMinutes = defaultGitSettings.autoFetchMinutes;

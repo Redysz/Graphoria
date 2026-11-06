@@ -703,6 +703,19 @@ export default function SettingsModal(props: { open: boolean; activeRepoPath: st
                   )}
 
                   {field(
+                    "Refresh on tab switch",
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, opacity: 0.9 }}>
+                      <input
+                        type="checkbox"
+                        checked={git.refreshOnTabSwitch}
+                        onChange={(e) => setGit({ refreshOnTabSwitch: e.target.checked })}
+                      />
+                      Enable
+                    </label>,
+                    "Reloads the repository state whenever you switch to its tab.",
+                  )}
+
+                  {field(
                     "Auto fetch interval (minutes)",
                     <input
                       className="modalInput"
