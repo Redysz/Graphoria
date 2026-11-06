@@ -26,6 +26,7 @@ export function ViewMenu(props: {
   commitsOnlyHead: boolean;
   layoutDirectionTopToBottom: boolean;
   tooltipsEnabled: boolean;
+  refreshOnTabSwitch: boolean;
 
   onChangeShowStashesOnGraph: (next: boolean) => void;
   onChangeShowTags: (next: boolean) => void;
@@ -37,6 +38,7 @@ export function ViewMenu(props: {
   onChangeCommitsOnlyHead: (next: boolean) => void;
   onChangeLayoutDirectionTopToBottom: (next: boolean) => void;
   onChangeTooltipsEnabled: (next: boolean) => void;
+  onChangeRefreshOnTabSwitch: (next: boolean) => void;
 
   shortcutShowStashesOnGraph?: string;
   shortcutShowTags?: string;
@@ -66,6 +68,7 @@ export function ViewMenu(props: {
     commitsOnlyHead,
     layoutDirectionTopToBottom,
     tooltipsEnabled,
+    refreshOnTabSwitch,
     onChangeShowStashesOnGraph,
     onChangeShowTags,
     onChangeShowRemoteBranchesOnGraph,
@@ -76,6 +79,7 @@ export function ViewMenu(props: {
     onChangeCommitsOnlyHead,
     onChangeLayoutDirectionTopToBottom,
     onChangeTooltipsEnabled,
+    onChangeRefreshOnTabSwitch,
     shortcutShowStashesOnGraph,
     shortcutShowTags,
     shortcutShowRemoteBranches,
@@ -168,6 +172,11 @@ export function ViewMenu(props: {
             shortcutText: shortcutTooltips,
             checked: tooltipsEnabled,
             onChange: onChangeTooltipsEnabled,
+          })}
+          {menuToggle({
+            label: "Refresh on tab switch",
+            checked: refreshOnTabSwitch,
+            onChange: onChangeRefreshOnTabSwitch,
           })}
 
           <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />

@@ -660,6 +660,7 @@ function App() {
   const workingFilesView = useAppSettings((s) => s.git.workingFilesView);
   const diffTool = useAppSettings((s) => s.git.diffTool);
   const fetchAfterOpenRepo = useAppSettings((s) => s.git.fetchAfterOpenRepo);
+  const refreshOnTabSwitch = useAppSettings((s) => s.git.refreshOnTabSwitch);
   const autoFetchMinutes = useAppSettings((s) => s.git.autoFetchMinutes);
   const autoRefreshMinutes = useAppSettings((s) => s.git.autoRefreshMinutes);
   const tooltipSettings = useAppSettings((s) => s.general.tooltips);
@@ -1087,6 +1088,20 @@ function App() {
   // Repositories already loaded under the current history settings, so that merely reordering or
   // adding a tab no longer reloads every open repository.
   const loadedReposRef = useRef<{ key: string; paths: Set<string> }>({ key: "", paths: new Set() });
+
+  // Must stay above the loading effect below: it relies on `loaded` still reflecting the state from
+  // before this tab became active, so a repository that is about to be loaded for the first time is
+  // not loaded twice.
+  const prevActiveRepoRef = useRef("");
+  useEffect(() => {
+    const prev = prevActiveRepoRef.current;
+    prevActiveRepoRef.current = activeRepoPath;
+    if (!refreshOnTabSwitch || !activeRepoPath || !prev || prev === activeRepoPath) return;
+    if (!repos.includes(prev)) return;
+    if (!loadedReposRef.current.paths.has(activeRepoPath)) return;
+    void loadRepo(activeRepoPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepoPath]);
 
   useEffect(() => {
     if (!activeRepoPath) return;
@@ -4766,6 +4781,8 @@ function App() {
               commitsOnlyHead={commitsOnlyHead}
               layoutDirectionTopToBottom={graphSettings.edgeDirection === "to_parent"}
               tooltipsEnabled={tooltipSettings.enabled}
+              refreshOnTabSwitch={refreshOnTabSwitch}
+              onChangeRefreshOnTabSwitch={(v) => setGit({ refreshOnTabSwitch: v })}
               onChangeShowStashesOnGraph={(v) => setGraph({ showStashesOnGraph: v })}
               onChangeShowTags={(v) => setGraph({ showTags: v })}
               onChangeShowRemoteBranchesOnGraph={(v) => setGraph({ showRemoteBranchesOnGraph: v })}
