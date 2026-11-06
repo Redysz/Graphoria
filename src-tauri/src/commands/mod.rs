@@ -24,6 +24,8 @@ pub(crate) mod patches;
 
 pub(crate) mod interactive_rebase;
 
+pub(crate) mod commit_edit;
+
 pub(crate) mod startup;
 
 pub(crate) mod gitlog;

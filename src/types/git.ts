@@ -146,6 +146,28 @@ export type InteractiveRebaseCommitInfo = {
   is_pushed: boolean;
 };
 
+export type CommitEditInfo = {
+  hash: string;
+  short_hash: string;
+  message: string;
+  author_name: string;
+  author_email: string;
+  author_date: string;
+  is_head: boolean;
+  is_merge: boolean;
+  reachable_from_head: boolean;
+  rewritten_descendants: number;
+  pushed_to: string[];
+  other_local_branches: string[];
+  current_branch: string | null;
+};
+
+export type CommitEditResult = {
+  new_hash: string;
+  new_head: string;
+  rewritten: number;
+};
+
 export type InteractiveRebaseTodoEntry = {
   action: "pick" | "reword" | "edit" | "squash" | "fixup" | "drop";
   hash: string;

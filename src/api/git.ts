@@ -13,6 +13,8 @@ import type {
   GitStatusSummary,
   GitStashEntry,
   GitTagTarget,
+  CommitEditInfo,
+  CommitEditResult,
   InteractiveRebaseCommitInfo,
   InteractiveRebaseResult,
   InteractiveRebaseStatusInfo,
@@ -516,6 +518,21 @@ export function gitLaunchExternalDiffCommit(params: {
 
 export function gitSetUserIdentity(params: { scope: "repo" | "global"; userName: string; userEmail: string; repoPath?: string }) {
   return invoke<void>("git_set_user_identity", params);
+}
+
+export function gitCommitEditInfo(params: { repoPath: string; hash: string }) {
+  return invoke<CommitEditInfo>("git_commit_edit_info", params);
+}
+
+export function gitEditCommit(params: {
+  repoPath: string;
+  hash: string;
+  message?: string;
+  authorName?: string;
+  authorEmail?: string;
+  resetAuthorDate?: boolean;
+}) {
+  return invoke<CommitEditResult>("git_edit_commit", params);
 }
 
 export function gitInteractiveRebaseCommits(params: { repoPath: string; base?: string }) {
